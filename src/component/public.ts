@@ -4,8 +4,6 @@ import { mutation, query } from '$/component/_generated/server';
 import { getLogger } from '$/component/logger';
 import { OperationType } from '$/shared/types.js';
 
-export const PROTOCOL_VERSION = 1;
-
 export { OperationType };
 
 export const insertDocument = mutation({
@@ -173,18 +171,6 @@ export const stream = query({
       changes: [],
       checkpoint: args.checkpoint,
       hasMore: false,
-    };
-  },
-});
-
-export const getProtocolVersion = query({
-  args: {},
-  returns: v.object({
-    protocolVersion: v.number(),
-  }),
-  handler: async (_ctx) => {
-    return {
-      protocolVersion: PROTOCOL_VERSION,
     };
   },
 });

@@ -13,11 +13,9 @@ import type { CollectionConfig, Collection } from '@tanstack/db';
 import { Effect, Layer } from 'effect';
 import { getLogger } from '$/client/logger.js';
 import { ProseError } from '$/client/errors.js';
-import { ensureSet } from '$/client/set.js';
 import { Checkpoint, CheckpointLive } from '$/client/services/checkpoint.js';
 import { Reconciliation, ReconciliationLive } from '$/client/services/reconciliation.js';
 import { SnapshotLive } from '$/client/services/snapshot.js';
-import { Protocol, ProtocolLive } from '$/client/services/protocol.js';
 import {
   initializeReplicateParams,
   replicateDelete,
@@ -131,7 +129,6 @@ export interface ConvexCollectionOptionsConfig<T extends object> {
     insert: FunctionReference<'mutation'>;
     update: FunctionReference<'mutation'>;
     remove: FunctionReference<'mutation'>;
-    protocol?: FunctionReference<'query'>;
     material?: FunctionReference<'query'>;
     [key: string]: any;
   };
@@ -169,13 +166,6 @@ export interface EditorBinding {
   canRedo(): boolean;
 }
 
-/** Protocol version info returned by utils.protocol() */
-interface ProtocolInfo {
-  serverVersion: number;
-  localVersion: number;
-  needsMigration: boolean;
-}
-
 /** Utilities exposed on collection.utils */
 interface ConvexCollectionUtils<T extends object> {
   /**
@@ -186,12 +176,6 @@ interface ConvexCollectionUtils<T extends object> {
    * @returns Promise resolving to EditorBinding
    */
   prose(documentId: string, field: ProseFields<T>): Promise<EditorBinding>;
-
-  /**
-   * Get protocol version info for debugging and diagnostics.
-   * @returns Promise resolving to version info
-   */
-  protocol(): Promise<ProtocolInfo>;
 }
 
 /** Extended collection with prose field utilities */
@@ -401,14 +385,9 @@ export function convexCollectionOptions<T extends object>({
   _convexClient: ConvexClient;
   _collection: string;
   _proseFields: Array<ProseFields<T>>;
-  _api: ConvexCollectionOptionsConfig<T>['api'];
 } {
   // Create a Set for O(1) lookup of prose fields
   const proseFieldSet = new Set<string>(proseFields as string[]);
-  const setPromise = ensureSet({
-    convexClient,
-    api: api.protocol ? { protocol: api.protocol } : undefined,
-  });
 
   let ydoc: Y.Doc = null as any;
   let ymap: Y.Map<unknown> = null as any;
@@ -560,11 +539,10 @@ export function convexCollectionOptions<T extends object>({
     _convexClient: convexClient,
     _collection: collection,
     _proseFields: proseFields,
-    _api: api,
 
     onInsert: async ({ transaction }: CollectionTransaction<T>) => {
       try {
-        await Promise.all([setPromise, persistenceReadyPromise, optimisticReadyPromise]);
+        await Promise.all([persistenceReadyPromise, optimisticReadyPromise]);
         const delta = applyYjsInsert(transaction.mutations);
         if (delta.length > 0) {
           const documentKey = String(transaction.mutations[0].key);
@@ -587,7 +565,7 @@ export function convexCollectionOptions<T extends object>({
 
     onUpdate: async ({ transaction }: CollectionTransaction<T>) => {
       try {
-        await Promise.all([setPromise, persistenceReadyPromise, optimisticReadyPromise]);
+        await Promise.all([persistenceReadyPromise, optimisticReadyPromise]);
 
         const mutation = transaction.mutations[0];
         const metadata = transaction.metadata;
@@ -627,7 +605,7 @@ export function convexCollectionOptions<T extends object>({
 
     onDelete: async ({ transaction }: CollectionTransaction<T>) => {
       try {
-        await Promise.all([setPromise, persistenceReadyPromise, optimisticReadyPromise]);
+        await Promise.all([persistenceReadyPromise, optimisticReadyPromise]);
         const delta = applyYjsDelete(transaction.mutations);
         const itemsToDelete = transaction.mutations
           .map((mut) => mut.original)
@@ -665,8 +643,6 @@ export function convexCollectionOptions<T extends object>({
 
         (async () => {
           try {
-            await setPromise;
-
             ydoc = await createYjsDocument(collection);
             ymap = getYMap<unknown>(ydoc, collection);
 
@@ -978,7 +954,6 @@ export function convexCollectionOptions<T extends object>({
 function initializeCollectionWithOffline<T extends object>(
   collection: Collection<T>,
   collectionName: string,
-  convexClient: ConvexClient,
   proseFields: Array<ProseFields<T>>
 ): ConvexCollection<T> {
   const proseFieldSet = new Set<string>(proseFields as string[]);
@@ -1226,30 +1201,6 @@ function initializeCollectionWithOffline<T extends object>(
         },
       } satisfies EditorBinding;
     },
-
-    async protocol(): Promise<ProtocolInfo> {
-      const protocolApi = (collection as any).config?._api?.protocol;
-      if (!protocolApi) {
-        throw new Error('Protocol API endpoint required. Add protocol to your api config.');
-      }
-
-      const protocolLayer = ProtocolLive(convexClient, { protocol: protocolApi });
-
-      const { serverVersion, localVersion } = await Effect.runPromise(
-        Effect.gen(function* () {
-          const protocol = yield* Protocol;
-          const server = yield* protocol.getServerVersion();
-          const local = yield* protocol.getStoredVersion();
-          return { serverVersion: server, localVersion: local };
-        }).pipe(Effect.provide(protocolLayer))
-      );
-
-      return {
-        serverVersion,
-        localVersion,
-        needsMigration: serverVersion > localVersion,
-      };
-    },
   };
 
   // Extend collection with utils
@@ -1290,12 +1241,7 @@ export function getOrInitializeCollection<T extends object>(
   }
 
   // Initialize and cache
-  const initialized = initializeCollectionWithOffline(
-    collection,
-    collectionName,
-    convexClient,
-    proseFields
-  );
+  const initialized = initializeCollectionWithOffline(collection, collectionName, proseFields);
   initializedCollections.set(collectionName, initialized);
 
   return initialized;

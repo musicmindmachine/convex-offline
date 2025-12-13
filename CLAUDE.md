@@ -23,19 +23,19 @@ Single package with exports:
 
 ### Build & Type Check
 ```bash
-pnpm run build       # Build with Rslib (outputs to dist/)
-pnpm run clean       # Remove dist/
+bun run build       # Build with Rslib (outputs to dist/)
+bun run clean       # Remove dist/
 ```
 
 ### Code Quality (Biome v2)
 ```bash
-pnpm run check       # Lint + format check (dry run)
-pnpm run check:fix   # Auto-fix all issues (ALWAYS run before committing)
+bun run check       # Lint + format check (dry run)
+bun run check:fix   # Auto-fix all issues (ALWAYS run before committing)
 ```
 
 ### Publishing
 ```bash
-bun run prepublish   # Build + check:fix (runs before npm publish)
+bun run prepublish  # Build + check:fix (runs before npm publish)
 ```
 
 ## Architecture
@@ -44,23 +44,21 @@ bun run prepublish   # Build + check:fix (runs before npm publish)
 ```
 src/
 ├── client/              # Client-side (browser)
-│   ├── index.ts         # Public exports
-│   ├── collection.ts    # TanStack DB + Yjs integration
-│   ├── set.ts           # setReplicate() setup
+│   ├── index.ts         # Public exports (slim API surface)
+│   ├── collection.ts    # TanStack DB + Yjs integration, utils.prose
 │   ├── replicate.ts     # Replicate helpers for TanStack DB
-│   ├── merge.ts         # Yjs CRDT merge operations
+│   ├── merge.ts         # Yjs CRDT merge operations, extract(), isDoc()
 │   ├── history.ts       # Undo/redo history management
 │   ├── logger.ts        # LogTape logger
-│   ├── errors.ts        # Error definitions
+│   ├── errors.ts        # Effect TaggedErrors (NetworkError, ProseError, etc.)
 │   └── services/        # Core services (Effect-based)
 │       ├── checkpoint.ts     # Sync checkpoints
-│       ├── protocol.ts       # Protocol version management
 │       ├── snapshot.ts       # Snapshot recovery
 │       └── reconciliation.ts # Phantom document cleanup
 ├── server/              # Server-side (Convex functions)
 │   ├── index.ts         # Public exports
-│   ├── builder.ts       # defineReplicate() builder
-│   ├── schema.ts        # replicatedTable() helper
+│   ├── builder.ts       # define() builder
+│   ├── schema.ts        # table(), prose() helpers
 │   └── storage.ts       # ReplicateStorage class
 ├── component/           # Internal Convex component
 │   ├── convex.config.ts # Component config
@@ -80,7 +78,6 @@ src/
 **Client Services (Effect-based):**
 - Services in `src/client/services/` use Effect for dependency injection
 - `Checkpoint` manages sync checkpoints in IndexedDB
-- `Protocol` handles protocol version negotiation
 - `Snapshot` recovers from server snapshots
 - `Reconciliation` removes phantom documents
 
@@ -93,13 +90,13 @@ Client edit → merge.ts (encode delta) → collection.ts → Offline queue
 
 ## Key Patterns
 
-### Server: defineReplicate Builder
+### Server: define() Builder
 ```typescript
 // convex/tasks.ts
-import { defineReplicate } from '@trestleinc/replicate/server';
+import { define } from '@trestleinc/replicate/server';
 
-export const { stream, material, insert, update, remove, protocol, compact, prune } =
-  defineReplicate<Task>({
+export const { stream, material, insert, update, remove, compact, prune } =
+  define<Task>({
     component: components.replicate,
     collection: 'tasks',
   });
@@ -107,23 +104,71 @@ export const { stream, material, insert, update, remove, protocol, compact, prun
 
 ### Client: Collection Setup
 ```typescript
-// Use convexCollectionOptions + handleReconnect pattern
-const collection = handleReconnect(
-  createCollection(
-    convexCollectionOptions<Task>({
-      convexClient,
-      api: api.tasks,
-      collection: 'tasks',
-      getKey: (task) => task.id,
-    })
-  )
+import { convexCollectionOptions } from '@trestleinc/replicate/client';
+
+const collection = createCollection(
+  convexCollectionOptions<Task>({
+    convexClient,
+    api: api.tasks,
+    collection: 'tasks',
+    prose: ['content'],  // optional: prose fields for rich text
+    getKey: (task) => task.id,
+  })
 );
+
+// Access utils methods
+const binding = await collection.utils.prose(id, 'content');  // Editor binding
 ```
 
-### Schema: replicatedTable Helper
+### Schema: table() Helper
 ```typescript
+import { table, prose } from '@trestleinc/replicate/server';
+
 // Automatically injects version and timestamp fields
-tasks: replicatedTable({ id: v.string(), text: v.string() }, (t) => t.index('by_id', ['id']))
+tasks: table({
+  id: v.string(),
+  text: v.string(),
+  content: prose(),  // optional: ProseMirror-compatible rich text
+}, (t) => t.index('by_id', ['id']))
+```
+
+### Text Extraction
+```typescript
+import { extract } from '@trestleinc/replicate/client';
+
+// Extract plain text from ProseMirror JSON
+const plainText = extract(task.content);
+```
+
+## Public API Surface
+
+The API follows TanStack DB patterns with single-word naming conventions.
+
+### Client (`@trestleinc/replicate/client`)
+```typescript
+// Main entry point
+convexCollectionOptions()
+
+// Text extraction
+extract()                    // Extract plain text from ProseMirror JSON
+
+// Effect TaggedErrors
+NetworkError
+IDBError
+IDBWriteError
+ReconciliationError
+ProseError                   // Thrown when prose field not found
+CollectionNotReadyError
+
+// Collection utils (accessed via collection.utils.*)
+collection.utils.prose(id, field)   // Returns EditorBinding
+```
+
+### Server (`@trestleinc/replicate/server`)
+```typescript
+define()    // Define replicate handlers (stream, insert, update, remove, etc.)
+table()     // Define replicated table schema (adds version/timestamp fields)
+prose()     // Validator for ProseMirror-compatible JSON
 ```
 
 ## Technology Stack
@@ -140,9 +185,12 @@ tasks: replicatedTable({ id: v.string(), text: v.string() }, (t) => t.index('by_
 
 ## Naming Conventions
 
+- **Public API**: Single-word function names (e.g., `define()`, `table()`, `extract()`)
 - **Service files**: lowercase, no suffix (e.g., `checkpoint.ts`, not `CheckpointService.ts`)
 - **Service exports**: PascalCase, no "Service" suffix (e.g., `Checkpoint`, `CheckpointLive`)
+- **Error classes**: Short names with "Error" suffix (e.g., `ProseError`, not `ProseFieldNotFoundError`)
 - **Use "replicate"**: not "sync" throughout the codebase
+- **Internal functions**: Keep verbose names internally (e.g., `isDoc()` used internally)
 
 ## Important Notes
 

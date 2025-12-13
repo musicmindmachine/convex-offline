@@ -11,9 +11,6 @@ import * as Y from 'yjs';
 import schema from '$/component/schema.js';
 import { OperationType } from '$/shared/types.js';
 
-// Import component functions directly for testing via t.run()
-import * as publicModule from '$/component/public.js';
-
 // Import modules for convex-test (component lives at src/component/)
 // Must include _generated directory for convex-test to work
 const modules = import.meta.glob('../../component/**/*.ts', { eager: true }) as Record<
@@ -327,11 +324,6 @@ describe('component queries', () => {
     // When checkpoint is behind oldest delta, should return the newer deltas
     // (or snapshot if gap detected and no deltas match)
     expect(result.changes.length).toBeGreaterThan(0);
-  });
-
-  it('getProtocolVersion returns current version', async () => {
-    // Protocol version is a constant, just verify it
-    expect(publicModule.PROTOCOL_VERSION).toBe(1);
   });
 
   it('getInitialState returns null for empty collection', async () => {

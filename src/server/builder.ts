@@ -8,7 +8,7 @@ import { Replicate } from '$/server/storage.js';
  * @example
  * ```typescript
  * // convex/tasks.ts
- * export const { stream, material, insert, update, remove, protocol, snapshot } =
+ * export const { stream, material, insert, update, remove, snapshot } =
  *   define<Task>({
  *     component: components.replicate,
  *     collection: 'tasks',
@@ -86,8 +86,6 @@ export function define<T extends object>(config: {
       evalRemove: config.hooks?.evalRemove,
       onRemove: config.hooks?.onRemove,
     }),
-
-    protocol: storage.createProtocolVersionQuery(),
 
     compact: storage.createCompactMutation({
       retention: config.compaction?.retention,

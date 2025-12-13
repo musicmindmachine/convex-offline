@@ -298,20 +298,6 @@ export class Replicate<T extends object> {
     });
   }
 
-  createProtocolVersionQuery() {
-    const component = this.component;
-
-    return queryGeneric({
-      args: {},
-      returns: v.object({
-        protocolVersion: v.number(),
-      }),
-      handler: async (ctx) => {
-        return await ctx.runQuery(component.public.getProtocolVersion, {});
-      },
-    });
-  }
-
   createCompactMutation(opts?: {
     retention?: number;
     evalCompact?: (

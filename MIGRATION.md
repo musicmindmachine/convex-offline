@@ -50,27 +50,13 @@ The following are no longer exported (use direct imports if needed):
 
 | Export | Replacement |
 |--------|-------------|
-| `setReplicate()` | Auto-called internally |
-| `getProtocolInfo()` | `collection.utils.protocol()` |
+| `setReplicate()` | Removed (was internal) |
+| `getProtocolInfo()` | Removed (protocol versioning not implemented) |
 | `getOrInitializeCollection()` | Internal helper |
 | `YjsOrigin` | Import from `yjs` if needed |
 | `IndexeddbPersistence` | Import from `y-indexeddb` |
 | `NonRetriableError` | Import from `@tanstack/offline-transactions` |
 | Type exports | TypeScript infers these |
-
-### New Utils Method
-
-Protocol info is now accessible via `collection.utils.protocol()`:
-
-```typescript
-// Before
-import { getProtocolInfo } from '@trestleinc/replicate/client';
-const info = await getProtocolInfo(convexClient, { protocol: api.protocol });
-
-// After
-const info = await collection.utils.protocol();
-// Returns: { serverVersion, localVersion, needsMigration }
-```
 
 ---
 
@@ -93,7 +79,6 @@ CollectionNotReadyError
 
 // Methods on collection.utils
 collection.utils.prose(id, field)    // returns EditorBinding
-collection.utils.protocol()          // returns ProtocolInfo
 ```
 
 ### Server (`@trestleinc/replicate/server`)
@@ -125,7 +110,7 @@ export default defineSchema({
 // convex/notebooks.ts
 import { define } from '@trestleinc/replicate/server';
 
-export const { stream, insert, update, remove, protocol } = define<Notebook>({
+export const { stream, insert, update, remove } = define<Notebook>({
   component: components.replicate,
   collection: 'notebooks',
 });
@@ -148,7 +133,4 @@ const binding = await collection.utils.prose(id, 'content');
 
 // Extract text for search
 const text = extract(notebook.content);
-
-// Check protocol version
-const { needsMigration } = await collection.utils.protocol();
 ```
