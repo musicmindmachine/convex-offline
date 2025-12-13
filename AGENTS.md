@@ -18,9 +18,9 @@
 
 ### Server (`@trestleinc/replicate/server`)
 ```typescript
-define()    // Define replicate handlers
-table()     // Define replicated table schema
-prose()     // Validator for prose fields
+replicate()              // Factory to create bound replicate function
+table()                  // Define replicated table schema
+prose()                  // Validator for prose fields
 ```
 
 ### Client (`@trestleinc/replicate/client`)

@@ -2,24 +2,9 @@ import type { GenericMutationCtx, GenericQueryCtx, GenericDataModel } from 'conv
 import { Replicate } from '$/server/storage.js';
 
 /**
- * Define replicate handlers for a collection. Returns all the queries/mutations
- * needed to sync a collection between client and server.
- *
- * @example
- * ```typescript
- * // convex/tasks.ts
- * export const { stream, material, insert, update, remove, snapshot } =
- *   define<Task>({
- *     component: components.replicate,
- *     collection: 'tasks',
- *   });
- *
- * // Use snapshot APIs
- * // snapshot.create, snapshot.list, snapshot.get, snapshot.restore, snapshot.remove, snapshot.prune
- * ```
+ * Configuration for replicate handlers (without component - used with factory pattern).
  */
-export function define<T extends object>(config: {
-  component: any;
+export interface ReplicateConfig<T extends object> {
   collection: string;
   compaction?: { retention: number };
   pruning?: { retention: number };
@@ -43,7 +28,6 @@ export function define<T extends object>(config: {
     ) => void | Promise<void>;
     onCompact?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
     onPrune?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
-    // Version hooks
     evalVersion?: (
       ctx: GenericMutationCtx<GenericDataModel>,
       collection: string,
@@ -58,8 +42,37 @@ export function define<T extends object>(config: {
     ) => void | Promise<void>;
     onRestore?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
   };
-}) {
-  const storage = new Replicate<T>(config.component, config.collection);
+}
+
+/**
+ * Create a replicate function bound to your component. Call this once in your
+ * convex/replicate.ts file, then use the returned function for all collections.
+ *
+ * @example
+ * ```typescript
+ * // convex/replicate.ts (create once)
+ * import { replicate } from '@trestleinc/replicate/server';
+ * import { components } from './_generated/api';
+ *
+ * export const tasks = replicate(components.replicate)<Task>({ collection: 'tasks' });
+ *
+ * // Or bind once and reuse:
+ * const r = replicate(components.replicate);
+ * export const tasks = r<Task>({ collection: 'tasks' });
+ * export const notebooks = r<Notebook>({ collection: 'notebooks' });
+ * ```
+ */
+export function replicate(component: any) {
+  return function boundReplicate<T extends object>(config: ReplicateConfig<T>) {
+    return replicateInternal<T>(component, config);
+  };
+}
+
+/**
+ * Internal implementation for replicate.
+ */
+function replicateInternal<T extends object>(component: any, config: ReplicateConfig<T>) {
+  const storage = new Replicate<T>(component, config.collection);
 
   return {
     stream: storage.createStreamQuery({
@@ -99,7 +112,6 @@ export function define<T extends object>(config: {
       onPrune: config.hooks?.onPrune,
     }),
 
-    // Snapshot APIs (namespaced)
     snapshot: {
       create: storage.createVersionMutation({
         evalVersion: config.hooks?.evalVersion,

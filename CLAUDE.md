@@ -57,7 +57,7 @@ src/
 │       └── reconciliation.ts # Phantom document cleanup
 ├── server/                  # Server-side (Convex functions)
 │   ├── index.ts             # Public exports
-│   ├── builder.ts           # define() builder
+│   ├── builder.ts           # createReplicate() factory
 │   ├── schema.ts            # table(), prose() helpers
 │   └── storage.ts           # Replicate class (storage operations)
 ├── component/               # Internal Convex component
@@ -119,12 +119,13 @@ collection.utils.prose(id, field)   // Returns EditorBinding for rich text
 
 ### Server (`@trestleinc/replicate/server`)
 ```typescript
-define()    // Define replicate handlers (stream, insert, update, remove, compact, prune, snapshot.*)
-table()     // Define replicated table schema (injects version/timestamp fields)
-prose()     // Validator for ProseMirror-compatible JSON
+replicate()             // Factory to create bound replicate function
+table()                 // Define replicated table schema (injects version/timestamp fields)
+prose()                 // Validator for ProseMirror-compatible JSON
 
-// Type export
-ReplicationFields   // Type for version + timestamp fields
+// Type exports
+ReplicateConfig         // Configuration type for replicate
+ReplicationFields       // Type for version + timestamp fields
 ```
 
 ### Shared (`@trestleinc/replicate/shared`)
@@ -137,7 +138,7 @@ FragmentValue       // Marker for fragment fields
 OperationType       // Enum: Delta | Snapshot
 ```
 
-### define() Return Value
+### replicate() Return Value
 ```typescript
 const {
   stream,      // Real-time CRDT stream query
@@ -155,21 +156,22 @@ const {
     remove,    // Delete a version
     prune,     // Prune old versions
   }
-} = define<T>({ component, collection, ... });
+} = replicate<T>({ collection: 'tasks' });
 ```
 
 ## Key Patterns
 
-### Server: define() Builder
+### Server: replicate Factory
 ```typescript
-// convex/tasks.ts
-import { define } from '@trestleinc/replicate/server';
+// convex/replicate.ts (create once)
+import { replicate } from '@trestleinc/replicate/server';
+import { components } from './_generated/api';
 
-export const { stream, material, insert, update, remove, compact, prune, snapshot } =
-  define<Task>({
-    component: components.replicate,
-    collection: 'tasks',
-  });
+const r = replicate(components.replicate);
+
+// convex/tasks.ts (use for each collection)
+export const { stream, material, insert, update, remove, snapshot } =
+  r<Task>({ collection: 'tasks' });
 ```
 
 ### Client: Collection Setup
@@ -224,7 +226,7 @@ const plainText = extract(task.content);
 
 ## Naming Conventions
 
-- **Public API**: Single-word function names (`define()`, `table()`, `extract()`)
+- **Public API**: Single-word function names (`createReplicate()`, `table()`, `extract()`)
 - **Service files**: lowercase, no suffix (`checkpoint.ts`, not `CheckpointService.ts`)
 - **Service exports**: PascalCase, no "Service" suffix (`Checkpoint`, `CheckpointLive`)
 - **Error classes**: Short names with "Error" suffix (`ProseError`, not `ProseFieldNotFoundError`)
