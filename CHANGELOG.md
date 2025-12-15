@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Swappable persistence layer with three providers:
+  - `indexeddbPersistence()` - Browser using y-indexeddb and browser-level
+  - `sqlitePersistence()` - React Native using y-op-sqlite and op-sqlite
+  - `memoryPersistence()` - In-memory for testing
+- `NonRetriableError` class for errors that should not be retried (auth failures, validation)
+- Database name validation in SQLite persistence to prevent path traversal attacks
+
+### Changed
+
+- Simplified prose sync architecture using TanStack DB's native `sync.sync()` callback
+- SQLite persistence now uses synchronous API (consistent with other providers)
+- Improved type safety in SQLite persistence (removed `any` types)
+- Properly await async database operations in SQLite persistence
+
+### Removed
+
+- `@tanstack/offline-transactions` dependency (provided no value over native TanStack DB sync)
+- `getOrInitializeCollection` helper (replaced by native TanStack DB patterns)
+- Lazy loading of React Native dependencies (direct imports for better type safety)
+
 ## [1.0.0] - 2025-12-01
 
 First stable release of Convex Replicate.

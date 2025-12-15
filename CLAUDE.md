@@ -49,10 +49,15 @@ src/
 │   ├── collection.ts        # TanStack DB + Yjs integration, utils.prose()
 │   ├── replicate.ts         # Replicate helpers for TanStack DB
 │   ├── merge.ts             # Yjs CRDT merge operations, extract()
-│   ├── errors.ts            # Effect TaggedErrors
+│   ├── errors.ts            # Effect TaggedErrors + NonRetriableError
 │   ├── logger.ts            # LogTape logger
+│   ├── persistence/         # Swappable storage backends
+│   │   ├── types.ts         # Persistence, PersistenceProvider, KeyValueStore
+│   │   ├── indexeddb.ts     # Browser: y-indexeddb + browser-level
+│   │   ├── sqlite.ts        # React Native: y-op-sqlite + op-sqlite
+│   │   └── memory.ts        # Testing: in-memory (no persistence)
 │   └── services/            # Core services (Effect-based)
-│       ├── checkpoint.ts    # Sync checkpoints in IndexedDB
+│       ├── checkpoint.ts    # Sync checkpoints in persistence KV
 │       ├── snapshot.ts      # Snapshot recovery
 │       └── reconciliation.ts # Phantom document cleanup
 ├── server/                  # Server-side (Convex functions)
@@ -90,7 +95,7 @@ src/
 
 **Data Flow:**
 ```
-Client edit -> merge.ts (encode delta) -> collection.ts -> Offline queue
+Client edit -> merge.ts (encode delta) -> collection.ts -> TanStack DB sync
     -> Convex mutation -> Component (append delta) + Main table (upsert)
     -> Subscription -> Other clients
 ```
@@ -102,6 +107,11 @@ Client edit -> merge.ts (encode delta) -> collection.ts -> Offline queue
 // Main entry point
 convexCollectionOptions()    // Create collection options for TanStack DB
 
+// Persistence providers (swappable storage backends)
+indexeddbPersistence()       // Browser: IndexedDB (default)
+sqlitePersistence()          // React Native: SQLite
+memoryPersistence()          // Testing: in-memory
+
 // Text extraction
 extract()                    // Extract plain text from ProseMirror JSON
 
@@ -112,6 +122,7 @@ IDBWriteError
 ReconciliationError
 ProseError
 CollectionNotReadyError
+NonRetriableError            // Error that should not be retried
 
 // Collection utils (accessed via collection.utils.*)
 collection.utils.prose(id, field)   // Returns EditorBinding for rich text
@@ -218,8 +229,7 @@ const plainText = extract(task.content);
 - **Effect** for service architecture and dependency injection
 - **Yjs** for CRDTs (conflict-free replicated data types)
 - **Convex** for backend (cloud database + functions)
-- **TanStack DB** for reactive state
-- **TanStack offline-transactions** for outbox pattern
+- **TanStack DB** for reactive state management
 - **Rslib** for building
 - **Biome** for linting/formatting
 - **LogTape** for logging (avoid console.*)

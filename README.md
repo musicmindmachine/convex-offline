@@ -2,13 +2,12 @@
 
 **Offline-first sync library using Yjs CRDTs and Convex for real-time data synchronization.**
 
-Replicate provides a dual-storage architecture for building offline-capable applications with automatic conflict resolution. It combines Yjs CRDTs (96% smaller than Automerge, no WASM) with TanStack's offline transaction system and Convex's reactive backend for real-time synchronization and efficient querying.
+Replicate provides a dual-storage architecture for building offline-capable applications with automatic conflict resolution. It combines Yjs CRDTs (96% smaller than Automerge, no WASM) with TanStack DB's reactive state management and Convex's reactive backend for real-time synchronization and efficient querying.
 
 ## Features
 
 - **Offline-first** - Works without internet, syncs when reconnected
 - **Yjs CRDTs** - Automatic conflict-free replication with Yjs (96% smaller than Automerge, no WASM)
-- **TanStack offline-transactions** - Proven outbox pattern for reliable offline sync
 - **Real-time sync** - Convex WebSocket-based synchronization
 - **TanStack DB integration** - Reactive state management for React and Svelte
 - **Dual-storage pattern** - CRDT layer for conflict resolution + main tables for queries
@@ -18,7 +17,8 @@ Replicate provides a dual-storage architecture for building offline-capable appl
 - **SSR support** - Server-side rendering with data preloading
 - **Network resilience** - Automatic retry with exponential backoff
 - **Component-based** - Convex component for plug-and-play CRDT storage
-- **React Native compatible** - No WASM dependency, works on mobile
+- **Swappable persistence** - IndexedDB (browser), SQLite (React Native), or in-memory (testing)
+- **React Native compatible** - SQLite persistence with y-op-sqlite and op-sqlite
 - **Version history** - Create, list, restore, and prune document snapshots
 
 ## Architecture
@@ -473,6 +473,43 @@ await ctx.runMutation(api.tasks.snapshot.prune, {
 });
 ```
 
+### Persistence Providers
+
+Choose the right storage backend for your platform:
+
+```typescript
+import {
+  indexeddbPersistence,  // Browser (default)
+  sqlitePersistence,     // React Native
+  memoryPersistence,     // Testing
+} from '@trestleinc/replicate/client';
+
+// Browser: IndexedDB (default, no config needed)
+convexCollectionOptions<Task>({
+  // ... other options
+  persistence: indexeddbPersistence(),
+});
+
+// React Native: SQLite
+// Requires: y-op-sqlite, @op-engineering/op-sqlite
+convexCollectionOptions<Task>({
+  // ... other options
+  persistence: sqlitePersistence('my-app-db'),
+});
+
+// Testing: In-memory (no persistence)
+convexCollectionOptions<Task>({
+  // ... other options
+  persistence: memoryPersistence(),
+});
+```
+
+**IndexedDB** (default) - Uses y-indexeddb for Y.Doc persistence and browser-level for metadata.
+
+**SQLite** - Uses y-op-sqlite for Y.Doc persistence and op-sqlite for metadata. Requires React Native with native modules.
+
+**Memory** - No persistence, useful for testing without IndexedDB side effects.
+
 ### Logging Configuration
 
 Configure logging for debugging and development using LogTape:
@@ -656,9 +693,9 @@ content: prose()  // Validates ProseMirror JSON structure
 
 ### Storage Performance
 
-- **IndexedDB** via TanStack DB provides efficient local storage
+- **Swappable persistence** - IndexedDB (browser), SQLite (React Native), or in-memory (testing)
 - **Yjs** CRDT operations are extremely fast (96% smaller than Automerge)
-- **TanStack offline-transactions** provides batching and retry logic
+- **TanStack DB** provides optimistic updates and reactive state management
 - **Indexed queries** in Convex for fast incremental sync
 
 ### Sync Performance
@@ -672,13 +709,13 @@ content: prose()  // Validates ProseMirror JSON structure
 
 - **TanStack coordination** - Built-in multi-tab sync via BroadcastChannel
 - **Yjs shared state** - Single source of truth per browser
-- **Offline executor** - Only one tab runs sync operations
+- **Leader election** - Only one tab runs sync operations
 
 ## Offline Behavior
 
 ### How It Works
 
-- **Writes** - Queue locally in Yjs CRDT, sync when online via TanStack outbox
+- **Writes** - Queue locally in Yjs CRDT, sync when online
 - **Reads** - Always work from local TanStack DB cache (instant!)
 - **UI** - Fully functional with optimistic updates
 - **Conflicts** - Auto-resolved by Yjs CRDTs (conflict-free!)
