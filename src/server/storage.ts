@@ -1,11 +1,12 @@
 import { v } from 'convex/values';
 import type { GenericMutationCtx, GenericQueryCtx, GenericDataModel } from 'convex/server';
-import { queryGeneric, mutationGeneric, internalMutationGeneric } from 'convex/server';
+import { queryGeneric, mutationGeneric } from 'convex/server';
 
 export class Replicate<T extends object> {
   constructor(
     public component: any,
-    public collectionName: string
+    public collectionName: string,
+    private options?: { threshold?: number }
   ) {}
 
   createStreamQuery(opts?: {
@@ -114,6 +115,7 @@ export class Replicate<T extends object> {
   }) {
     const component = this.component;
     const collection = this.collectionName;
+    const threshold = this.options?.threshold;
 
     return mutationGeneric({
       args: {
@@ -138,6 +140,7 @@ export class Replicate<T extends object> {
           documentId: args.documentId,
           crdtBytes: args.crdtBytes,
           version: args.version,
+          threshold,
         });
 
         await ctx.db.insert(collection, {
@@ -170,6 +173,7 @@ export class Replicate<T extends object> {
   }) {
     const component = this.component;
     const collection = this.collectionName;
+    const threshold = this.options?.threshold;
 
     return mutationGeneric({
       args: {
@@ -195,6 +199,7 @@ export class Replicate<T extends object> {
           documentId: args.documentId,
           crdtBytes: args.crdtBytes,
           version: args.version,
+          threshold,
         });
 
         const existing = await ctx.db
@@ -248,6 +253,7 @@ export class Replicate<T extends object> {
   }) {
     const component = this.component;
     const collection = this.collectionName;
+    const threshold = this.options?.threshold;
 
     return mutationGeneric({
       args: {
@@ -270,6 +276,7 @@ export class Replicate<T extends object> {
           documentId: documentId,
           crdtBytes: args.crdtBytes,
           version: args.version,
+          threshold,
         });
 
         const existing = await ctx.db
@@ -294,77 +301,6 @@ export class Replicate<T extends object> {
             collection,
           },
         };
-      },
-    });
-  }
-
-  createCompactMutation(opts?: {
-    retention?: number;
-    evalCompact?: (
-      ctx: GenericMutationCtx<GenericDataModel>,
-      collection: string
-    ) => void | Promise<void>;
-    onCompact?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
-  }) {
-    const component = this.component;
-    const collection = this.collectionName;
-    const defaultRetention = opts?.retention ?? 90;
-
-    return internalMutationGeneric({
-      args: {
-        retention: v.optional(v.number()),
-      },
-      returns: v.any(),
-      handler: async (ctx, args) => {
-        if (opts?.evalCompact) {
-          await opts.evalCompact(ctx, collection);
-        }
-        const result = await ctx.runMutation(component.public.compactCollectionByName, {
-          collection,
-          retentionDays: args.retention ?? defaultRetention,
-        });
-
-        if (opts?.onCompact) {
-          await opts.onCompact(ctx, result);
-        }
-
-        return result;
-      },
-    });
-  }
-
-  createPruneMutation(opts?: {
-    retention?: number;
-    evalPrune?: (
-      ctx: GenericMutationCtx<GenericDataModel>,
-      collection: string
-    ) => void | Promise<void>;
-    onPrune?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
-  }) {
-    const component = this.component;
-    const collection = this.collectionName;
-    const defaultRetention = opts?.retention ?? 180;
-
-    return internalMutationGeneric({
-      args: {
-        retention: v.optional(v.number()),
-      },
-      returns: v.any(),
-      handler: async (ctx, args) => {
-        if (opts?.evalPrune) {
-          await opts.evalPrune(ctx, collection);
-        }
-
-        const result = await ctx.runMutation(component.public.pruneCollectionByName, {
-          collection,
-          retentionDays: args.retention ?? defaultRetention,
-        });
-
-        if (opts?.onPrune) {
-          await opts.onPrune(ctx, result);
-        }
-
-        return result;
       },
     });
   }
@@ -552,52 +488,6 @@ export class Replicate<T extends object> {
 
         if (opts?.onDelete) {
           await opts.onDelete(ctx, result);
-        }
-
-        return result;
-      },
-    });
-  }
-
-  createPruneVersionsMutation(opts?: {
-    keepCount?: number;
-    retentionDays?: number;
-    evalPrune?: (
-      ctx: GenericMutationCtx<GenericDataModel>,
-      collection: string,
-      documentId: string
-    ) => void | Promise<void>;
-    onPrune?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
-  }) {
-    const component = this.component;
-    const collection = this.collectionName;
-    const defaultKeepCount = opts?.keepCount ?? 10;
-    const defaultRetentionDays = opts?.retentionDays ?? 90;
-
-    return mutationGeneric({
-      args: {
-        documentId: v.string(),
-        keepCount: v.optional(v.number()),
-        retentionDays: v.optional(v.number()),
-      },
-      returns: v.object({
-        deletedCount: v.number(),
-        remainingCount: v.number(),
-      }),
-      handler: async (ctx, args) => {
-        if (opts?.evalPrune) {
-          await opts.evalPrune(ctx, collection, args.documentId);
-        }
-
-        const result = await ctx.runMutation(component.public.pruneVersions, {
-          collection,
-          documentId: args.documentId,
-          keepCount: args.keepCount ?? defaultKeepCount,
-          retentionDays: args.retentionDays ?? defaultRetentionDays,
-        });
-
-        if (opts?.onPrune) {
-          await opts.onPrune(ctx, result);
         }
 
         return result;

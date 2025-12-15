@@ -62,7 +62,6 @@ src/
 │   │   └── memory.ts        # Testing: in-memory (no persistence)
 │   └── services/            # Core services (Effect-based)
 │       ├── checkpoint.ts    # Sync checkpoints in persistence KV
-│       ├── snapshot.ts      # Snapshot recovery
 │       └── reconciliation.ts # Phantom document cleanup
 ├── server/                  # Server-side (Convex functions)
 │   ├── index.ts             # Public exports
@@ -94,7 +93,6 @@ src/
 **Client Services (Effect-based):**
 - Services in `src/client/services/` use Effect for dependency injection
 - `Checkpoint` - manages sync checkpoints in IndexedDB
-- `Snapshot` - recovers from server snapshots
 - `Reconciliation` - removes phantom documents
 
 **Data Flow:**
@@ -158,18 +156,15 @@ OperationType       // Enum: Delta | Snapshot
 const {
   stream,      // Real-time CRDT stream query
   material,    // SSR-friendly query for hydration
-  insert,      // Dual-storage insert mutation
-  update,      // Dual-storage update mutation
-  remove,      // Dual-storage delete mutation
-  compact,     // Compaction mutation (internal, for cron jobs)
-  prune,       // Snapshot cleanup mutation (internal, for cron jobs)
-  snapshot: {
-    create,    // Create a version snapshot
+  insert,      // Dual-storage insert mutation (auto-compacts when threshold exceeded)
+  update,      // Dual-storage update mutation (auto-compacts when threshold exceeded)
+  remove,      // Dual-storage delete mutation (auto-compacts when threshold exceeded)
+  versions: {
+    create,    // Create a version
     list,      // List versions for a document
     get,       // Get a specific version
     restore,   // Restore a document to a version
     remove,    // Delete a version
-    prune,     // Prune old versions
   }
 } = replicate<T>({ collection: 'tasks' });
 ```
@@ -185,7 +180,7 @@ import { components } from './_generated/api';
 const r = replicate(components.replicate);
 
 // convex/tasks.ts (use for each collection)
-export const { stream, material, insert, update, remove, snapshot } =
+export const { stream, material, insert, update, remove, versions } =
   r<Task>({ collection: 'tasks' });
 ```
 

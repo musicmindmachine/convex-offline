@@ -19,7 +19,8 @@ Replicate provides a dual-storage architecture for building offline-capable appl
 - **Component-based** - Convex component for plug-and-play CRDT storage
 - **Swappable persistence** - IndexedDB (browser), SQLite (React Native), or in-memory (testing)
 - **React Native compatible** - SQLite persistence with y-op-sqlite and op-sqlite
-- **Version history** - Create, list, restore, and prune document snapshots
+- **Version history** - Create, list, restore, and delete document versions
+- **Auto-compaction** - Size-based per-document compaction (no cron jobs needed)
 
 ## Architecture
 
@@ -153,13 +154,10 @@ export const {
   insert,
   update,
   remove,
-  compact,
-  prune,
-  snapshot
+  versions
 } = r<Task>({
   collection: 'tasks',
-  compaction: { retention: 90 },    // Optional: customize compaction (days)
-  pruning: { retention: 180 }       // Optional: customize pruning (days)
+  compaction: { threshold: 5_000_000 },  // Optional: size threshold for auto-compaction (default: 5MB)
 });
 ```
 
@@ -167,12 +165,10 @@ export const {
 
 - `stream` - Real-time CRDT stream query (for client subscriptions)
 - `material` - SSR-friendly query (for server-side rendering)
-- `insert` - Dual-storage insert mutation
-- `update` - Dual-storage update mutation
-- `remove` - Dual-storage delete mutation
-- `compact` - Compaction function (for cron jobs)
-- `prune` - Snapshot cleanup function (for cron jobs)
-- `snapshot` - Version history APIs (create, list, get, restore, remove, prune)
+- `insert` - Dual-storage insert mutation (auto-compacts when threshold exceeded)
+- `update` - Dual-storage update mutation (auto-compacts when threshold exceeded)
+- `remove` - Dual-storage delete mutation (auto-compacts when threshold exceeded)
+- `versions` - Version history APIs (create, list, get, restore, remove)
 
 ### Step 4: Create a Custom Hook
 
@@ -376,7 +372,8 @@ export const {
   material,
   insert,
   update,
-  remove
+  remove,
+  versions
 } = r<Task>({
   collection: 'tasks',
 
@@ -395,8 +392,6 @@ export const {
       const userId = await ctx.auth.getUserIdentity();
       if (!userId) throw new Error('Unauthorized');
     },
-    evalCompact: async (ctx, collection) => { /* auth for compaction */ },
-    evalPrune: async (ctx, collection) => { /* auth for snapshot pruning */ },
     evalVersion: async (ctx, collection, documentId) => { /* auth for versioning */ },
     evalRestore: async (ctx, collection, documentId, versionId) => { /* auth for restore */ },
 
@@ -405,8 +400,6 @@ export const {
     onInsert: async (ctx, doc) => { /* after insert */ },
     onUpdate: async (ctx, doc) => { /* after update */ },
     onRemove: async (ctx, documentId) => { /* after remove */ },
-    onCompact: async (ctx, result) => { /* after compaction */ },
-    onPrune: async (ctx, result) => { /* after pruning */ },
     onVersion: async (ctx, result) => { /* after version created */ },
     onRestore: async (ctx, result) => { /* after restore */ },
 
@@ -441,41 +434,44 @@ const plainText = extract(notebook.content);
 const binding = await collection.utils.prose(notebookId, 'content');
 ```
 
-### Version History (Snapshots)
+### Version History
 
 Create and manage document version history:
 
 ```typescript
 // convex/tasks.ts
-export const { snapshot } = replicate<Task>({
+export const { versions } = replicate<Task>({
   collection: 'tasks',
 });
 
-// Create a snapshot
-await ctx.runMutation(api.tasks.snapshot.create, {
+// Create a version
+await ctx.runMutation(api.tasks.versions.create, {
   documentId: 'task-123',
   label: 'Before major edit',
   createdBy: 'user-456',
 });
 
 // List versions
-const versions = await ctx.runQuery(api.tasks.snapshot.list, {
+const versionList = await ctx.runQuery(api.tasks.versions.list, {
   documentId: 'task-123',
   limit: 10,
 });
 
+// Get a specific version
+const version = await ctx.runQuery(api.tasks.versions.get, {
+  versionId: 'version-789',
+});
+
 // Restore a version
-await ctx.runMutation(api.tasks.snapshot.restore, {
+await ctx.runMutation(api.tasks.versions.restore, {
   documentId: 'task-123',
   versionId: 'version-789',
   createBackup: true,  // Optional: create backup before restore
 });
 
-// Prune old versions
-await ctx.runMutation(api.tasks.snapshot.prune, {
-  documentId: 'task-123',
-  keepCount: 5,
-  retentionDays: 30,
+// Delete a version
+await ctx.runMutation(api.tasks.versions.remove, {
+  versionId: 'version-789',
 });
 ```
 
@@ -654,20 +650,9 @@ Configuration for the bound replicate function.
 interface ReplicateConfig<T> {
   collection: string;          // Collection name (e.g., 'tasks')
 
-  // Optional: Compaction settings
+  // Optional: Auto-compaction settings
   compaction?: {
-    retention: number;         // Days to retain deltas (default: 90)
-  };
-
-  // Optional: Pruning settings
-  pruning?: {
-    retention: number;         // Days to retain snapshots (default: 180)
-  };
-
-  // Optional: Version history settings
-  versioning?: {
-    keepCount?: number;        // Number of versions to keep (default: 10)
-    retentionDays?: number;    // Days to retain versions (default: 90)
+    threshold?: number;        // Size threshold in bytes (default: 5MB / 5_000_000)
   };
 
   // Optional: Hooks for permissions and lifecycle
@@ -676,11 +661,19 @@ interface ReplicateConfig<T> {
     evalRead?: (ctx, collection) => Promise<void>;
     evalWrite?: (ctx, doc) => Promise<void>;
     evalRemove?: (ctx, documentId) => Promise<void>;
+    evalVersion?: (ctx, collection, documentId) => Promise<void>;
+    evalRestore?: (ctx, collection, documentId, versionId) => Promise<void>;
 
     // Lifecycle callbacks (run after operation)
+    onStream?: (ctx, result) => Promise<void>;
     onInsert?: (ctx, doc) => Promise<void>;
     onUpdate?: (ctx, doc) => Promise<void>;
     onRemove?: (ctx, documentId) => Promise<void>;
+    onVersion?: (ctx, result) => Promise<void>;
+    onRestore?: (ctx, result) => Promise<void>;
+
+    // Transform hook (modify documents before returning)
+    transform?: (docs) => Promise<T[]>;
   };
 }
 ```
@@ -688,12 +681,10 @@ interface ReplicateConfig<T> {
 **Returns:** Object with generated functions:
 - `stream` - Real-time CRDT stream query
 - `material` - SSR-friendly query for hydration
-- `insert` - Dual-storage insert mutation
-- `update` - Dual-storage update mutation
-- `remove` - Dual-storage delete mutation
-- `compact` - Compaction function for cron jobs
-- `prune` - Snapshot cleanup function for cron jobs
-- `snapshot` - Version history APIs
+- `insert` - Dual-storage insert mutation (auto-compacts when threshold exceeded)
+- `update` - Dual-storage update mutation (auto-compacts when threshold exceeded)
+- `remove` - Dual-storage delete mutation (auto-compacts when threshold exceeded)
+- `versions` - Version history APIs (create, list, get, restore, remove)
 
 #### `table(userFields, applyIndexes?)`
 

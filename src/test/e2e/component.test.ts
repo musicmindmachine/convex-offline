@@ -258,10 +258,11 @@ describe('component queries', () => {
   it('stream returns snapshot when checkpoint gap detected', async () => {
     const t = convexTest(schema, modules);
 
-    // Create a snapshot and a delta after it
+    // Create a per-document snapshot and a delta after it
     await t.run(async (ctx) => {
       await ctx.db.insert('snapshots', {
         collection: 'tasks',
+        documentId: 'task-snapshot',
         snapshotBytes: new ArrayBuffer(100),
         latestCompactionTimestamp: 5000,
         createdAt: 5000,
@@ -298,23 +299,24 @@ describe('component queries', () => {
           .first();
 
         if (oldestDelta && checkpoint.lastModified < oldestDelta.timestamp) {
-          const snapshot = await ctx.db
+          // Get all per-document snapshots for this collection
+          const snapshots = await ctx.db
             .query('snapshots')
-            .withIndex('by_collection', (q) => q.eq('collection', 'tasks'))
-            .order('desc')
-            .first();
+            .withIndex('by_document', (q) => q.eq('collection', 'tasks'))
+            .collect();
 
-          if (snapshot) {
+          if (snapshots.length > 0) {
             return {
-              changes: [
-                {
-                  crdtBytes: snapshot.snapshotBytes,
-                  version: 0,
-                  timestamp: snapshot.createdAt,
-                  operationType: OperationType.Snapshot,
-                },
-              ],
-              checkpoint: { lastModified: snapshot.latestCompactionTimestamp },
+              changes: snapshots.map((snapshot) => ({
+                documentId: snapshot.documentId,
+                crdtBytes: snapshot.snapshotBytes,
+                version: 0,
+                timestamp: snapshot.createdAt,
+                operationType: OperationType.Snapshot,
+              })),
+              checkpoint: {
+                lastModified: Math.max(...snapshots.map((s) => s.latestCompactionTimestamp)),
+              },
               hasMore: false,
             };
           }
@@ -345,29 +347,22 @@ describe('component queries', () => {
     const t = convexTest(schema, modules);
 
     const result = await t.run(async (ctx) => {
-      const snapshot = await ctx.db
+      // Get all per-document snapshots for this collection
+      const snapshots = await ctx.db
         .query('snapshots')
-        .withIndex('by_collection', (q) => q.eq('collection', 'empty'))
-        .order('desc')
-        .first();
-
-      if (snapshot) {
-        return {
-          crdtBytes: snapshot.snapshotBytes,
-          checkpoint: { lastModified: snapshot.latestCompactionTimestamp },
-        };
-      }
+        .withIndex('by_document', (q) => q.eq('collection', 'empty'))
+        .collect();
 
       const deltas = await ctx.db
         .query('documents')
         .withIndex('by_collection', (q) => q.eq('collection', 'empty'))
         .collect();
 
-      if (deltas.length === 0) {
+      if (snapshots.length === 0 && deltas.length === 0) {
         return null;
       }
 
-      // Would merge deltas here
+      // Would merge snapshots and deltas here
       return { crdtBytes: new ArrayBuffer(0), checkpoint: { lastModified: 0 } };
     });
 

@@ -6,15 +6,115 @@ import { OperationType } from '$/shared/types.js';
 
 export { OperationType };
 
+// Default size threshold for auto-compaction (5MB)
+const DEFAULT_SIZE_THRESHOLD = 5_000_000;
+
+/**
+ * Auto-compacts a document's deltas into a snapshot when size threshold is exceeded.
+ * Returns null if no compaction needed, or the compaction result.
+ */
+async function _maybeCompactDocument(
+  ctx: any,
+  collection: string,
+  documentId: string,
+  threshold: number = DEFAULT_SIZE_THRESHOLD
+): Promise<{ deltasCompacted: number; snapshotSize: number } | null> {
+  const logger = getLogger(['compaction']);
+
+  // Get all deltas for this specific document
+  const deltas = await ctx.db
+    .query('documents')
+    .withIndex('by_collection_document_version', (q: any) =>
+      q.eq('collection', collection).eq('documentId', documentId)
+    )
+    .collect();
+
+  // Calculate total size
+  const totalSize = deltas.reduce((sum: number, d: any) => sum + d.crdtBytes.byteLength, 0);
+
+  // Skip if below size threshold
+  if (totalSize < threshold) {
+    return null;
+  }
+
+  logger.info('Auto-compacting document', {
+    collection,
+    documentId,
+    deltaCount: deltas.length,
+    totalSize,
+    threshold,
+  });
+
+  // Merge deltas into snapshot
+  const sorted = deltas.sort((a: any, b: any) => a.timestamp - b.timestamp);
+  const updates = sorted.map((d: any) => new Uint8Array(d.crdtBytes));
+  const compactedState = Y.mergeUpdatesV2(updates);
+
+  // Validate compacted state
+  const testDoc = new Y.Doc({ guid: `${collection}:${documentId}` });
+  try {
+    Y.applyUpdateV2(testDoc, compactedState);
+  } catch (error) {
+    logger.error('Compacted state validation failed', {
+      collection,
+      documentId,
+      error: String(error),
+    });
+    testDoc.destroy();
+    return null;
+  }
+  testDoc.destroy();
+
+  // Delete existing snapshot for this document (keep only 1)
+  const existingSnapshot = await ctx.db
+    .query('snapshots')
+    .withIndex('by_document', (q: any) =>
+      q.eq('collection', collection).eq('documentId', documentId)
+    )
+    .first();
+  if (existingSnapshot) {
+    await ctx.db.delete('snapshots', existingSnapshot._id);
+  }
+
+  // Store new per-document snapshot
+  await ctx.db.insert('snapshots', {
+    collection,
+    documentId,
+    snapshotBytes: compactedState.buffer as ArrayBuffer,
+    latestCompactionTimestamp: sorted[sorted.length - 1].timestamp,
+    createdAt: Date.now(),
+    metadata: {
+      deltaCount: deltas.length,
+      totalSize,
+    },
+  });
+
+  // Delete old deltas
+  for (const delta of sorted) {
+    await ctx.db.delete('documents', delta._id);
+  }
+
+  logger.info('Auto-compaction completed', {
+    collection,
+    documentId,
+    deltasCompacted: deltas.length,
+    snapshotSize: compactedState.length,
+  });
+
+  return { deltasCompacted: deltas.length, snapshotSize: compactedState.length };
+}
+
 export const insertDocument = mutation({
   args: {
     collection: v.string(),
     documentId: v.string(),
     crdtBytes: v.bytes(),
     version: v.number(),
+    threshold: v.optional(v.number()),
   },
   returns: v.object({
     success: v.boolean(),
+    compacted: v.optional(v.boolean()),
   }),
   handler: async (ctx, args) => {
     await ctx.db.insert('documents', {
@@ -25,7 +125,18 @@ export const insertDocument = mutation({
       timestamp: Date.now(),
     });
 
-    return { success: true };
+    // Auto-compact if size threshold exceeded
+    const compactionResult = await _maybeCompactDocument(
+      ctx,
+      args.collection,
+      args.documentId,
+      args.threshold ?? DEFAULT_SIZE_THRESHOLD
+    );
+
+    return {
+      success: true,
+      compacted: compactionResult !== null,
+    };
   },
 });
 
@@ -35,9 +146,11 @@ export const updateDocument = mutation({
     documentId: v.string(),
     crdtBytes: v.bytes(),
     version: v.number(),
+    threshold: v.optional(v.number()),
   },
   returns: v.object({
     success: v.boolean(),
+    compacted: v.optional(v.boolean()),
   }),
   handler: async (ctx, args) => {
     await ctx.db.insert('documents', {
@@ -48,7 +161,18 @@ export const updateDocument = mutation({
       timestamp: Date.now(),
     });
 
-    return { success: true };
+    // Auto-compact if size threshold exceeded
+    const compactionResult = await _maybeCompactDocument(
+      ctx,
+      args.collection,
+      args.documentId,
+      args.threshold ?? DEFAULT_SIZE_THRESHOLD
+    );
+
+    return {
+      success: true,
+      compacted: compactionResult !== null,
+    };
   },
 });
 
@@ -58,9 +182,11 @@ export const deleteDocument = mutation({
     documentId: v.string(),
     crdtBytes: v.bytes(),
     version: v.number(),
+    threshold: v.optional(v.number()),
   },
   returns: v.object({
     success: v.boolean(),
+    compacted: v.optional(v.boolean()),
   }),
   handler: async (ctx, args) => {
     await ctx.db.insert('documents', {
@@ -71,7 +197,18 @@ export const deleteDocument = mutation({
       timestamp: Date.now(),
     });
 
-    return { success: true };
+    // Auto-compact if size threshold exceeded
+    const compactionResult = await _maybeCompactDocument(
+      ctx,
+      args.collection,
+      args.documentId,
+      args.threshold ?? DEFAULT_SIZE_THRESHOLD
+    );
+
+    return {
+      success: true,
+      compacted: compactionResult !== null,
+    };
   },
 });
 
@@ -102,6 +239,7 @@ export const stream = query({
   handler: async (ctx, args) => {
     const limit = args.limit ?? 100;
 
+    // Get deltas newer than checkpoint
     const documents = await ctx.db
       .query('documents')
       .withIndex('by_timestamp', (q) =>
@@ -130,6 +268,7 @@ export const stream = query({
       };
     }
 
+    // Check for disparity - client checkpoint older than oldest delta
     const oldestDelta = await ctx.db
       .query('documents')
       .withIndex('by_timestamp', (q) => q.eq('collection', args.collection))
@@ -137,31 +276,37 @@ export const stream = query({
       .first();
 
     if (oldestDelta && args.checkpoint.lastModified < oldestDelta.timestamp) {
-      const snapshot = await ctx.db
+      // Disparity detected - need to send all per-document snapshots
+      // Get all snapshots for this collection
+      const snapshots = await ctx.db
         .query('snapshots')
-        .withIndex('by_collection', (q) => q.eq('collection', args.collection))
-        .order('desc')
-        .first();
+        .withIndex('by_document', (q) => q.eq('collection', args.collection))
+        .collect();
 
-      if (!snapshot) {
+      if (snapshots.length === 0) {
         throw new Error(
-          `Disparity detected but no snapshot available for collection: ${args.collection}. ` +
+          `Disparity detected but no snapshots available for collection: ${args.collection}. ` +
             `Client checkpoint: ${args.checkpoint.lastModified}, ` +
             `Oldest delta: ${oldestDelta.timestamp}`
         );
       }
 
+      // Return all snapshots as changes
+      const changes = snapshots.map((snapshot) => ({
+        documentId: snapshot.documentId,
+        crdtBytes: snapshot.snapshotBytes,
+        version: 0,
+        timestamp: snapshot.createdAt,
+        operationType: OperationType.Snapshot,
+      }));
+
+      // Find the latest compaction timestamp to use as checkpoint
+      const latestTimestamp = Math.max(...snapshots.map((s) => s.latestCompactionTimestamp));
+
       return {
-        changes: [
-          {
-            crdtBytes: snapshot.snapshotBytes,
-            version: 0,
-            timestamp: snapshot.createdAt,
-            operationType: OperationType.Snapshot,
-          },
-        ],
+        changes,
         checkpoint: {
-          lastModified: snapshot.latestCompactionTimestamp,
+          lastModified: latestTimestamp,
         },
         hasMore: false,
       };
@@ -191,230 +336,62 @@ export const getInitialState = query({
   handler: async (ctx, args) => {
     const logger = getLogger(['ssr']);
 
-    const snapshot = await ctx.db
+    // Get all per-document snapshots for this collection
+    const snapshots = await ctx.db
       .query('snapshots')
-      .withIndex('by_collection', (q) => q.eq('collection', args.collection))
-      .order('desc')
-      .first();
+      .withIndex('by_document', (q) => q.eq('collection', args.collection))
+      .collect();
 
-    if (snapshot) {
-      // Note: Despite the table name "snapshots", snapshotBytes contains a merged Yjs UPDATE
-      // (created via Y.mergeUpdatesV2), not a Yjs snapshot (Y.encodeSnapshotV2).
-      // This can be applied directly with Y.applyUpdateV2() on the client.
-      logger.info('Serving initial state from compacted snapshot', {
-        collection: args.collection,
-        snapshotSize: snapshot.snapshotBytes.byteLength,
-        checkpoint: snapshot.latestCompactionTimestamp,
-      });
-
-      return {
-        crdtBytes: snapshot.snapshotBytes,
-        checkpoint: {
-          lastModified: snapshot.latestCompactionTimestamp,
-        },
-      };
-    }
-
+    // Get all deltas for this collection
     const deltas = await ctx.db
       .query('documents')
       .withIndex('by_collection', (q) => q.eq('collection', args.collection))
       .collect();
 
-    if (deltas.length === 0) {
+    if (snapshots.length === 0 && deltas.length === 0) {
       logger.info('No initial state available - collection is empty', {
         collection: args.collection,
       });
       return null;
     }
 
-    logger.info('Reconstructing initial state from deltas', {
+    // Merge all snapshots and deltas together
+    const updates: Uint8Array[] = [];
+    let latestTimestamp = 0;
+
+    // Add all per-document snapshots
+    for (const snapshot of snapshots) {
+      updates.push(new Uint8Array(snapshot.snapshotBytes));
+      latestTimestamp = Math.max(latestTimestamp, snapshot.latestCompactionTimestamp);
+    }
+
+    // Add all deltas
+    const sorted = deltas.sort((a, b) => a.timestamp - b.timestamp);
+    for (const delta of sorted) {
+      updates.push(new Uint8Array(delta.crdtBytes));
+      latestTimestamp = Math.max(latestTimestamp, delta.timestamp);
+    }
+
+    logger.info('Reconstructing initial state', {
       collection: args.collection,
+      snapshotCount: snapshots.length,
       deltaCount: deltas.length,
     });
 
-    const sorted = deltas.sort((a, b) => a.timestamp - b.timestamp);
-
-    const updates = sorted.map((d) => new Uint8Array(d.crdtBytes));
     const merged = Y.mergeUpdatesV2(updates);
 
     logger.info('Initial state reconstructed', {
       collection: args.collection,
       originalSize: updates.reduce((sum, u) => sum + u.byteLength, 0),
       mergedSize: merged.byteLength,
-      compressionRatio: (
-        updates.reduce((sum, u) => sum + u.byteLength, 0) / merged.byteLength
-      ).toFixed(2),
     });
 
     return {
       crdtBytes: merged.buffer as ArrayBuffer,
       checkpoint: {
-        lastModified: sorted[sorted.length - 1].timestamp,
+        lastModified: latestTimestamp,
       },
     };
-  },
-});
-
-async function _compactCollectionInternal(ctx: any, collection: string, retentionDays?: number) {
-  const cutoffMs = (retentionDays ?? 90) * 24 * 60 * 60 * 1000;
-  const cutoffTime = Date.now() - cutoffMs;
-
-  const logger = getLogger(['compaction']);
-
-  logger.info('Starting compaction', {
-    collection,
-    retentionDays: retentionDays ?? 90,
-    cutoffTime,
-  });
-
-  const oldDeltas = await ctx.db
-    .query('documents')
-    .withIndex('by_timestamp', (q: any) =>
-      q.eq('collection', collection).lt('timestamp', cutoffTime)
-    )
-    .collect();
-
-  if (oldDeltas.length < 100) {
-    logger.info('Skipping compaction - insufficient deltas', {
-      collection,
-      deltaCount: oldDeltas.length,
-    });
-    return {
-      skipped: true,
-      reason: 'insufficient deltas',
-      deltaCount: oldDeltas.length,
-    };
-  }
-
-  const sorted = oldDeltas.sort((a: any, b: any) => a.timestamp - b.timestamp);
-
-  logger.info('Compacting deltas', {
-    collection,
-    deltaCount: sorted.length,
-    oldestTimestamp: sorted[0].timestamp,
-    newestTimestamp: sorted[sorted.length - 1].timestamp,
-  });
-
-  const updates = sorted.map((d: any) => new Uint8Array(d.crdtBytes));
-
-  // Merge all deltas into a single compacted state
-  // NOTE: We store the merged UPDATE, not a Yjs snapshot.
-  // Y.snapshot() creates a "delete set" for version comparison, not document state.
-  // Y.mergeUpdatesV2() creates actual document state that can be applied with applyUpdateV2().
-  const compactedState = Y.mergeUpdatesV2(updates);
-
-  logger.info('Created compacted state', {
-    collection,
-    compactedSize: compactedState.length,
-    compressionRatio: (
-      sorted.reduce((sum: any, d: any) => sum + d.crdtBytes.byteLength, 0) / compactedState.length
-    ).toFixed(2),
-  });
-
-  // Validate: verify compacted state can be applied to a fresh document
-  const testDoc = new Y.Doc({ guid: collection });
-  try {
-    Y.applyUpdateV2(testDoc, compactedState);
-  } catch (error) {
-    logger.error('Compacted state validation failed - cannot apply to document', {
-      collection,
-      error: String(error),
-    });
-    testDoc.destroy();
-    return {
-      success: false,
-      error: 'validation_failed',
-    };
-  }
-  testDoc.destroy();
-
-  await ctx.db.insert('snapshots', {
-    collection,
-    snapshotBytes: compactedState.buffer as ArrayBuffer,
-    latestCompactionTimestamp: sorted[sorted.length - 1].timestamp,
-    createdAt: Date.now(),
-  });
-
-  for (const delta of sorted) {
-    await ctx.db.delete('documents', delta._id);
-  }
-
-  const result = {
-    success: true,
-    deltasCompacted: sorted.length,
-    snapshotSize: compactedState.length,
-    oldestDelta: sorted[0].timestamp,
-    newestDelta: sorted[sorted.length - 1].timestamp,
-  };
-
-  logger.info('Compaction completed', result);
-
-  return result;
-}
-
-export const compactCollectionByName = mutation({
-  args: {
-    collection: v.string(),
-    retentionDays: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    return await _compactCollectionInternal(ctx, args.collection, args.retentionDays);
-  },
-});
-
-export const pruneCollectionByName = mutation({
-  args: {
-    collection: v.string(),
-    retentionDays: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    const retentionMs = (args.retentionDays ?? 180) * 24 * 60 * 60 * 1000;
-    const cutoffTime = Date.now() - retentionMs;
-
-    const logger = getLogger(['compaction']);
-
-    logger.info('Starting snapshot cleanup for collection', {
-      collection: args.collection,
-      retentionDays: args.retentionDays ?? 180,
-      cutoffTime,
-    });
-
-    const snapshots = await ctx.db
-      .query('snapshots')
-      .withIndex('by_collection', (q) => q.eq('collection', args.collection))
-      .order('desc')
-      .collect();
-
-    logger.debug('Processing collection snapshots', {
-      collection: args.collection,
-      snapshotCount: snapshots.length,
-    });
-
-    let deletedCount = 0;
-
-    for (let i = 2; i < snapshots.length; i++) {
-      const snapshot = snapshots[i];
-
-      if (snapshot.createdAt < cutoffTime) {
-        await ctx.db.delete('snapshots', snapshot._id);
-        deletedCount++;
-        logger.debug('Deleted old snapshot', {
-          collection: args.collection,
-          snapshotAge: Date.now() - snapshot.createdAt,
-          createdAt: snapshot.createdAt,
-        });
-      }
-    }
-
-    const result = {
-      collection: args.collection,
-      deletedCount,
-      snapshotsRemaining: Math.min(2, snapshots.length),
-    };
-
-    logger.info('Snapshot cleanup completed for collection', result);
-
-    return result;
   },
 });
 
@@ -423,7 +400,7 @@ export const pruneCollectionByName = mutation({
 // ============================================================================
 
 /**
- * Reconstructs a document's current state from all deltas.
+ * Reconstructs a document's current state from its snapshot and deltas.
  * Returns the merged state bytes that can be applied to a fresh Y.Doc.
  */
 async function _reconstructDocumentState(
@@ -431,11 +408,12 @@ async function _reconstructDocumentState(
   collection: string,
   documentId: string
 ): Promise<{ stateBytes: Uint8Array; latestTimestamp: number } | null> {
-  // First check for a compacted snapshot
+  // Get per-document snapshot if available
   const snapshot = await ctx.db
     .query('snapshots')
-    .withIndex('by_collection', (q: any) => q.eq('collection', collection))
-    .order('desc')
+    .withIndex('by_document', (q: any) =>
+      q.eq('collection', collection).eq('documentId', documentId)
+    )
     .first();
 
   // Get all deltas for this specific document
@@ -453,7 +431,7 @@ async function _reconstructDocumentState(
   const updates: Uint8Array[] = [];
   let latestTimestamp = 0;
 
-  // Start with snapshot if available and relevant
+  // Start with snapshot if available
   if (snapshot) {
     updates.push(new Uint8Array(snapshot.snapshotBytes));
     latestTimestamp = snapshot.latestCompactionTimestamp;
@@ -710,55 +688,5 @@ export const deleteVersion = mutation({
     });
 
     return { success: true };
-  },
-});
-
-export const pruneVersions = mutation({
-  args: {
-    collection: v.string(),
-    documentId: v.string(),
-    keepCount: v.optional(v.number()),
-    retentionDays: v.optional(v.number()),
-  },
-  returns: v.object({
-    deletedCount: v.number(),
-    remainingCount: v.number(),
-  }),
-  handler: async (ctx, args) => {
-    const logger = getLogger(['versions']);
-    const keepCount = args.keepCount ?? 10;
-    const retentionMs = (args.retentionDays ?? 90) * 24 * 60 * 60 * 1000;
-    const cutoffTime = Date.now() - retentionMs;
-
-    const versions = await ctx.db
-      .query('versions')
-      .withIndex('by_document', (q) =>
-        q.eq('collection', args.collection).eq('documentId', args.documentId)
-      )
-      .order('desc')
-      .collect();
-
-    let deletedCount = 0;
-
-    // Keep the most recent `keepCount` versions, delete older ones past retention
-    for (let i = keepCount; i < versions.length; i++) {
-      const version = versions[i];
-      if (version.createdAt < cutoffTime) {
-        await ctx.db.delete('versions', version._id);
-        deletedCount++;
-      }
-    }
-
-    logger.info('Pruned versions', {
-      collection: args.collection,
-      documentId: args.documentId,
-      deletedCount,
-      remainingCount: versions.length - deletedCount,
-    });
-
-    return {
-      deletedCount,
-      remainingCount: versions.length - deletedCount,
-    };
   },
 });

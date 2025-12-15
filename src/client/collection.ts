@@ -9,7 +9,6 @@ import { getLogger } from '$/client/logger.js';
 import { ProseError, NonRetriableError } from '$/client/errors.js';
 import { Checkpoint, createCheckpointLayer } from '$/client/services/checkpoint.js';
 import { Reconciliation, ReconciliationLive } from '$/client/services/reconciliation.js';
-import { SnapshotLive } from '$/client/services/snapshot.js';
 import {
   initializeReplicateParams,
   replicateDelete,
@@ -586,11 +585,7 @@ export function convexCollectionOptions<T extends object>({
 
   // Create services layer with the persistence KV store
   const checkpointLayer = createCheckpointLayer(persistence.kv);
-  const servicesLayer = Layer.mergeAll(
-    checkpointLayer,
-    ReconciliationLive,
-    Layer.provide(SnapshotLive, checkpointLayer)
-  );
+  const servicesLayer = Layer.mergeAll(checkpointLayer, ReconciliationLive);
 
   let resolvePersistenceReady: (() => void) | undefined;
   const persistenceReadyPromise = new Promise<void>((resolve) => {

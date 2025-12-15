@@ -15,10 +15,17 @@ export default defineSchema({
 
   snapshots: defineTable({
     collection: v.string(),
+    documentId: v.string(),
     snapshotBytes: v.bytes(),
     latestCompactionTimestamp: v.number(),
     createdAt: v.number(),
-  }).index('by_collection', ['collection']),
+    metadata: v.optional(
+      v.object({
+        deltaCount: v.number(),
+        totalSize: v.number(),
+      })
+    ),
+  }).index('by_document', ['collection', 'documentId']),
 
   versions: defineTable({
     collection: v.string(),

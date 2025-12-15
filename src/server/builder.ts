@@ -6,9 +6,8 @@ import { Replicate } from '$/server/storage.js';
  */
 export interface ReplicateConfig<T extends object> {
   collection: string;
-  compaction?: { retention: number };
-  pruning?: { retention: number };
-  versioning?: { keepCount?: number; retentionDays?: number };
+  /** Size threshold for auto-compaction (default: 5MB). Set to 0 to disable. */
+  compaction?: { threshold?: number };
   hooks?: {
     evalRead?: (ctx: GenericQueryCtx<GenericDataModel>, collection: string) => void | Promise<void>;
     evalWrite?: (ctx: GenericMutationCtx<GenericDataModel>, doc: T) => void | Promise<void>;
@@ -18,16 +17,6 @@ export interface ReplicateConfig<T extends object> {
     onUpdate?: (ctx: GenericMutationCtx<GenericDataModel>, doc: T) => void | Promise<void>;
     onRemove?: (ctx: GenericMutationCtx<GenericDataModel>, docId: string) => void | Promise<void>;
     transform?: (docs: T[]) => T[] | Promise<T[]>;
-    evalCompact?: (
-      ctx: GenericMutationCtx<GenericDataModel>,
-      collection: string
-    ) => void | Promise<void>;
-    evalPrune?: (
-      ctx: GenericMutationCtx<GenericDataModel>,
-      collection: string
-    ) => void | Promise<void>;
-    onCompact?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
-    onPrune?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
     evalVersion?: (
       ctx: GenericMutationCtx<GenericDataModel>,
       collection: string,
@@ -72,7 +61,9 @@ export function replicate(component: any) {
  * Internal implementation for replicate.
  */
 function replicateInternal<T extends object>(component: any, config: ReplicateConfig<T>) {
-  const storage = new Replicate<T>(component, config.collection);
+  const storage = new Replicate<T>(component, config.collection, {
+    threshold: config.compaction?.threshold,
+  });
 
   return {
     stream: storage.createStreamQuery({
@@ -100,19 +91,7 @@ function replicateInternal<T extends object>(component: any, config: ReplicateCo
       onRemove: config.hooks?.onRemove,
     }),
 
-    compact: storage.createCompactMutation({
-      retention: config.compaction?.retention,
-      evalCompact: config.hooks?.evalCompact,
-      onCompact: config.hooks?.onCompact,
-    }),
-
-    prune: storage.createPruneMutation({
-      retention: config.pruning?.retention,
-      evalPrune: config.hooks?.evalPrune,
-      onPrune: config.hooks?.onPrune,
-    }),
-
-    snapshot: {
+    versions: {
       create: storage.createVersionMutation({
         evalVersion: config.hooks?.evalVersion,
         onVersion: config.hooks?.onVersion,
@@ -132,11 +111,6 @@ function replicateInternal<T extends object>(component: any, config: ReplicateCo
       }),
 
       remove: storage.createDeleteVersionMutation(),
-
-      prune: storage.createPruneVersionsMutation({
-        keepCount: config.versioning?.keepCount,
-        retentionDays: config.versioning?.retentionDays,
-      }),
     },
   };
 }
