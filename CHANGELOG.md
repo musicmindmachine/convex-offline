@@ -9,12 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Universal SQLite persistence** - Works in both browser and React Native with automatic platform detection:
+  - Browser: Uses sql.js (SQLite compiled to WASM, ~500KB) with optional OPFS persistence
+  - React Native: Uses op-sqlite (native SQLite)
+  - Auto-detects platform via `navigator.product === 'ReactNative'`
+  - Implements abstract-level interface with y-leveldb for Yjs persistence
+  - 12 unit tests covering key-value operations, batching, iteration, and lifecycle
 - Swappable persistence layer with three providers:
   - `indexeddbPersistence()` - Browser using y-indexeddb and browser-level
-  - `sqlitePersistence()` - React Native using y-op-sqlite and op-sqlite
+  - `sqlitePersistence()` - Universal SQLite (browser + React Native)
   - `memoryPersistence()` - In-memory for testing
 - `NonRetriableError` class for errors that should not be retried (auth failures, validation)
 - Database name validation in SQLite persistence to prevent path traversal attacks
+- Type declarations for y-leveldb module (fixes broken package.json exports)
 
 ### Changed
 

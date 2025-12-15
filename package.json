@@ -73,10 +73,13 @@
   "dependencies": {
     "@effect/platform": "0.93.8",
     "@logtape/logtape": "1.2.2",
+    "abstract-level": "3.1.1",
     "browser-level": "3.0.0",
     "effect": "3.19.12",
     "lib0": "0.2.114",
+    "sql.js": "1.13.0",
     "y-indexeddb": "9.0.12",
+    "y-leveldb": "0.2.0",
     "yjs": "13.6.27"
   },
   "peerDependencies": {
@@ -103,6 +106,7 @@
     "@rslib/core": "0.18.4",
     "@tanstack/db": "0.5.12",
     "@types/node": "25.0.2",
+    "@types/sql.js": "1.4.9",
     "convex": "1.31.0",
     "convex-test": "0.0.41",
     "dotenv": "17.2.3",

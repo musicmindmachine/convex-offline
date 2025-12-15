@@ -480,7 +480,7 @@ Choose the right storage backend for your platform:
 ```typescript
 import {
   indexeddbPersistence,  // Browser (default)
-  sqlitePersistence,     // React Native
+  sqlitePersistence,     // Universal: Browser + React Native
   memoryPersistence,     // Testing
 } from '@trestleinc/replicate/client';
 
@@ -490,11 +490,11 @@ convexCollectionOptions<Task>({
   persistence: indexeddbPersistence(),
 });
 
-// React Native: SQLite
-// Requires: y-op-sqlite, @op-engineering/op-sqlite
+// Universal SQLite: Works in both browser AND React Native
+// Auto-detects platform and uses appropriate SQLite backend
 convexCollectionOptions<Task>({
   // ... other options
-  persistence: sqlitePersistence('my-app-db'),
+  persistence: await sqlitePersistence('my-app-db'),
 });
 
 // Testing: In-memory (no persistence)
@@ -504,9 +504,12 @@ convexCollectionOptions<Task>({
 });
 ```
 
-**IndexedDB** (default) - Uses y-indexeddb for Y.Doc persistence and browser-level for metadata.
+**IndexedDB** (default) - Uses y-indexeddb for Y.Doc persistence and browser-level for metadata. Browser only.
 
-**SQLite** - Uses y-op-sqlite for Y.Doc persistence and op-sqlite for metadata. Requires React Native with native modules.
+**SQLite** - Universal persistence for browser and React Native. Auto-detects platform:
+- **Browser**: Uses sql.js (SQLite compiled to WASM, ~500KB) with optional OPFS persistence
+- **React Native**: Uses op-sqlite (native SQLite)
+- Uses y-leveldb for Y.Doc persistence and sqlite-level for metadata
 
 **Memory** - No persistence, useful for testing without IndexedDB side effects.
 

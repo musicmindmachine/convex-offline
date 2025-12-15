@@ -54,7 +54,11 @@ src/
 │   ├── persistence/         # Swappable storage backends
 │   │   ├── types.ts         # Persistence, PersistenceProvider, KeyValueStore
 │   │   ├── indexeddb.ts     # Browser: y-indexeddb + browser-level
-│   │   ├── sqlite.ts        # React Native: y-op-sqlite + op-sqlite
+│   │   ├── sqlite.ts        # Universal: y-leveldb + sqlite-level (browser + RN)
+│   │   ├── sqlite-level.ts  # abstract-level implementation for SQLite
+│   │   ├── adapters/
+│   │   │   ├── sqljs.ts     # Browser: sql.js WASM adapter with OPFS
+│   │   │   └── opsqlite.ts  # React Native: op-sqlite native adapter
 │   │   └── memory.ts        # Testing: in-memory (no persistence)
 │   └── services/            # Core services (Effect-based)
 │       ├── checkpoint.ts    # Sync checkpoints in persistence KV
@@ -109,7 +113,7 @@ convexCollectionOptions()    // Create collection options for TanStack DB
 
 // Persistence providers (swappable storage backends)
 indexeddbPersistence()       // Browser: IndexedDB (default)
-sqlitePersistence()          // React Native: SQLite
+sqlitePersistence()          // Universal: SQLite (browser + React Native)
 memoryPersistence()          // Testing: in-memory
 
 // Text extraction
