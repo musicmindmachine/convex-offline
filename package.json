@@ -77,7 +77,6 @@
     "browser-level": "3.0.0",
     "effect": "3.19.12",
     "lib0": "0.2.114",
-    "sql.js": "1.13.0",
     "y-indexeddb": "9.0.12",
     "y-leveldb": "0.2.0",
     "yjs": "13.6.27"
@@ -87,16 +86,12 @@
     "convex": "^1.31.0"
   },
   "peerDependenciesMeta": {
-    "y-op-sqlite": {
+    "sql.js": {
       "optional": true
     },
     "@op-engineering/op-sqlite": {
       "optional": true
     }
-  },
-  "optionalDependencies": {
-    "y-op-sqlite": "1.0.7",
-    "@op-engineering/op-sqlite": "15.1.6"
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.8",

@@ -1,22 +1,83 @@
 /**
- * sql.js adapter for browser SQLite.
+ * sql.js adapter wrapper for browser SQLite.
  *
- * Uses sql.js (SQLite compiled to WebAssembly) for browser environments.
- * Optionally supports OPFS for persistent storage in modern browsers.
+ * The consuming app imports sql.js and creates the database,
+ * then passes it to this wrapper.
+ *
+ * @example
+ * ```typescript
+ * import initSqlJs from 'sql.js';
+ * import { SqlJsAdapter } from '@trestleinc/replicate/client';
+ *
+ * const SQL = await initSqlJs({ locateFile: f => `/wasm/${f}` });
+ * const db = new SQL.Database();
+ * const adapter = new SqlJsAdapter(db, {
+ *   onPersist: async (data) => {
+ *     // Persist to OPFS, localStorage, etc.
+ *   }
+ * });
+ * ```
  */
 import type { SqliteAdapter } from '../sqlite-level.js';
-import type { Database as SqlJsDatabase, SqlJsStatic, BindParams } from 'sql.js';
 
 /**
- * sql.js adapter for browser SQLite.
+ * Interface for sql.js Database.
+ * Consumer must install sql.js and pass a Database instance.
+ */
+export interface SqlJsDatabase {
+  run(sql: string, params?: unknown[]): void;
+  prepare(sql: string): {
+    bind(params?: unknown[]): void;
+    step(): boolean;
+    getAsObject(): Record<string, unknown>;
+    free(): void;
+  };
+  export(): Uint8Array;
+  close(): void;
+}
+
+/**
+ * Options for the SqlJsAdapter.
+ */
+export interface SqlJsAdapterOptions {
+  /**
+   * Callback to persist database after write operations.
+   * Called with the exported database bytes.
+   *
+   * @example OPFS persistence
+   * ```typescript
+   * onPersist: async (data) => {
+   *   const root = await navigator.storage.getDirectory();
+   *   const handle = await root.getFileHandle('myapp.sqlite', { create: true });
+   *   const writable = await handle.createWritable();
+   *   await writable.write(data.buffer);
+   *   await writable.close();
+   * }
+   * ```
+   */
+  onPersist?: (data: Uint8Array) => Promise<void>;
+}
+
+/**
+ * Wraps a sql.js Database as a SqliteAdapter.
+ *
+ * @example
+ * ```typescript
+ * import initSqlJs from 'sql.js';
+ * import { SqlJsAdapter } from '@trestleinc/replicate/client';
+ *
+ * const SQL = await initSqlJs();
+ * const db = new SQL.Database();
+ * const adapter = new SqlJsAdapter(db);
+ * ```
  */
 export class SqlJsAdapter implements SqliteAdapter {
   private db: SqlJsDatabase;
-  private persistPath: string | null;
+  private onPersist?: (data: Uint8Array) => Promise<void>;
 
-  constructor(db: SqlJsDatabase, persistPath: string | null = null) {
+  constructor(db: SqlJsDatabase, options: SqlJsAdapterOptions = {}) {
     this.db = db;
-    this.persistPath = persistPath;
+    this.onPersist = options.onPersist;
   }
 
   async execute(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> {
@@ -32,7 +93,7 @@ export class SqlJsAdapter implements SqliteAdapter {
       sql.trim().toUpperCase().startsWith('COMMIT') ||
       sql.trim().toUpperCase().startsWith('ROLLBACK')
     ) {
-      this.db.run(sql, params as BindParams);
+      this.db.run(sql, params);
       await this.persist();
       return { rows };
     }
@@ -40,7 +101,7 @@ export class SqlJsAdapter implements SqliteAdapter {
     // Handle SELECT statements
     const stmt = this.db.prepare(sql);
     if (params && params.length > 0) {
-      stmt.bind(params as BindParams);
+      stmt.bind(params);
     }
 
     while (stmt.step()) {
@@ -56,80 +117,12 @@ export class SqlJsAdapter implements SqliteAdapter {
   }
 
   /**
-   * Persist database to OPFS if available.
+   * Persist database using the onPersist callback if provided.
    */
   private async persist(): Promise<void> {
-    if (!this.persistPath) return;
-
-    try {
-      // Check if OPFS is available
-      if (typeof navigator !== 'undefined' && 'storage' in navigator) {
-        const root = await navigator.storage.getDirectory();
-        const fileHandle = await root.getFileHandle(this.persistPath, { create: true });
-        const writable = await fileHandle.createWritable();
-        const data = this.db.export();
-        // Write the raw ArrayBuffer (copy to ensure ownership)
-        const buffer = new Uint8Array(data).buffer as ArrayBuffer;
-        await writable.write(buffer);
-        await writable.close();
-      }
-    } catch {
-      // OPFS not available, skip persistence
+    if (this.onPersist) {
+      const data = this.db.export();
+      await this.onPersist(new Uint8Array(data));
     }
   }
-}
-
-interface SqlJsAdapterOptions {
-  /** Database name for OPFS persistence */
-  dbName?: string;
-  /** Enable OPFS persistence (default: true if available) */
-  persist?: boolean;
-  /** Custom WASM file URL */
-  wasmUrl?: string;
-}
-
-/**
- * Create a sql.js adapter for browser SQLite.
- *
- * @example
- * ```typescript
- * const adapter = await createSqlJsAdapter({ dbName: 'myapp' });
- * const db = new SqliteLevel('myapp');
- * db.setAdapterFactory(() => Promise.resolve(adapter));
- * await db.open();
- * ```
- */
-export async function createSqlJsAdapter(
-  options: SqlJsAdapterOptions = {}
-): Promise<SqliteAdapter> {
-  const { dbName = 'replicate', persist = true, wasmUrl } = options;
-  const persistPath = persist ? `${dbName}.sqlite` : null;
-
-  // Dynamically import sql.js
-  const initSqlJs = (await import('sql.js')).default as (options?: {
-    locateFile?: (file: string) => string;
-  }) => Promise<SqlJsStatic>;
-
-  // Initialize sql.js
-  const SQL = await initSqlJs({
-    locateFile: wasmUrl ? () => wasmUrl : undefined,
-  });
-
-  // Try to load existing database from OPFS
-  let existingData: Uint8Array | null = null;
-  if (persist && typeof navigator !== 'undefined' && 'storage' in navigator) {
-    try {
-      const root = await navigator.storage.getDirectory();
-      const fileHandle = await root.getFileHandle(`${dbName}.sqlite`);
-      const file = await fileHandle.getFile();
-      existingData = new Uint8Array(await file.arrayBuffer());
-    } catch {
-      // No existing database, start fresh
-    }
-  }
-
-  // Create database (with existing data if available)
-  const db = existingData ? new SQL.Database(existingData) : new SQL.Database();
-
-  return new SqlJsAdapter(db, persistPath);
 }

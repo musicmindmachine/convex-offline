@@ -17,19 +17,6 @@ export interface ReplicateConfig<T extends object> {
     onUpdate?: (ctx: GenericMutationCtx<GenericDataModel>, doc: T) => void | Promise<void>;
     onRemove?: (ctx: GenericMutationCtx<GenericDataModel>, docId: string) => void | Promise<void>;
     transform?: (docs: T[]) => T[] | Promise<T[]>;
-    evalVersion?: (
-      ctx: GenericMutationCtx<GenericDataModel>,
-      collection: string,
-      documentId: string
-    ) => void | Promise<void>;
-    onVersion?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
-    evalRestore?: (
-      ctx: GenericMutationCtx<GenericDataModel>,
-      collection: string,
-      documentId: string,
-      versionId: string
-    ) => void | Promise<void>;
-    onRestore?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
   };
 }
 
@@ -90,27 +77,5 @@ function replicateInternal<T extends object>(component: any, config: ReplicateCo
       evalRemove: config.hooks?.evalRemove,
       onRemove: config.hooks?.onRemove,
     }),
-
-    versions: {
-      create: storage.createVersionMutation({
-        evalVersion: config.hooks?.evalVersion,
-        onVersion: config.hooks?.onVersion,
-      }),
-
-      list: storage.createListVersionsQuery({
-        evalRead: config.hooks?.evalRead,
-      }),
-
-      get: storage.createGetVersionQuery({
-        evalRead: config.hooks?.evalRead,
-      }),
-
-      restore: storage.createRestoreVersionMutation({
-        evalRestore: config.hooks?.evalRestore,
-        onRestore: config.hooks?.onRestore,
-      }),
-
-      remove: storage.createDeleteVersionMutation(),
-    },
   };
 }

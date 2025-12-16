@@ -122,7 +122,6 @@ export class Replicate<T extends object> {
         documentId: v.string(),
         crdtBytes: v.bytes(),
         materializedDoc: v.any(),
-        version: v.number(),
       },
       returns: v.object({
         success: v.boolean(),
@@ -135,18 +134,18 @@ export class Replicate<T extends object> {
           await opts.evalWrite(ctx, doc);
         }
 
+        const version = Date.now();
         await ctx.runMutation(component.public.insertDocument, {
           collection,
           documentId: args.documentId,
           crdtBytes: args.crdtBytes,
-          version: args.version,
+          version,
           threshold,
         });
 
         await ctx.db.insert(collection, {
           id: args.documentId,
           ...(args.materializedDoc as object),
-          version: args.version,
           timestamp: Date.now(),
         });
 
@@ -159,7 +158,6 @@ export class Replicate<T extends object> {
           metadata: {
             documentId: args.documentId,
             timestamp: Date.now(),
-            version: args.version,
             collection,
           },
         };
@@ -180,54 +178,53 @@ export class Replicate<T extends object> {
         documentId: v.string(),
         crdtBytes: v.bytes(),
         materializedDoc: v.any(),
-        version: v.number(),
       },
       returns: v.object({
         success: v.boolean(),
-        skipped: v.optional(v.boolean()),
         metadata: v.any(),
       }),
       handler: async (ctx, args) => {
         const doc = args.materializedDoc as T;
 
+        console.log('[REPLICATE-SERVER] Update mutation:', {
+          documentId: args.documentId,
+          collection,
+          materializedDocKeys: Object.keys(args.materializedDoc || {}),
+          hasContent: 'content' in (args.materializedDoc || {}),
+        });
+
         if (opts?.evalWrite) {
           await opts.evalWrite(ctx, doc);
         }
 
+        const version = Date.now();
         await ctx.runMutation(component.public.updateDocument, {
           collection,
           documentId: args.documentId,
           crdtBytes: args.crdtBytes,
-          version: args.version,
+          version,
           threshold,
         });
 
         const existing = await ctx.db
           .query(collection)
-          .filter((q) => q.eq(q.field('id'), args.documentId))
+          .withIndex('by_doc_id', (q) => q.eq('id', args.documentId))
           .first();
 
-        if (existing) {
-          const clientVersion = args.version as number;
-          const serverVersion = (existing as any).version as number;
-          if (serverVersion >= clientVersion) {
-            return {
-              success: false,
-              skipped: true,
-              metadata: {
-                documentId: args.documentId,
-                serverVersion,
-                clientVersion,
-                collection,
-              },
-            };
-          }
+        console.log(
+          '[REPLICATE-SERVER] Existing doc:',
+          existing ? 'FOUND' : 'NOT FOUND',
+          args.documentId
+        );
 
+        if (existing) {
           await ctx.db.patch(collection, existing._id, {
             ...(args.materializedDoc as object),
-            version: args.version,
             timestamp: Date.now(),
           });
+          console.log('[REPLICATE-SERVER] Patched document:', args.documentId);
+        } else {
+          console.error('[REPLICATE-SERVER] Document not found for update:', args.documentId);
         }
 
         if (opts?.onUpdate) {
@@ -239,7 +236,6 @@ export class Replicate<T extends object> {
           metadata: {
             documentId: args.documentId,
             timestamp: Date.now(),
-            version: args.version,
             collection,
           },
         };
@@ -259,7 +255,6 @@ export class Replicate<T extends object> {
       args: {
         documentId: v.string(),
         crdtBytes: v.bytes(),
-        version: v.number(),
       },
       returns: v.object({
         success: v.boolean(),
@@ -271,17 +266,18 @@ export class Replicate<T extends object> {
           await opts.evalRemove(ctx, documentId);
         }
 
+        const version = Date.now();
         await ctx.runMutation(component.public.deleteDocument, {
           collection,
           documentId: documentId,
           crdtBytes: args.crdtBytes,
-          version: args.version,
+          version,
           threshold,
         });
 
         const existing = await ctx.db
           .query(collection)
-          .filter((q) => q.eq(q.field('id'), documentId))
+          .withIndex('by_doc_id', (q) => q.eq('id', documentId))
           .first();
 
         if (existing) {
@@ -297,200 +293,9 @@ export class Replicate<T extends object> {
           metadata: {
             documentId: documentId,
             timestamp: Date.now(),
-            version: args.version,
             collection,
           },
         };
-      },
-    });
-  }
-
-  // ============================================================================
-  // Version History Methods
-  // ============================================================================
-
-  createVersionMutation(opts?: {
-    evalVersion?: (
-      ctx: GenericMutationCtx<GenericDataModel>,
-      collection: string,
-      documentId: string
-    ) => void | Promise<void>;
-    onVersion?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
-  }) {
-    const component = this.component;
-    const collection = this.collectionName;
-
-    return mutationGeneric({
-      args: {
-        documentId: v.string(),
-        label: v.optional(v.string()),
-        createdBy: v.optional(v.string()),
-      },
-      returns: v.object({
-        versionId: v.string(),
-        createdAt: v.number(),
-      }),
-      handler: async (ctx, args) => {
-        if (opts?.evalVersion) {
-          await opts.evalVersion(ctx, collection, args.documentId);
-        }
-
-        const result = await ctx.runMutation(component.public.createVersion, {
-          collection,
-          documentId: args.documentId,
-          label: args.label,
-          createdBy: args.createdBy,
-        });
-
-        if (opts?.onVersion) {
-          await opts.onVersion(ctx, result);
-        }
-
-        return result;
-      },
-    });
-  }
-
-  createListVersionsQuery(opts?: {
-    evalRead?: (ctx: GenericQueryCtx<GenericDataModel>, collection: string) => void | Promise<void>;
-  }) {
-    const component = this.component;
-    const collection = this.collectionName;
-
-    return queryGeneric({
-      args: {
-        documentId: v.string(),
-        limit: v.optional(v.number()),
-      },
-      returns: v.array(
-        v.object({
-          versionId: v.string(),
-          label: v.union(v.string(), v.null()),
-          createdAt: v.number(),
-          createdBy: v.union(v.string(), v.null()),
-        })
-      ),
-      handler: async (ctx, args) => {
-        if (opts?.evalRead) {
-          await opts.evalRead(ctx, collection);
-        }
-
-        return await ctx.runQuery(component.public.listVersions, {
-          collection,
-          documentId: args.documentId,
-          limit: args.limit,
-        });
-      },
-    });
-  }
-
-  createGetVersionQuery(opts?: {
-    evalRead?: (ctx: GenericQueryCtx<GenericDataModel>, collection: string) => void | Promise<void>;
-  }) {
-    const component = this.component;
-    const collection = this.collectionName;
-
-    return queryGeneric({
-      args: {
-        versionId: v.string(),
-      },
-      returns: v.union(
-        v.object({
-          versionId: v.string(),
-          collection: v.string(),
-          documentId: v.string(),
-          stateBytes: v.bytes(),
-          label: v.union(v.string(), v.null()),
-          createdAt: v.number(),
-          createdBy: v.union(v.string(), v.null()),
-        }),
-        v.null()
-      ),
-      handler: async (ctx, args) => {
-        if (opts?.evalRead) {
-          await opts.evalRead(ctx, collection);
-        }
-
-        return await ctx.runQuery(component.public.getVersion, {
-          versionId: args.versionId,
-        });
-      },
-    });
-  }
-
-  createRestoreVersionMutation(opts?: {
-    evalRestore?: (
-      ctx: GenericMutationCtx<GenericDataModel>,
-      collection: string,
-      documentId: string,
-      versionId: string
-    ) => void | Promise<void>;
-    onRestore?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
-  }) {
-    const component = this.component;
-    const collection = this.collectionName;
-
-    return mutationGeneric({
-      args: {
-        documentId: v.string(),
-        versionId: v.string(),
-        createBackup: v.optional(v.boolean()),
-      },
-      returns: v.object({
-        success: v.boolean(),
-        backupVersionId: v.union(v.string(), v.null()),
-      }),
-      handler: async (ctx, args) => {
-        if (opts?.evalRestore) {
-          await opts.evalRestore(ctx, collection, args.documentId, args.versionId);
-        }
-
-        const result = await ctx.runMutation(component.public.restoreVersion, {
-          collection,
-          documentId: args.documentId,
-          versionId: args.versionId,
-          createBackup: args.createBackup,
-        });
-
-        if (opts?.onRestore) {
-          await opts.onRestore(ctx, result);
-        }
-
-        return result;
-      },
-    });
-  }
-
-  createDeleteVersionMutation(opts?: {
-    evalDelete?: (
-      ctx: GenericMutationCtx<GenericDataModel>,
-      versionId: string
-    ) => void | Promise<void>;
-    onDelete?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
-  }) {
-    const component = this.component;
-
-    return mutationGeneric({
-      args: {
-        versionId: v.string(),
-      },
-      returns: v.object({
-        success: v.boolean(),
-      }),
-      handler: async (ctx, args) => {
-        if (opts?.evalDelete) {
-          await opts.evalDelete(ctx, args.versionId);
-        }
-
-        const result = await ctx.runMutation(component.public.deleteVersion, {
-          versionId: args.versionId,
-        });
-
-        if (opts?.onDelete) {
-          await opts.onDelete(ctx, result);
-        }
-
-        return result;
       },
     });
   }

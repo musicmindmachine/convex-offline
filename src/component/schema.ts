@@ -26,16 +26,4 @@ export default defineSchema({
       })
     ),
   }).index('by_document', ['collection', 'documentId']),
-
-  versions: defineTable({
-    collection: v.string(),
-    documentId: v.string(),
-    versionId: v.string(),
-    stateBytes: v.bytes(),
-    label: v.optional(v.string()),
-    createdAt: v.number(),
-    createdBy: v.optional(v.string()),
-  })
-    .index('by_document', ['collection', 'documentId', 'createdAt'])
-    .index('by_version_id', ['versionId']),
 });

@@ -448,12 +448,19 @@ export function convexCollectionOptions<T extends object>({
         const mux = getOrCreateMutex(collection);
 
         const observerHandler = (_events: Y.YEvent<any>[], transaction: Y.Transaction) => {
+          console.log('[REPLICATE] Fragment observer fired:', {
+            documentId,
+            collection,
+            origin: String(transaction.origin),
+          });
+
           // Skip server-originated changes
           if (
             transaction.origin === YjsOrigin.Subscription ||
             transaction.origin === YjsOrigin.Snapshot ||
             transaction.origin === YjsOrigin.SSRInit
           ) {
+            console.log('[REPLICATE] Skipping server-originated change');
             return;
           }
 
@@ -473,10 +480,12 @@ export function convexCollectionOptions<T extends object>({
 
             // Schedule sync - uses collection reference set in sync.sync() callback
             const timer = setTimeout(async () => {
+              console.log('[REPLICATE] Debounce timer fired:', { documentId, collection, key });
               debounceTimers.delete(key);
 
               const col = collectionRefs.get(collection);
               if (!col) {
+                console.log('[REPLICATE] ERROR: No collection reference for debounce sync:', { collection });
                 logger.error('No collection reference for', { collection });
                 return;
               }
@@ -494,7 +503,7 @@ export function convexCollectionOptions<T extends object>({
               }
 
               try {
-                const crdtBytes = Y.encodeStateAsUpdate(colDocs.ydoc).buffer;
+                const crdtBytes = Y.encodeStateAsUpdateV2(colDocs.ydoc).buffer;
                 const materializedDoc = serializeYMapValue(itemYMap);
 
                 const result = col.update(
@@ -674,32 +683,23 @@ export function convexCollectionOptions<T extends object>({
             Object.entries(modifiedFields).forEach(([k, v]) => {
               const existingValue = itemYMap.get(k);
 
-              // Check if this is a prose field
-              if (proseFieldSet.has(k) && isDoc(v)) {
-                if (existingValue instanceof Y.XmlFragment) {
-                  // Clear existing content and apply new content
-                  while (existingValue.length > 0) {
-                    existingValue.delete(0);
-                  }
-                  fragmentFromJSON(existingValue, v as XmlFragmentJSON);
-                } else {
-                  // Create new XmlFragment
-                  const fragment = new Y.XmlFragment();
-                  // Add fragment to map FIRST (binds it to the Y.Doc)
-                  itemYMap.set(k, fragment);
-                  // THEN populate content (now it's part of the document)
-                  fragmentFromJSON(fragment, v as XmlFragmentJSON);
-                }
-              } else if (existingValue instanceof Y.XmlFragment) {
-                // Skip: preserve live Y.XmlFragment that BlockNote is editing directly.
-                // When updating non-fragment fields (like plainText, updatedAt), the entire
-                // document is passed including content. Without this check, the Y.XmlFragment
-                // would be replaced with plain JSON, breaking the editor.
-                logger.debug('Preserving live fragment field during update', { field: k });
-              } else {
-                // Regular field update
-                itemYMap.set(k, v);
+              // ALWAYS skip prose fields - they are managed by Y.XmlFragment directly
+              // User edits go: BlockNote → Y.XmlFragment → observer → debounce → server
+              // Server sync goes: subscription → applyUpdate(ydoc) → CRDT merge
+              // Writing serialized JSON back would corrupt the CRDT state
+              if (proseFieldSet.has(k)) {
+                logger.debug('Skipping prose field in applyYjsUpdate', { field: k });
+                return;
               }
+
+              // Also skip if existing value is a Y.XmlFragment (defensive check)
+              if (existingValue instanceof Y.XmlFragment) {
+                logger.debug('Preserving live fragment field', { field: k });
+                return;
+              }
+
+              // Regular field update
+              itemYMap.set(k, v);
             });
           } else {
             logger.error('Update attempted on non-existent item', {
@@ -751,7 +751,6 @@ export function convexCollectionOptions<T extends object>({
             documentId: documentKey,
             crdtBytes: delta.slice().buffer,
             materializedDoc,
-            version: Date.now(),
           });
         }
       } catch (error) {
@@ -771,11 +770,17 @@ export function convexCollectionOptions<T extends object>({
           const { crdtBytes, materializedDoc } = metadata.contentSync;
           const documentKey = String(mutation.key);
 
+          console.log('[REPLICATE] onUpdate contentSync:', {
+            documentId: documentKey,
+            hasContent: 'content' in (materializedDoc as object),
+            contentType: typeof (materializedDoc as any).content,
+            materializedDocKeys: Object.keys(materializedDoc as object),
+          });
+
           await convexClient.mutation(api.update, {
             documentId: documentKey,
             crdtBytes,
             materializedDoc,
-            version: Date.now(),
           });
           return;
         }
@@ -791,7 +796,6 @@ export function convexCollectionOptions<T extends object>({
             documentId: documentKey,
             crdtBytes: delta.slice().buffer,
             materializedDoc: fullDoc,
-            version: Date.now(),
           });
         }
       } catch (error) {
@@ -812,7 +816,6 @@ export function convexCollectionOptions<T extends object>({
           await convexClient.mutation(api.remove, {
             documentId: documentKey,
             crdtBytes: delta.slice().buffer,
-            version: Date.now(),
           });
         }
       } catch (error) {
@@ -826,6 +829,7 @@ export function convexCollectionOptions<T extends object>({
         const { markReady, collection: collectionInstance } = params;
 
         // Store collection reference for utils.prose() to access
+        console.log('[REPLICATE] Setting collectionRefs for:', collection);
         collectionRefs.set(collection, collectionInstance);
 
         const existingCleanup = cleanupFunctions.get(collection);
@@ -840,8 +844,16 @@ export function convexCollectionOptions<T extends object>({
         const ssrCRDTBytes = material?.crdtBytes;
         const docs: T[] = ssrDocuments ? [...ssrDocuments] : [];
 
+        console.log('[REPLICATE] SSR init data:', {
+          collection,
+          ssrDocsCount: ssrDocuments?.length ?? 0,
+          hasCRDTBytes: !!ssrCRDTBytes,
+          hasCheckpoint: !!ssrCheckpoint,
+        });
+
         (async () => {
           try {
+            console.log('[REPLICATE] Starting collection setup for:', collection);
             ydoc = await createYjsDocument(collection, persistence.kv);
             ymap = getYMap<unknown>(ydoc, collection);
 
@@ -860,6 +872,7 @@ export function convexCollectionOptions<T extends object>({
               resolvePersistenceReady?.();
             });
             await persistenceReadyPromise;
+            console.log('[REPLICATE] Persistence ready, ymap size:', ymap.size);
             logger.info('Persistence ready', { collection, ymapSize: ymap.size });
 
             initializeReplicateParams(params);
@@ -882,12 +895,18 @@ export function convexCollectionOptions<T extends object>({
             // Step 1: Push local data to TanStack DB
             if (ymap.size > 0) {
               const items = extractItems<T>(ymap);
+              console.log('[REPLICATE] Local data from persistence:', {
+                collection,
+                itemCount: items.length,
+                itemIds: items.map((i: any) => i.id),
+              });
               replicateReplace(items); // Atomic replace, not accumulative insert
               logger.info('Local data loaded to TanStack DB', {
                 collection,
                 itemCount: items.length,
               });
             } else {
+              console.log('[REPLICATE] No local data from persistence for:', collection);
               // No local data - clear TanStack DB to avoid stale state
               replicateReplace([]);
               logger.info('No local data, cleared TanStack DB', { collection });
@@ -900,6 +919,7 @@ export function convexCollectionOptions<T extends object>({
 
             // Step 3: Mark ready BEFORE subscription - UI shows local data immediately
             markReady();
+            console.log('[REPLICATE] Collection marked ready, starting subscription setup');
             logger.info('Collection ready (local-first)', { collection, ymapSize: ymap.size });
 
             // Step 4: Load checkpoint for subscription (background replication)
@@ -912,6 +932,7 @@ export function convexCollectionOptions<T extends object>({
                 }).pipe(Effect.provide(checkpointLayer))
               ));
 
+            console.log('[REPLICATE] Checkpoint loaded:', checkpoint);
             logger.info('Checkpoint loaded', {
               collection,
               checkpoint,
@@ -966,13 +987,20 @@ export function convexCollectionOptions<T extends object>({
                   }
 
                   const itemAfter = extractItem<T>(ymap, documentId);
+                  console.log(
+                    '[REPLICATE] Item after delta:',
+                    itemAfter ? 'found' : 'null',
+                    documentId
+                  );
                   if (itemAfter) {
+                    console.log('[REPLICATE] Upserting item:', documentId);
                     logger.debug('Upserting item after delta', { collection, documentId });
                     replicateUpsert([itemAfter]);
                   } else if (itemBefore) {
                     logger.debug('Deleting item after delta', { collection, documentId });
                     replicateDelete([itemBefore]);
                   } else {
+                    console.log('[REPLICATE] No change detected for:', documentId);
                     logger.debug('No change detected after delta', { collection, documentId });
                   }
                 } catch (error) {
@@ -998,8 +1026,14 @@ export function convexCollectionOptions<T extends object>({
                 const { changes, checkpoint: newCheckpoint } = response;
 
                 // Process each change
+                console.log('[REPLICATE] Processing', changes.length, 'changes');
                 for (const change of changes) {
                   const { operationType, crdtBytes, documentId } = change;
+                  console.log('[REPLICATE] Processing change:', {
+                    operationType,
+                    documentId,
+                    bytesLength: crdtBytes?.byteLength,
+                  });
                   if (!crdtBytes) {
                     logger.warn('Skipping change with missing crdtBytes', { change });
                     continue;
@@ -1012,6 +1046,7 @@ export function convexCollectionOptions<T extends object>({
                       handleDeltaChange(crdtBytes, documentId);
                     }
                   } catch (changeError) {
+                    console.error('[REPLICATE] Failed to apply change:', changeError);
                     logger.error('Failed to apply change', {
                       operationType,
                       documentId,
@@ -1039,6 +1074,7 @@ export function convexCollectionOptions<T extends object>({
               }
             };
 
+            console.log('[REPLICATE] Setting up subscription with api.stream');
             logger.info('Establishing subscription', {
               collection,
               checkpoint,
@@ -1049,6 +1085,10 @@ export function convexCollectionOptions<T extends object>({
               api.stream,
               { checkpoint, limit: 1000 },
               (response: any) => {
+                console.log('[REPLICATE] Subscription callback fired!', {
+                  changesCount: response.changes?.length,
+                  checkpoint: response.checkpoint,
+                });
                 logger.debug('Subscription received update', {
                   collection,
                   changesCount: response.changes?.length ?? 0,
@@ -1063,8 +1103,10 @@ export function convexCollectionOptions<T extends object>({
 
             // Note: markReady() was already called above (local-first)
             // Subscription is background replication, not blocking
+            console.log('[REPLICATE] Subscription established');
             logger.info('Subscription established', { collection });
           } catch (error) {
+            console.error('[REPLICATE] Setup FAILED:', error);
             logger.error('Failed to set up collection', { error, collection });
             // Still mark ready on error so UI isn't stuck loading
             markReady();

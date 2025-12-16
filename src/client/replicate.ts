@@ -60,8 +60,8 @@ export function replicateUpsert<T>(items: T[]): void {
 
 export function replicateReplace<T>(items: T[]): void {
   const params = ensureInitialized();
-  params.truncate();
   params.begin();
+  params.truncate();
   for (const item of items) {
     params.write({ type: 'insert', value: item });
   }

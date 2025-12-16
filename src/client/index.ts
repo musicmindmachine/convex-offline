@@ -24,4 +24,15 @@ export {
   type Persistence,
   type PersistenceProvider,
   type KeyValueStore,
+  type SqlitePersistenceOptions,
+  type SqliteAdapter,
 } from '$/client/persistence/index.js';
+
+// SQLite adapter exports (wrapper classes and types)
+export {
+  SqlJsAdapter,
+  OPSqliteAdapter,
+  type SqlJsDatabase,
+  type SqlJsAdapterOptions,
+  type OPSQLiteDatabase,
+} from '$/client/persistence/adapters/index.js';

@@ -1,25 +1,45 @@
 /**
- * op-sqlite adapter for React Native SQLite.
+ * op-sqlite adapter wrapper for React Native SQLite.
  *
- * Uses op-sqlite (native SQLite) for React Native environments.
+ * The consuming app imports @op-engineering/op-sqlite and opens the database,
+ * then passes it to this wrapper.
+ *
+ * @example
+ * ```typescript
+ * import { open } from '@op-engineering/op-sqlite';
+ * import { OPSqliteAdapter } from '@trestleinc/replicate/client';
+ *
+ * const db = open({ name: 'myapp.db' });
+ * const adapter = new OPSqliteAdapter(db);
+ * ```
  */
 import type { SqliteAdapter } from '../sqlite-level.js';
 
-// op-sqlite types
-interface OPSQLiteDB {
+/**
+ * Interface for op-sqlite Database.
+ * Consumer must install @op-engineering/op-sqlite and pass a Database instance.
+ */
+export interface OPSQLiteDatabase {
   execute(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
   close(): void;
 }
 
-type OpenFn = (options: { name: string }) => OPSQLiteDB;
-
 /**
- * op-sqlite adapter for React Native SQLite.
+ * Wraps an op-sqlite Database as a SqliteAdapter.
+ *
+ * @example
+ * ```typescript
+ * import { open } from '@op-engineering/op-sqlite';
+ * import { OPSqliteAdapter } from '@trestleinc/replicate/client';
+ *
+ * const db = open({ name: 'myapp.db' });
+ * const adapter = new OPSqliteAdapter(db);
+ * ```
  */
 export class OPSqliteAdapter implements SqliteAdapter {
-  private db: OPSQLiteDB;
+  private db: OPSQLiteDatabase;
 
-  constructor(db: OPSQLiteDB) {
+  constructor(db: OPSQLiteDatabase) {
     this.db = db;
   }
 
@@ -31,38 +51,4 @@ export class OPSqliteAdapter implements SqliteAdapter {
   close(): void {
     this.db.close();
   }
-}
-
-interface OPSqliteAdapterOptions {
-  /** Database name */
-  dbName?: string;
-}
-
-/**
- * Create an op-sqlite adapter for React Native.
- *
- * @example
- * ```typescript
- * const adapter = await createOPSqliteAdapter({ dbName: 'myapp' });
- * const db = new SqliteLevel('myapp');
- * db.setAdapterFactory(() => Promise.resolve(adapter));
- * await db.open();
- * ```
- */
-export async function createOPSqliteAdapter(
-  options: OPSqliteAdapterOptions = {}
-): Promise<SqliteAdapter> {
-  const { dbName = 'replicate' } = options;
-
-  // Validate database name (security: prevent path traversal)
-  if (!/^[\w-]+$/.test(dbName)) {
-    throw new Error('Invalid database name: must be alphanumeric with hyphens/underscores');
-  }
-
-  // Dynamically import op-sqlite
-  const { open } = (await import('@op-engineering/op-sqlite')) as { open: OpenFn };
-
-  const db = open({ name: `${dbName}.db` });
-
-  return new OPSqliteAdapter(db);
 }

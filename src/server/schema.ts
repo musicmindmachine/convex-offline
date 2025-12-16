@@ -3,7 +3,6 @@ import { v } from 'convex/values';
 
 /** Fields automatically added to replicated tables */
 export type ReplicationFields = {
-  version: number;
   timestamp: number;
 };
 
@@ -31,7 +30,8 @@ export const prose = () =>
   });
 
 /**
- * Define a table with automatic version and timestamp fields for replication.
+ * Define a table with automatic timestamp field for replication.
+ * All replicated tables must have an `id` field and define a `by_doc_id` index.
  *
  * @example
  * ```typescript
@@ -39,21 +39,20 @@ export const prose = () =>
  * export default defineSchema({
  *   tasks: table(
  *     { id: v.string(), text: v.string(), isCompleted: v.boolean() },
- *     (t) => t.index('by_id', ['id'])
+ *     (t) => t.index('by_doc_id', ['id']).index('by_completed', ['isCompleted'])
  *   ),
  * });
  * ```
  */
 export function table(userFields: Record<string, any>, applyIndexes?: (table: any) => any): any {
-  const table = defineTable({
+  const tbl = defineTable({
     ...userFields,
-    version: v.number(),
     timestamp: v.number(),
   });
 
   if (applyIndexes) {
-    return applyIndexes(table);
+    return applyIndexes(tbl);
   }
 
-  return table;
+  return tbl;
 }

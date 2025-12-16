@@ -1,17 +1,35 @@
 /**
- * Universal SQLite persistence for browser and React Native.
+ * Universal SQLite persistence using a user-provided adapter.
  *
- * Uses y-leveldb with a custom sqlite-level implementation that works
- * across both browser (sql.js WASM) and React Native (op-sqlite).
+ * The consuming app is responsible for:
+ * 1. Installing the SQLite package (sql.js, op-sqlite, etc.)
+ * 2. Creating and initializing the database
+ * 3. Wrapping it with the appropriate adapter
+ * 4. Passing the adapter to sqlitePersistence()
  *
- * @example
+ * @example Browser (sql.js)
  * ```typescript
- * import { sqlitePersistence } from '@trestleinc/replicate/client';
+ * import initSqlJs from 'sql.js';
+ * import { sqlitePersistence, SqlJsAdapter } from '@trestleinc/replicate/client';
  *
- * // Works on both browser AND React Native!
- * convexCollectionOptions<Task>({
- *   persistence: await sqlitePersistence('my-app'),
+ * const SQL = await initSqlJs({ locateFile: file => `/sql-wasm/${file}` });
+ * const db = new SQL.Database();
+ * const adapter = new SqlJsAdapter(db, {
+ *   onPersist: async (data) => {
+ *     // Persist to OPFS, localStorage, etc.
+ *   }
  * });
+ * const persistence = await sqlitePersistence({ adapter });
+ * ```
+ *
+ * @example React Native (op-sqlite)
+ * ```typescript
+ * import { open } from '@op-engineering/op-sqlite';
+ * import { sqlitePersistence, OPSqliteAdapter } from '@trestleinc/replicate/client';
+ *
+ * const db = open({ name: 'myapp.db' });
+ * const adapter = new OPSqliteAdapter(db);
+ * const persistence = await sqlitePersistence({ adapter });
  * ```
  */
 import type * as Y from 'yjs';
@@ -76,79 +94,55 @@ class SqlitePersistenceProvider implements PersistenceProvider {
 }
 
 /**
- * Detect if running in React Native.
+ * Options for SQLite persistence.
  */
-function isReactNative(): boolean {
-  return (
-    typeof navigator !== 'undefined' &&
-    typeof navigator.product === 'string' &&
-    navigator.product === 'ReactNative'
-  );
-}
+export interface SqlitePersistenceOptions {
+  /**
+   * Pre-created SQLite adapter (required).
+   * Use SqlJsAdapter for browser or OPSqliteAdapter for React Native.
+   */
+  adapter: SqliteAdapter;
 
-/**
- * Create a SQLite adapter for the current platform.
- */
-async function createPlatformAdapter(dbName: string): Promise<SqliteAdapter> {
-  if (isReactNative()) {
-    // React Native: use op-sqlite
-    const { createOPSqliteAdapter } = await import('./adapters/opsqlite.js');
-    return createOPSqliteAdapter({ dbName });
-  } else {
-    // Browser: use sql.js
-    const { createSqlJsAdapter } = await import('./adapters/sqljs.js');
-    return createSqlJsAdapter({ dbName });
-  }
-}
-
-interface SqlitePersistenceOptions {
-  /** Custom SQLite adapter (for testing or alternative backends) */
-  adapter?: SqliteAdapter;
+  /**
+   * Database name for internal y-leveldb usage.
+   * @default 'replicate'
+   */
+  dbName?: string;
 }
 
 /**
  * Create a universal SQLite persistence factory.
  *
- * Works on both browser (via sql.js WASM) and React Native (via op-sqlite).
+ * Requires a pre-created SqliteAdapter - the replicate package does not
+ * import any SQLite packages directly, making it environment-agnostic.
  *
- * @param dbName - Name for the SQLite database (default: 'replicate')
- * @param options - Optional configuration
+ * @param options - Configuration with required adapter
  *
- * @example
+ * @example Browser (sql.js)
  * ```typescript
- * // Browser or React Native - same API!
- * import { sqlitePersistence } from '@trestleinc/replicate/client';
+ * import initSqlJs from 'sql.js';
+ * import { sqlitePersistence, SqlJsAdapter } from '@trestleinc/replicate/client';
  *
- * convexCollectionOptions<Task>({
- *   persistence: await sqlitePersistence('my-app'),
- * });
+ * const SQL = await initSqlJs();
+ * const db = new SQL.Database();
+ * const adapter = new SqlJsAdapter(db);
+ * const persistence = await sqlitePersistence({ adapter });
  * ```
  *
- * @example
+ * @example React Native (op-sqlite)
  * ```typescript
- * // With custom adapter (for testing)
- * import { sqlitePersistence } from '@trestleinc/replicate/client';
- * import { createSqlJsAdapter } from '@trestleinc/replicate/client/adapters';
+ * import { open } from '@op-engineering/op-sqlite';
+ * import { sqlitePersistence, OPSqliteAdapter } from '@trestleinc/replicate/client';
  *
- * const adapter = await createSqlJsAdapter({ dbName: 'test', persist: false });
- * convexCollectionOptions<Task>({
- *   persistence: await sqlitePersistence('test', { adapter }),
- * });
+ * const db = open({ name: 'myapp.db' });
+ * const adapter = new OPSqliteAdapter(db);
+ * const persistence = await sqlitePersistence({ adapter });
  * ```
  */
-export async function sqlitePersistence(
-  dbName = 'replicate',
-  options: SqlitePersistenceOptions = {}
-): Promise<Persistence> {
-  // Validate database name (security: prevent path traversal)
-  if (!/^[\w-]+$/.test(dbName)) {
-    throw new Error('Invalid database name: must be alphanumeric with hyphens/underscores');
-  }
+export async function sqlitePersistence(options: SqlitePersistenceOptions): Promise<Persistence> {
+  const { adapter, dbName = 'replicate' } = options;
 
-  // Create or use provided adapter
-  const adapter = options.adapter ?? (await createPlatformAdapter(dbName));
-
-  // Create sqlite-level database
+  // Create sqlite-level database with the provided adapter
   const db = new SqliteLevel<string, string>(dbName);
   db.setAdapterFactory(() => Promise.resolve(adapter));
   await db.open();
