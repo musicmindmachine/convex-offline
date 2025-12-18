@@ -1,7 +1,8 @@
 /**
- * Replicate Helpers - Plain functions for TanStack DB optimistic updates
+ * Replicate Helpers - Collection-bound functions for TanStack DB optimistic updates
  *
- * Simple module-level state for replicate operations.
+ * Each collection gets its own set of bound functions that operate on that
+ * collection's TanStack DB instance. No global state - fully concurrent-safe.
  */
 
 export interface ReplicateParams {
@@ -11,59 +12,69 @@ export interface ReplicateParams {
   readonly truncate: () => void;
 }
 
-// Module-level state - shared across all callers
-let replicateParams: ReplicateParams | null = null;
+/**
+ * Bound replicate operations for a specific collection.
+ * These functions are already tied to the collection's TanStack DB params.
+ */
+export interface BoundReplicateOps<T> {
+  readonly insert: (items: T[]) => void;
+  readonly delete: (items: T[]) => void;
+  readonly upsert: (items: T[]) => void;
+  readonly replace: (items: T[]) => void;
+}
 
-export function initializeReplicateParams(params: ReplicateParams): void {
-  replicateParams = params;
+/**
+ * Create bound replicate operations for a collection.
+ * Returns functions that are already tied to the collection's params.
+ * This is the proper way to handle multiple concurrent collections.
+ *
+ * @example
+ * ```typescript
+ * const ops = createReplicateOps<Task>(params);
+ * ops.replace(items);  // Always targets THIS collection's TanStack DB
+ * ops.upsert([item]);
+ * ops.delete([item]);
+ * ```
+ */
+export function createReplicateOps<T>(params: ReplicateParams): BoundReplicateOps<T> {
+  return {
+    insert(items: T[]): void {
+      params.begin();
+      for (const item of items) {
+        params.write({ type: 'insert', value: item });
+      }
+      params.commit();
+    },
+
+    delete(items: T[]): void {
+      params.begin();
+      for (const item of items) {
+        params.write({ type: 'delete', value: item });
+      }
+      params.commit();
+    },
+
+    // Upsert uses 'update' type - TanStack DB only recognizes insert/update/delete
+    upsert(items: T[]): void {
+      params.begin();
+      for (const item of items) {
+        params.write({ type: 'update', value: item });
+      }
+      params.commit();
+    },
+
+    replace(items: T[]): void {
+      params.begin();
+      params.truncate();
+      for (const item of items) {
+        params.write({ type: 'insert', value: item });
+      }
+      params.commit();
+    },
+  };
 }
 
 // Internal - for test cleanup only
 export function _resetReplicateParams(): void {
-  replicateParams = null;
-}
-
-function ensureInitialized(): ReplicateParams {
-  if (!replicateParams) {
-    throw new Error('ReplicateParams not initialized - call initializeReplicateParams() first');
-  }
-  return replicateParams;
-}
-
-export function replicateInsert<T>(items: T[]): void {
-  const params = ensureInitialized();
-  params.begin();
-  for (const item of items) {
-    params.write({ type: 'insert', value: item });
-  }
-  params.commit();
-}
-
-export function replicateDelete<T>(items: T[]): void {
-  const params = ensureInitialized();
-  params.begin();
-  for (const item of items) {
-    params.write({ type: 'delete', value: item });
-  }
-  params.commit();
-}
-
-// Upsert uses 'update' type - TanStack DB only recognizes insert/update/delete
-export function replicateUpsert<T>(items: T[]): void {
-  const params = ensureInitialized();
-  params.begin();
-  for (const item of items) {
-    params.write({ type: 'update', value: item });
-  }
-  params.commit();
-}
-
-export function replicateReplace<T>(items: T[]): void {
-  const params = ensureInitialized();
-  params.begin();
-  params.truncate();
-  for (const item of items) {
-    params.write({ type: 'insert', value: item });
-  }
-  params.commit();
+  // No-op now - nothing to reset since we don't use global state
 }

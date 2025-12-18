@@ -9,12 +9,7 @@ import { getLogger } from '$/client/logger.js';
 import { ProseError, NonRetriableError } from '$/client/errors.js';
 import { Checkpoint, createCheckpointLayer } from '$/client/services/checkpoint.js';
 import { Reconciliation, ReconciliationLive } from '$/client/services/reconciliation.js';
-import {
-  initializeReplicateParams,
-  replicateDelete,
-  replicateUpsert,
-  replicateReplace,
-} from '$/client/replicate.js';
+import { createReplicateOps, type BoundReplicateOps } from '$/client/replicate.js';
 import {
   createYjsDocument,
   getYMap,
@@ -390,6 +385,10 @@ export function convexCollectionOptions<T extends object>({
   let ymap: Y.Map<unknown> = null as any;
   let docPersistence: PersistenceProvider = null as any;
 
+  // Bound replicate operations - set during sync initialization
+  // Used by onDelete and other handlers that need to sync with TanStack DB
+  let ops: BoundReplicateOps<T> = null as any;
+
   // Create services layer with the persistence KV store
   const checkpointLayer = createCheckpointLayer(persistence.kv);
   const servicesLayer = Layer.mergeAll(checkpointLayer, ReconciliationLive);
@@ -404,7 +403,7 @@ export function convexCollectionOptions<T extends object>({
     resolveOptimisticReady = resolve;
   });
 
-  const reconcile = () =>
+  const reconcile = (ops: BoundReplicateOps<T>) =>
     Effect.gen(function* () {
       if (!api.material) return;
 
@@ -429,7 +428,7 @@ export function convexCollectionOptions<T extends object>({
       );
 
       if (removedItems.length > 0) {
-        replicateDelete(removedItems);
+        ops.delete(removedItems);
       }
     }).pipe(
       Effect.catchAll((error) =>
@@ -661,7 +660,7 @@ export function convexCollectionOptions<T extends object>({
         const itemsToDelete = transaction.mutations
           .map((mut) => mut.original)
           .filter((item): item is T => item !== undefined && Object.keys(item).length > 0);
-        replicateDelete(itemsToDelete);
+        ops.delete(itemsToDelete);
         if (delta.length > 0) {
           const documentKey = String(transaction.mutations[0].key);
           await convexClient.mutation(api.remove, {
@@ -716,7 +715,9 @@ export function convexCollectionOptions<T extends object>({
             await persistenceReadyPromise;
             logger.info('Persistence ready', { collection, ymapSize: ymap.size });
 
-            initializeReplicateParams(params);
+            // Create bound replicate operations for this collection
+            // These are tied to this collection's TanStack DB params
+            ops = createReplicateOps<T>(params);
             resolveOptimisticReady?.();
 
             // Note: Fragment sync is handled by utils.prose() debounce handler
@@ -729,7 +730,7 @@ export function convexCollectionOptions<T extends object>({
             // === LOCAL-FIRST FLOW WITH RECOVERY ===
             // 1. Local data (IndexedDB/Yjs) is the source of truth
             // 2. Recovery sync - get any missing data from server using state vectors
-            // 3. Push local+recovered data to TanStack DB with replicateReplace
+            // 3. Push local+recovered data to TanStack DB with ops.replace
             // 4. Reconcile phantom documents (hidden in loading state)
             // 5. markReady() - UI renders DATA immediately
             // 6. Subscription starts in background (replication)
@@ -740,20 +741,20 @@ export function convexCollectionOptions<T extends object>({
             // Step 2: Push local+recovered data to TanStack DB
             if (ymap.size > 0) {
               const items = extractItems<T>(ymap);
-              replicateReplace(items); // Atomic replace, not accumulative insert
+              ops.replace(items); // Atomic replace, not accumulative insert
               logger.info('Data loaded to TanStack DB', {
                 collection,
                 itemCount: items.length,
               });
             } else {
               // No data - clear TanStack DB to avoid stale state
-              replicateReplace([]);
+              ops.replace([]);
               logger.info('No data, cleared TanStack DB', { collection });
             }
 
             // Step 3: Reconcile phantom documents (still in loading state)
             logger.debug('Running reconciliation', { collection, ymapSize: ymap.size });
-            await Effect.runPromise(reconcile().pipe(Effect.provide(servicesLayer)));
+            await Effect.runPromise(reconcile(ops).pipe(Effect.provide(servicesLayer)));
             logger.debug('Reconciliation complete', { collection });
 
             // Step 4: Mark ready - UI shows data immediately
@@ -793,7 +794,7 @@ export function convexCollectionOptions<T extends object>({
                   applyUpdate(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Server);
                   const items = extractItems<T>(ymap);
                   logger.debug('Snapshot applied', { collection, itemCount: items.length });
-                  replicateReplace(items);
+                  ops.replace(items);
                 } catch (error) {
                   logger.error('Error applying snapshot', { collection, error: String(error) });
                   throw new Error(`Snapshot application failed: ${error}`);
@@ -828,10 +829,10 @@ export function convexCollectionOptions<T extends object>({
                   const itemAfter = extractItem<T>(ymap, documentId);
                   if (itemAfter) {
                     logger.debug('Upserting item after delta', { collection, documentId });
-                    replicateUpsert([itemAfter]);
+                    ops.upsert([itemAfter]);
                   } else if (itemBefore) {
                     logger.debug('Deleting item after delta', { collection, documentId });
-                    replicateDelete([itemBefore]);
+                    ops.delete([itemBefore]);
                   } else {
                     logger.debug('No change detected after delta', { collection, documentId });
                   }
