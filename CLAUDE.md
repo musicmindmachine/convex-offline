@@ -23,21 +23,18 @@ Single package with exports:
 ## Development Commands
 
 ```bash
-# Build
+# Build (includes ESLint + TypeScript checking via rslib plugins)
 bun run build        # Build with Rslib (outputs to dist/)
 bun run clean        # Remove dist/
 
-# Code Quality (Biome v2)
-bun run check        # Lint + format check (dry run)
-bun run check:fix    # Auto-fix all issues (ALWAYS run before committing)
-
-# Testing
-bun test             # Run all tests with Vitest
-bun test <path>      # Run specific test file
-
 # Publishing
-bun run prepublish   # Build + check:fix (runs before npm publish)
+bun run prepublish   # Runs build (which includes linting)
 ```
+
+**Note:** Linting, formatting, and type checking run automatically during `bun run build` via rslib plugins:
+- `pluginEslint` with `fix: true` - runs ESLint and auto-fixes issues
+- `pluginTypeCheck` - runs TypeScript type checking
+- `@stylistic/eslint-plugin` - handles code formatting (indentation, quotes, semicolons)
 
 ## Architecture
 
@@ -236,8 +233,8 @@ const plainText = prose.extract(task.content);
 - **Yjs** for CRDTs (conflict-free replicated data types)
 - **Convex** for backend (cloud database + functions)
 - **TanStack DB** for reactive state management
-- **Rslib** for building
-- **Biome** for linting/formatting
+- **Rslib** for building (with ESLint + TypeScript plugins)
+- **ESLint** for linting (runs during build via rslib plugin)
 - **LogTape** for logging (avoid console.*)
 
 ## Naming Conventions
@@ -252,7 +249,7 @@ const plainText = prose.extract(task.content);
 
 - **Effect-based services** - Client services use Effect for DI; understand Effect basics
 - **Hard deletes** - Documents physically removed from main table, history kept in component
-- **Biome config** - `noExplicitAny` OFF, `noConsole` warns (except in test files and component logger)
-- **LogTape logging** - Use LogTape, not console.* (Biome warns on console)
-- **Import types** - Use `import type` for type-only imports (Biome enforces this)
+- **Linting runs during build** - ESLint runs via rslib's `pluginEslint` during `bun run build`
+- **LogTape logging** - Use LogTape, not console.*
+- **Import types** - Use `import type` for type-only imports
 - **bun for commands** - Use `bun run` not `pnpm run` for all commands
