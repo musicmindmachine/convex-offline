@@ -6,23 +6,6 @@ export type ReplicationFields = {
   timestamp: number;
 };
 
-/**
- * Validator for prose (rich text) fields.
- * Validates ProseMirror-compatible JSON structure.
- *
- * @example
- * ```typescript
- * import { prose, table } from '@trestleinc/replicate/server';
- *
- * export default defineSchema({
- *   notebooks: table({
- *     id: v.string(),
- *     title: v.string(),
- *     content: prose(),
- *   }),
- * });
- * ```
- */
 export const prose = () =>
   v.object({
     type: v.literal('doc'),

@@ -4,7 +4,7 @@ export {
   type EditorBinding,
 } from '$/client/collection.js';
 
-export {
+import {
   NetworkError,
   IDBError,
   IDBWriteError,
@@ -14,25 +14,44 @@ export {
   NonRetriableError,
 } from '$/client/errors.js';
 
-export { extract } from '$/client/merge.js';
+export const errors = {
+  Network: NetworkError,
+  IDB: IDBError,
+  IDBWrite: IDBWriteError,
+  Reconciliation: ReconciliationError,
+  Prose: ProseError,
+  CollectionNotReady: CollectionNotReadyError,
+  NonRetriable: NonRetriableError,
+} as const;
 
-// Persistence exports
+import { extract } from '$/client/merge.js';
+
+export const prose = {
+  extract,
+} as const;
+
 export {
-  indexeddbPersistence,
-  memoryPersistence,
-  sqlitePersistence,
+  persistence,
   type Persistence,
   type PersistenceProvider,
   type KeyValueStore,
   type SqlitePersistenceOptions,
   type SqliteAdapter,
+  type SqlJsStatic,
 } from '$/client/persistence/index.js';
 
-// SQLite adapter exports (wrapper classes and types)
-export {
+import {
   SqlJsAdapter,
   OPSqliteAdapter,
-  type SqlJsDatabase,
-  type SqlJsAdapterOptions,
-  type OPSQLiteDatabase,
+} from '$/client/persistence/adapters/index.js';
+
+export const adapters = {
+  sqljs: SqlJsAdapter,
+  opsqlite: OPSqliteAdapter,
+} as const;
+
+export type {
+  SqlJsDatabase,
+  SqlJsAdapterOptions,
+  OPSQLiteDatabase,
 } from '$/client/persistence/adapters/index.js';
