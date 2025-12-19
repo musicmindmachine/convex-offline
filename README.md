@@ -2,74 +2,64 @@
 
 **Offline-first sync library using Yjs CRDTs and Convex for real-time data synchronization.**
 
-Replicate provides a dual-storage architecture for building offline-capable applications with automatic conflict resolution. It combines Yjs CRDTs (96% smaller than Automerge, no WASM) with TanStack DB's reactive state management and Convex's reactive backend for real-time synchronization and efficient querying.
+Replicate provides a dual-storage architecture for building offline-capable applications with automatic conflict resolution. It combines Yjs CRDTs with TanStack DB's reactive state management and Convex's reactive backend for real-time synchronization and efficient querying.
 
-## Features
-
-- **Offline-first** - Works without internet, syncs when reconnected
-- **Yjs CRDTs** - Automatic conflict-free replication with Yjs (96% smaller than Automerge, no WASM)
-- **Real-time sync** - Convex WebSocket-based synchronization
-- **TanStack DB integration** - Reactive state management for React and Svelte
-- **Dual-storage pattern** - CRDT layer for conflict resolution + main tables for queries
-- **Event sourcing** - Append-only event log preserves complete history
-- **Type-safe** - Full TypeScript support
-- **Multi-tab sync** - Changes sync instantly across browser tabs via TanStack coordination
-- **SSR support** - Server-side rendering with data preloading
-- **Network resilience** - Automatic retry with exponential backoff
-- **Component-based** - Convex component for plug-and-play CRDT storage
-- **Swappable persistence** - IndexedDB (browser), SQLite (React Native), or in-memory (testing)
-- **React Native compatible** - SQLite persistence with y-op-sqlite and op-sqlite
-- **Version history** - Create, list, restore, and delete document versions
-- **Auto-compaction** - Size-based per-document compaction (no cron jobs needed)
 
 ## Architecture
 
-### Data Flow: Real-Time Sync
+### Data Flow
 
 ```mermaid
 sequenceDiagram
-    participant User
-    participant UI as React/Svelte Component
-    participant TDB as TanStack DB
+    participant UI as React Component
+    participant Collection as TanStack DB Collection
     participant Yjs as Yjs CRDT
-    participant Offline as Offline Executor
-    participant Convex as Convex Component
+    participant Storage as Local Storage<br/>(IndexedDB/SQLite)
+    participant Convex as Convex Backend
     participant Table as Main Table
 
-    User->>UI: Create/Update Task
-    UI->>TDB: collection.insert/update
-    TDB->>Yjs: Update Yjs CRDT
-    Yjs-->>TDB: Notify change
-    TDB-->>UI: Re-render (optimistic)
+    Note over UI,Storage: Client-side (offline-capable)
+    UI->>Collection: insert/update/delete
+    Collection->>Yjs: Apply change to Y.Doc
+    Yjs->>Storage: Persist locally
+    Collection-->>UI: Re-render (optimistic)
 
-    Note over Offline: Automatic retry with backoff
-    Offline->>Yjs: Get CRDT delta
-    Offline->>Convex: insert/update mutation
-    Convex->>Component: Append delta to event log
-    Convex->>Table: Insert/Update materialized doc
+    Note over Collection,Convex: Sync layer
+    Collection->>Convex: Send CRDT delta
+    Convex->>Convex: Append to event log
+    Convex->>Table: Update materialized doc
 
-    Note over Convex,Table: Change detected
-    Table-->>UI: Subscription update
-    UI-->>User: Re-render with synced data
+    Note over Convex,UI: Real-time updates
+    Table-->>Collection: stream subscription
+    Collection-->>UI: Re-render with server state
 ```
 
-### Dual-Storage Architecture
+### Dual-Storage Pattern
 
 ```mermaid
-graph LR
-    Client[Client<br/>Yjs CRDT]
-    Component[Component Storage<br/>Event Log<br/>CRDT Deltas]
-    MainTable[Main Application Table<br/>Materialized Docs<br/>Efficient Queries]
+graph TB
+    subgraph Client
+        TDB[TanStack DB]
+        Yjs[Yjs CRDT]
+        Local[(IndexedDB/SQLite)]
+        TDB <--> Yjs
+        Yjs <--> Local
+    end
 
-    Client -->|insert/update/remove| Component
-    Component -->|also writes to| MainTable
-    MainTable -->|subscription| Client
+    subgraph Convex
+        Component[(Event Log<br/>CRDT Deltas)]
+        Main[(Main Table<br/>Materialized Docs)]
+        Component --> Main
+    end
+
+    Yjs -->|insert/update/remove| Component
+    Main -->|stream subscription| TDB
 ```
 
-**Why both?**
-- **Component Storage (Event Log)**: Append-only CRDT deltas, complete history, conflict resolution
-- **Main Tables (Read Model)**: Current state, efficient server-side queries, indexes, and reactive subscriptions
-- Similar to CQRS/Event Sourcing: component = event log, main table = materialized view
+**Why dual storage?**
+- **Event Log (Component)**: Append-only CRDT deltas for conflict resolution and history
+- **Main Table**: Materialized current state for efficient queries and indexes
+- Similar to CQRS: event log = write model, main table = read model
 
 ## Installation
 
@@ -115,7 +105,7 @@ export default defineSchema({
   tasks: schema.table(
     {
       // Your application fields only!
-      // version and timestamp are automatically injected by schema.table()
+      // timestamp is automatically injected by schema.table()
       id: v.string(),
       text: v.string(),
       isCompleted: v.boolean(),
@@ -128,7 +118,6 @@ export default defineSchema({
 ```
 
 **What `schema.table()` does:**
-- Automatically injects `version: v.number()` (for CRDT versioning)
 - Automatically injects `timestamp: v.number()` (for incremental sync)
 - You only define your business logic fields
 
@@ -151,10 +140,10 @@ const r = replicate(components.replicate);
 export const {
   stream,
   material,
+  recovery,
   insert,
   update,
   remove,
-  versions
 } = r<Task>({
   collection: 'tasks',
   compaction: { threshold: 5_000_000 },  // Optional: size threshold for auto-compaction (default: 5MB)
@@ -163,12 +152,12 @@ export const {
 
 **What `replicate()` generates:**
 
-- `stream` - Real-time CRDT stream query (for client subscriptions)
+- `stream` - Real-time CRDT stream query (checkpoint-based subscriptions)
 - `material` - SSR-friendly query (for server-side rendering)
+- `recovery` - State vector sync query (for startup reconciliation)
 - `insert` - Dual-storage insert mutation (auto-compacts when threshold exceeded)
 - `update` - Dual-storage update mutation (auto-compacts when threshold exceeded)
 - `remove` - Dual-storage delete mutation (auto-compacts when threshold exceeded)
-- `versions` - Version history APIs (create, list, get, restore, remove)
 
 ### Step 4: Create a Custom Hook
 
@@ -315,6 +304,41 @@ function TasksPage() {
 
 **Note:** If your framework doesn't support SSR, the collection works just fine without `initialData` - it will fetch data on mount and show a loading state.
 
+## Sync Protocol
+
+Replicate uses two complementary sync mechanisms:
+
+### `stream` - Real-time Checkpoint Sync
+
+The primary sync mechanism for real-time updates. Uses checkpoint-based incremental sync:
+
+1. Client subscribes with last known checkpoint (timestamp)
+2. Server returns all deltas since that checkpoint
+3. Client applies deltas and updates checkpoint
+4. Subscription stays open for live updates
+
+This is efficient for ongoing sync but requires the server to have deltas going back to the client's checkpoint.
+
+### `recovery` - State Vector Sync
+
+Used on startup to reconcile client and server state using Yjs state vectors:
+
+1. Client encodes its local Y.Doc state vector (compact representation of what it has)
+2. Server merges all snapshots + deltas into full state
+3. Server computes diff between its state and client's state vector
+4. Server returns only the missing bytes
+5. Client applies the diff to catch up
+
+**When recovery is used:**
+- App startup (before stream subscription begins)
+- After extended offline periods
+- When checkpoint-based sync can't satisfy the request (deltas compacted)
+
+**Why both?**
+- `stream` is optimized for real-time (small checkpoint, fast subscription)
+- `recovery` handles cold starts and large gaps efficiently (state vectors)
+- Together they ensure clients always sync correctly regardless of history
+
 ## Delete Pattern: Hard Delete with Event History
 
 Replicate uses **hard deletes** where items are physically removed from the main table, while the internal component preserves complete event history.
@@ -370,10 +394,10 @@ const r = replicate(components.replicate);
 export const {
   stream,
   material,
+  recovery,
   insert,
   update,
   remove,
-  versions
 } = r<Task>({
   collection: 'tasks',
 
@@ -392,16 +416,12 @@ export const {
       const userId = await ctx.auth.getUserIdentity();
       if (!userId) throw new Error('Unauthorized');
     },
-    evalVersion: async (ctx, collection, documentId) => { /* auth for versioning */ },
-    evalRestore: async (ctx, collection, documentId, versionId) => { /* auth for restore */ },
 
     // Lifecycle callbacks (on* hooks run AFTER execution)
     onStream: async (ctx, result) => { /* after stream query */ },
     onInsert: async (ctx, doc) => { /* after insert */ },
     onUpdate: async (ctx, doc) => { /* after update */ },
     onRemove: async (ctx, documentId) => { /* after remove */ },
-    onVersion: async (ctx, result) => { /* after version created */ },
-    onRestore: async (ctx, result) => { /* after restore */ },
 
     // Transform hook (modify documents before returning)
     transform: async (docs) => docs.filter(d => d.isPublic),
@@ -432,47 +452,6 @@ const plainText = prose.extract(notebook.content);
 
 // Client: Get editor binding for ProseMirror/TipTap
 const binding = await collection.utils.prose(notebookId, 'content');
-```
-
-### Version History
-
-Create and manage document version history:
-
-```typescript
-// convex/tasks.ts
-export const { versions } = replicate<Task>({
-  collection: 'tasks',
-});
-
-// Create a version
-await ctx.runMutation(api.tasks.versions.create, {
-  documentId: 'task-123',
-  label: 'Before major edit',
-  createdBy: 'user-456',
-});
-
-// List versions
-const versionList = await ctx.runQuery(api.tasks.versions.list, {
-  documentId: 'task-123',
-  limit: 10,
-});
-
-// Get a specific version
-const version = await ctx.runQuery(api.tasks.versions.get, {
-  versionId: 'version-789',
-});
-
-// Restore a version
-await ctx.runMutation(api.tasks.versions.restore, {
-  documentId: 'task-123',
-  versionId: 'version-789',
-  createBackup: true,  // Optional: create backup before restore
-});
-
-// Delete a version
-await ctx.runMutation(api.tasks.versions.remove, {
-  versionId: 'version-789',
-});
 ```
 
 ### Persistence Providers
@@ -676,16 +655,12 @@ interface ReplicateConfig<T> {
     evalRead?: (ctx, collection) => Promise<void>;
     evalWrite?: (ctx, doc) => Promise<void>;
     evalRemove?: (ctx, documentId) => Promise<void>;
-    evalVersion?: (ctx, collection, documentId) => Promise<void>;
-    evalRestore?: (ctx, collection, documentId, versionId) => Promise<void>;
 
     // Lifecycle callbacks (run after operation)
     onStream?: (ctx, result) => Promise<void>;
     onInsert?: (ctx, doc) => Promise<void>;
     onUpdate?: (ctx, doc) => Promise<void>;
     onRemove?: (ctx, documentId) => Promise<void>;
-    onVersion?: (ctx, result) => Promise<void>;
-    onRestore?: (ctx, result) => Promise<void>;
 
     // Transform hook (modify documents before returning)
     transform?: (docs) => Promise<T[]>;
@@ -694,16 +669,16 @@ interface ReplicateConfig<T> {
 ```
 
 **Returns:** Object with generated functions:
-- `stream` - Real-time CRDT stream query
+- `stream` - Real-time CRDT stream query (checkpoint-based)
 - `material` - SSR-friendly query for hydration
+- `recovery` - State vector sync query (for startup reconciliation)
 - `insert` - Dual-storage insert mutation (auto-compacts when threshold exceeded)
 - `update` - Dual-storage update mutation (auto-compacts when threshold exceeded)
 - `remove` - Dual-storage delete mutation (auto-compacts when threshold exceeded)
-- `versions` - Version history APIs (create, list, get, restore, remove)
 
 #### `schema.table(userFields, applyIndexes?)`
 
-Automatically inject replication metadata fields (`version`, `timestamp`).
+Automatically inject `timestamp` field for incremental sync.
 
 **Parameters:**
 - `userFields` - User's business logic fields
@@ -737,83 +712,29 @@ Validator for ProseMirror-compatible JSON fields.
 content: schema.prose()  // Validates ProseMirror JSON structure
 ```
 
-## Performance
-
-### Storage Performance
-
-- **Swappable persistence** - IndexedDB (browser), SQLite (React Native), or in-memory (testing)
-- **Yjs** CRDT operations are extremely fast (96% smaller than Automerge)
-- **TanStack DB** provides optimistic updates and reactive state management
-- **Indexed queries** in Convex for fast incremental sync
-
-### Sync Performance
-
-- **Real-time updates** - WebSocket-based change notifications
-- **Delta encoding** - Only send what changed (< 1KB per change vs 100KB+ full state)
-- **Event sourcing** - Append-only writes, no update conflicts
-- **Optimistic UI** - Instant updates without waiting for server
-
-### Multi-Tab Sync
-
-- **TanStack coordination** - Built-in multi-tab sync via BroadcastChannel
-- **Yjs shared state** - Single source of truth per browser
-- **Leader election** - Only one tab runs sync operations
-
-## Offline Behavior
-
-### How It Works
-
-- **Writes** - Queue locally in Yjs CRDT, sync when online
-- **Reads** - Always work from local TanStack DB cache (instant!)
-- **UI** - Fully functional with optimistic updates
-- **Conflicts** - Auto-resolved by Yjs CRDTs (conflict-free!)
-
-### Network Resilience
-
-- Automatic retry with exponential backoff
-- Network error detection (fetch errors, connection issues)
-- Queue changes while offline
-- Graceful degradation
-
 ## Examples
 
-Complete working example: `examples/tanstack-start/`
+### Interval - Linear-style Issue Tracker
 
-**Files to explore:**
-- `src/useTasks.ts` - Hook with TanStack DB integration
-- `src/routes/index.tsx` - Component usage with SSR
-- `src/routes/__root.tsx` - Logging configuration
-- `convex/tasks.ts` - Replication functions using dual-storage helpers
-- `convex/schema.ts` - Schema with `table()` helper
+A full-featured offline-first issue tracker built with Replicate, demonstrating real-world usage patterns.
 
-**Run the example:**
-```bash
-cd examples/tanstack-start
-bun install
-bun run dev
-```
+🔗 **Live Demo:** [interval.robelest.com](https://interval.robelest.com)
+
+📦 **Source Code:** [github.com/robelest/interval](https://github.com/robelest/interval)
+
+**Features demonstrated:**
+- Offline-first with SQLite persistence (sql.js + OPFS)
+- Rich text editing with TipTap + Yjs collaboration
+- PWA with custom service worker
+- Real-time sync across devices
+- Search with client-side text extraction (`prose.extract()`)
 
 ## Development
 
-### Building
-
 ```bash
-bun run build         # Build package using Rslib
+bun run build         # Build with Rslib (includes ESLint + TypeScript checking)
+bun run dev           # Watch mode
 bun run clean         # Remove build artifacts
-bun run typecheck     # Type check
-```
-
-### Code Quality
-
-```bash
-bun run check         # Lint + format check (dry run)
-bun run check:fix     # Auto-fix all issues (run before committing)
-```
-
-### Running Example
-
-```bash
-bun run dev:example   # Start example app + Convex dev environment
 ```
 
 ## License
