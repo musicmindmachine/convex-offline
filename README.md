@@ -165,7 +165,7 @@ Create a hook that wraps TanStack DB with Convex collection options:
 
 ```typescript
 // src/useTasks.ts
-import { createCollection } from '@tanstack/react-db';
+import { createCollection, type Collection } from '@tanstack/react-db';
 import { convexCollectionOptions } from '@trestleinc/replicate/client';
 import { api } from '../convex/_generated/api';
 import { convexClient } from './router';
@@ -177,15 +177,24 @@ export interface Task {
   isCompleted: boolean;
 }
 
+// Define collection type with TanStack DB discriminator
+// The singleResult property satisfies TanStack DB's NonSingleResult union type
+type TasksCollection = Collection<Task> & {
+  singleResult?: never;
+};
+
 // Module-level singleton to prevent multiple collection instances
 // This ensures only one sync process runs, even across component remounts
-let tasksCollection: ReturnType<typeof createCollection<Task>>;
+let tasksCollection: TasksCollection | null = null;
 
 export function useTasks(
   initialData?: { documents: Task[], checkpoint?: any, count?: number, crdtBytes?: Uint8Array }
 ) {
   return useMemo(() => {
     if (!tasksCollection) {
+      // Note: The `as unknown as` cast is required because TanStack DB's
+      // type inference expects StandardSchemaV1 compliance. This cast is
+      // safe as convexCollectionOptions returns the correct runtime type.
       tasksCollection = createCollection(
         convexCollectionOptions<Task>({
           convexClient,
@@ -194,7 +203,7 @@ export function useTasks(
           getKey: (task) => task.id,
           material: initialData,
         })
-      );
+      ) as unknown as TasksCollection;
     }
     return tasksCollection;
   }, [initialData]);
