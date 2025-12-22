@@ -729,7 +729,9 @@ A full-featured offline-first issue tracker built with Replicate, demonstrating 
 
 🔗 **Live Demo:** [interval.robelest.com](https://interval.robelest.com)
 
-📦 **Source Code:** [github.com/robelest/interval](https://github.com/robelest/interval)
+📦 **Source Code:** Available in two framework variants:
+- [`illustrations/web/tanstack-start/`](./illustrations/web/tanstack-start/) - TanStack Start (React)
+- [`illustrations/web/sveltekit/`](./illustrations/web/sveltekit/) - SvelteKit (Svelte)
 
 **Features demonstrated:**
 - Offline-first with SQLite persistence (sql.js + OPFS)
