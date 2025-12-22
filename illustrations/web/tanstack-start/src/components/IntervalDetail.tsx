@@ -1,8 +1,8 @@
-import { IntervalEditor } from './IntervalEditor';
-import { IntervalProperties } from './IntervalProperties';
-import { CommentList } from './CommentList';
-import type { Interval } from '../types/interval';
-import type { useIntervals } from '../collections/useIntervals';
+import { IntervalEditor } from "./IntervalEditor";
+import { IntervalProperties } from "./IntervalProperties";
+import { CommentList } from "./CommentList";
+import type { Interval } from "../types/interval";
+import type { useIntervals } from "../collections/useIntervals";
 
 interface IntervalDetailProps {
   intervalId: string;
@@ -11,7 +11,7 @@ interface IntervalDetailProps {
 }
 
 export function IntervalDetail({ intervalId, collection, interval }: IntervalDetailProps) {
-  const handlePropertyUpdate = (updates: Partial<Pick<Interval, 'status' | 'priority'>>) => {
+  const handlePropertyUpdate = (updates: Partial<Pick<Interval, "status" | "priority">>) => {
     collection.update(intervalId, (draft: Interval) => {
       if (updates.status !== undefined) draft.status = updates.status;
       if (updates.priority !== undefined) draft.priority = updates.priority;

@@ -4,10 +4,10 @@
  * Uses y-indexeddb for Y.Doc persistence and browser-level for key-value storage.
  * browser-level is an abstract-level database backed by IndexedDB.
  */
-import type * as Y from 'yjs';
-import { IndexeddbPersistence } from 'y-indexeddb';
-import { BrowserLevel } from 'browser-level';
-import type { Persistence, PersistenceProvider, KeyValueStore } from './types.js';
+import type * as Y from "yjs";
+import { IndexeddbPersistence } from "y-indexeddb";
+import { BrowserLevel } from "browser-level";
+import type { Persistence, PersistenceProvider, KeyValueStore } from "./types.js";
 
 /**
  * browser-level backed key-value store.
@@ -28,9 +28,10 @@ class BrowserLevelKeyValueStore implements KeyValueStore {
         return undefined;
       }
       return JSON.parse(value) as T;
-    } catch (err: any) {
+    }
+    catch (err: any) {
       // Level throws LEVEL_NOT_FOUND error for missing keys
-      if (err.code === 'LEVEL_NOT_FOUND') {
+      if (err.code === "LEVEL_NOT_FOUND") {
         return undefined;
       }
       throw err;
@@ -44,9 +45,10 @@ class BrowserLevelKeyValueStore implements KeyValueStore {
   async del(key: string): Promise<void> {
     try {
       await this.db.del(key);
-    } catch (err: any) {
+    }
+    catch (err: any) {
       // Ignore not found errors on delete
-      if (err.code !== 'LEVEL_NOT_FOUND') {
+      if (err.code !== "LEVEL_NOT_FOUND") {
         throw err;
       }
     }
@@ -73,9 +75,10 @@ class IndexedDBPersistenceProvider implements PersistenceProvider {
       if (this.persistence.synced) {
         // Already synced - resolve immediately
         resolve();
-      } else {
+      }
+      else {
         // Not yet synced - wait for event (use once to prevent listener accumulation)
-        this.persistence.once('synced', () => resolve());
+        this.persistence.once("synced", () => resolve());
       }
     });
   }
@@ -100,7 +103,7 @@ class IndexedDBPersistenceProvider implements PersistenceProvider {
  * });
  * ```
  */
-export function indexeddbPersistence(dbName = 'replicate-kv'): Persistence {
+export function indexeddbPersistence(dbName = "replicate-kv"): Persistence {
   const kv = new BrowserLevelKeyValueStore(dbName);
   return {
     createDocPersistence: (collection: string, ydoc: Y.Doc) =>

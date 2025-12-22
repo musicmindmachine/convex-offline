@@ -1,18 +1,18 @@
-import { EditorContent, useEditor } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
-import Collaboration from '@tiptap/extension-collaboration';
-import Placeholder from '@tiptap/extension-placeholder';
-import { Effect, Fiber } from 'effect';
-import { useEffect, useState } from 'react';
-import type { EditorBinding } from '@trestleinc/replicate/client';
-import { Textarea } from './ui/textarea';
-import { Button } from './ui/button';
+import { EditorContent, useEditor } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import Collaboration from "@tiptap/extension-collaboration";
+import Placeholder from "@tiptap/extension-placeholder";
+import { Effect, Fiber } from "effect";
+import { useEffect, useState } from "react";
+import type { EditorBinding } from "@trestleinc/replicate/client";
+import { Textarea } from "./ui/textarea";
+import { Button } from "./ui/button";
 
 interface CommentEditorProps {
   commentId: string;
   collection: {
     utils: {
-      prose(documentId: string, field: 'body'): Promise<EditorBinding>;
+      prose(documentId: string, field: "body"): Promise<EditorBinding>;
     };
   };
 }
@@ -26,17 +26,17 @@ export function CommentEditor({ commentId, collection }: CommentEditorProps) {
     setError(null);
 
     const fetchBinding = Effect.tryPromise({
-      try: () => collection.utils.prose(commentId, 'body'),
-      catch: (e) => e as Error,
+      try: () => collection.utils.prose(commentId, "body"),
+      catch: e => e as Error,
     });
 
     const fiber = Effect.runFork(fetchBinding);
 
     Fiber.join(fiber)
       .pipe(
-        Effect.tap((result) => Effect.sync(() => setBinding(result))),
-        Effect.catchAll((err) => Effect.sync(() => setError(err))),
-        Effect.runPromise
+        Effect.tap(result => Effect.sync(() => setBinding(result))),
+        Effect.catchAll(err => Effect.sync(() => setError(err))),
+        Effect.runPromise,
       )
       .catch(() => {
         // Silently ignore interruption
@@ -69,16 +69,16 @@ function CommentEditorView({ binding }: { binding: EditorBinding }) {
           fragment: binding.fragment,
         }),
         Placeholder.configure({
-          placeholder: 'Write a comment...',
+          placeholder: "Write a comment...",
         }),
       ],
       editorProps: {
         attributes: {
-          class: 'tiptap-editor prose text-sm outline-none min-h-[1.5em]',
+          class: "tiptap-editor prose text-sm outline-none min-h-[1.5em]",
         },
       },
     },
-    [binding.fragment]
+    [binding.fragment],
   );
 
   return <EditorContent editor={editor} />;
@@ -90,13 +90,13 @@ interface NewCommentInputProps {
 }
 
 export function NewCommentInput({ onSubmit }: NewCommentInputProps) {
-  const [text, setText] = useState('');
+  const [text, setText] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (text.trim()) {
       onSubmit(text.trim());
-      setText('');
+      setText("");
     }
   };
 
@@ -104,7 +104,7 @@ export function NewCommentInput({ onSubmit }: NewCommentInputProps) {
     <form onSubmit={handleSubmit} className="mt-6 space-y-3">
       <Textarea
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={e => setText(e.target.value)}
         placeholder="Write a comment..."
         rows={3}
       />

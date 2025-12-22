@@ -1,10 +1,10 @@
-import tailwindcss from '@tailwindcss/vite';
-import { tanstackStart } from '@tanstack/react-start/plugin/vite';
-import viteReact from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
-import { nitro } from 'nitro/vite';
-import { VitePWA } from 'vite-plugin-pwa';
-import viteTsConfigPaths from 'vite-tsconfig-paths';
+import tailwindcss from "@tailwindcss/vite";
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import viteReact from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+import { nitro } from "nitro/vite";
+import { VitePWA } from "vite-plugin-pwa";
+import viteTsConfigPaths from "vite-tsconfig-paths";
 
 const config = defineConfig({
   server: {
@@ -12,7 +12,7 @@ const config = defineConfig({
   },
   plugins: [
     viteTsConfigPaths({
-      projects: ['./tsconfig.json'],
+      projects: ["./tsconfig.json"],
     }),
     tailwindcss(),
     tanstackStart(),
@@ -21,39 +21,39 @@ const config = defineConfig({
     // VitePWA only generates manifest.webmanifest
     // Service worker is generated post-build via scripts/generate-sw.ts
     VitePWA({
-      registerType: 'prompt',
+      registerType: "prompt",
       injectRegister: false, // We use useRegisterSW manually in ReloadPrompt.tsx
-      includeAssets: ['favicon.ico', 'favicon.svg', 'robots.txt'],
+      includeAssets: ["favicon.ico", "favicon.svg", "robots.txt"],
       manifest: {
-        name: 'Interval',
-        short_name: 'Interval',
-        description: 'Offline-first task tracker with real-time sync',
-        theme_color: '#000000',
-        background_color: '#ffffff',
-        display: 'standalone',
+        name: "Interval",
+        short_name: "Interval",
+        description: "Offline-first task tracker with real-time sync",
+        theme_color: "#000000",
+        background_color: "#ffffff",
+        display: "standalone",
         icons: [
           {
-            src: 'logo192.png',
-            sizes: '192x192',
-            type: 'image/png',
+            src: "logo192.png",
+            sizes: "192x192",
+            type: "image/png",
           },
           {
-            src: 'logo512.png',
-            sizes: '512x512',
-            type: 'image/png',
-            purpose: 'any maskable',
+            src: "logo512.png",
+            sizes: "512x512",
+            type: "image/png",
+            purpose: "any maskable",
           },
         ],
       },
       devOptions: {
         enabled: false,
-        type: 'module',
+        type: "module",
         suppressWarnings: true,
       },
     }),
   ],
   resolve: {
-    dedupe: ['yjs'],
+    dedupe: ["yjs"],
   },
 });
 

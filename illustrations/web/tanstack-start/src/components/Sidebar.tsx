@@ -1,16 +1,16 @@
-import { Link, useParams, ClientOnly } from '@tanstack/react-router';
-import { Plus, Search, SlidersHorizontal } from 'lucide-react';
-import { useState, useRef, useEffect } from 'react';
-import { useIntervalsContext } from '../contexts/IntervalsContext';
-import { useCreateInterval } from '../hooks/useCreateInterval';
-import { StarIcon } from './StarIcon';
-import { StatusIcon } from './StatusIcon';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Skeleton } from '@/components/ui/skeleton';
-import { cn } from '@/lib/utils';
-import type { Interval } from '../types/interval';
+import { Link, useParams, ClientOnly } from "@tanstack/react-router";
+import { Plus, Search, SlidersHorizontal } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { useIntervalsContext } from "../contexts/IntervalsContext";
+import { useCreateInterval } from "../hooks/useCreateInterval";
+import { StarIcon } from "./StarIcon";
+import { StatusIcon } from "./StatusIcon";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
+import type { Interval } from "../types/interval";
 
 interface SidebarProps {
   onSearchOpen: () => void;
@@ -40,7 +40,7 @@ export function Sidebar({ onSearchOpen, onFilterOpen, hasActiveFilters }: Sideba
             size="icon-sm"
             onClick={onFilterOpen}
             aria-label="Filter intervals"
-            className={cn(hasActiveFilters && 'text-primary')}
+            className={cn(hasActiveFilters && "text-primary")}
           >
             <SlidersHorizontal className="w-4 h-4" />
           </Button>
@@ -102,16 +102,16 @@ function SidebarIntervalsList() {
   const activeId = (params as { intervalId?: string }).intervalId;
 
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editTitle, setEditTitle] = useState('');
+  const [editTitle, setEditTitle] = useState("");
   const editInputRef = useRef<HTMLInputElement>(null);
 
   // Filter out items without valid ids and sort by updatedAt descending
   const sortedIntervals = [...(intervals as Interval[])]
-    .filter((i): i is Interval => typeof i.id === 'string' && i.id.length > 0)
+    .filter((i): i is Interval => typeof i.id === "string" && i.id.length > 0)
     .sort((a, b) => b.updatedAt - a.updatedAt);
 
   const handleStartRename = (id: string) => {
-    const interval = intervals.find((i) => i.id === id);
+    const interval = intervals.find(i => i.id === id);
     if (interval) {
       setEditingId(id);
       setEditTitle(interval.title);
@@ -152,49 +152,51 @@ function SidebarIntervalsList() {
 
   return (
     <ul className="list-none m-0 p-0 flex flex-col">
-      {sortedIntervals.map((interval) => (
+      {sortedIntervals.map(interval => (
         <li key={interval.id}>
-          {editingId === interval.id ? (
-            <div className="flex items-center gap-2 px-3 py-2 bg-muted">
-              <StatusIcon status={interval.status} size={14} className="shrink-0" />
-              <Input
-                ref={editInputRef}
-                type="text"
-                value={editTitle}
-                onChange={(e) => setEditTitle(e.target.value)}
-                onBlur={() => handleSaveRename(interval.id)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleSaveRename(interval.id);
-                  if (e.key === 'Escape') setEditingId(null);
-                }}
-                className="flex-1 h-6 text-sm p-1"
-              />
-            </div>
-          ) : (
-            <Link
-              to="/intervals/$intervalId"
-              params={{ intervalId: interval.id }}
-              className={cn(
-                'group flex items-center gap-2 px-3 py-2 text-sm no-underline transition-colors',
-                activeId === interval.id
-                  ? 'bg-muted text-foreground border-l-2 border-sidebar-accent'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground border-l-2 border-transparent'
+          {editingId === interval.id
+            ? (
+                <div className="flex items-center gap-2 px-3 py-2 bg-muted">
+                  <StatusIcon status={interval.status} size={14} className="shrink-0" />
+                  <Input
+                    ref={editInputRef}
+                    type="text"
+                    value={editTitle}
+                    onChange={e => setEditTitle(e.target.value)}
+                    onBlur={() => handleSaveRename(interval.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleSaveRename(interval.id);
+                      if (e.key === "Escape") setEditingId(null);
+                    }}
+                    className="flex-1 h-6 text-sm p-1"
+                  />
+                </div>
+              )
+            : (
+                <Link
+                  to="/intervals/$intervalId"
+                  params={{ intervalId: interval.id }}
+                  className={cn(
+                    "group flex items-center gap-2 px-3 py-2 text-sm no-underline transition-colors",
+                    activeId === interval.id
+                      ? "bg-muted text-foreground border-l-2 border-sidebar-accent"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground border-l-2 border-transparent",
+                  )}
+                >
+                  <StatusIcon status={interval.status} size={14} className="shrink-0" />
+                  <button
+                    type="button"
+                    className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-left bg-transparent border-none p-0 font-inherit text-inherit cursor-pointer"
+                    onDoubleClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleStartRename(interval.id);
+                    }}
+                  >
+                    {interval.title || "Untitled"}
+                  </button>
+                </Link>
               )}
-            >
-              <StatusIcon status={interval.status} size={14} className="shrink-0" />
-              <button
-                type="button"
-                className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-left bg-transparent border-none p-0 font-inherit text-inherit cursor-pointer"
-                onDoubleClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  handleStartRename(interval.id);
-                }}
-              >
-                {interval.title || 'Untitled'}
-              </button>
-            </Link>
-          )}
         </li>
       ))}
     </ul>

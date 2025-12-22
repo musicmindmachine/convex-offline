@@ -1,5 +1,5 @@
-import type { GenericMutationCtx, GenericQueryCtx, GenericDataModel } from 'convex/server';
-import { Replicate } from '$/server/storage';
+import type { GenericMutationCtx, GenericQueryCtx, GenericDataModel } from "convex/server";
+import { Replicate } from "$/server/storage";
 
 /**
  * Configuration for replicate handlers (without component - used with factory pattern).

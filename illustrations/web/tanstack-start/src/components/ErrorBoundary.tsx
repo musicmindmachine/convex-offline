@@ -1,7 +1,7 @@
-import React from 'react';
-import { getLogger } from '../lib/logger';
+import React from "react";
+import { getLogger } from "../lib/logger";
 
-const logger = getLogger('error-boundary');
+const logger = getLogger("error-boundary");
 
 interface Props {
   children: React.ReactNode;
@@ -27,7 +27,7 @@ export class ConvexRxErrorBoundary extends React.Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    logger.error('Error Boundary caught error', { error, errorInfo });
+    logger.error("Error Boundary caught error", { error, errorInfo });
   }
 
   handleReset = () => {
@@ -42,7 +42,7 @@ export class ConvexRxErrorBoundary extends React.Component<Props, State> {
         <div className="error-boundary">
           <h1 className="error-boundary-title">Something went wrong</h1>
           <p className="error-boundary-message">An error occurred while syncing data:</p>
-          <pre className="error-boundary-error">{this.state.error?.message || 'Unknown error'}</pre>
+          <pre className="error-boundary-error">{this.state.error?.message || "Unknown error"}</pre>
           {this.state.error?.stack && (
             <details className="error-boundary-details">
               <summary>Stack trace</summary>

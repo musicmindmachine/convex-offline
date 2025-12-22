@@ -1,18 +1,18 @@
-import { useState } from 'react';
-import { Link } from '@tanstack/react-router';
-import { Trash2 } from 'lucide-react';
-import { prose } from '@trestleinc/replicate/client';
-import { useIntervalsContext } from '../contexts/IntervalsContext';
-import { StatusIcon } from './StatusIcon';
-import { PriorityIcon } from './PriorityIcon';
-import { Button } from './ui/button';
+import { useState } from "react";
+import { Link } from "@tanstack/react-router";
+import { Trash2 } from "lucide-react";
+import { prose } from "@trestleinc/replicate/client";
+import { useIntervalsContext } from "../contexts/IntervalsContext";
+import { StatusIcon } from "./StatusIcon";
+import { PriorityIcon } from "./PriorityIcon";
+import { Button } from "./ui/button";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
-} from './ui/dropdown-menu';
+} from "./ui/dropdown-menu";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -22,9 +22,9 @@ import {
   AlertDialogFooter,
   AlertDialogCancel,
   AlertDialogAction,
-} from './ui/alert-dialog';
-import { Status, Priority, StatusLabels, PriorityLabels, type StatusValue, type PriorityValue } from '../types/interval';
-import type { Interval } from '../types/interval';
+} from "./ui/alert-dialog";
+import { Status, Priority, StatusLabels, PriorityLabels, type StatusValue, type PriorityValue } from "../types/interval";
+import type { Interval } from "../types/interval";
 
 interface IntervalRowProps {
   interval: Interval;
@@ -35,7 +35,7 @@ export function IntervalRow({ interval }: IntervalRowProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const description = prose.extract(interval.description);
-  const preview = description.slice(0, 100) + (description.length > 100 ? '...' : '');
+  const preview = description.slice(0, 100) + (description.length > 100 ? "..." : "");
 
   const statusOptions = Object.values(Status) as StatusValue[];
   const priorityOptions = Object.values(Priority) as PriorityValue[];
@@ -75,7 +75,7 @@ export function IntervalRow({ interval }: IntervalRowProps) {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
             <DropdownMenuRadioGroup value={interval.status} onValueChange={handleStatusChange}>
-              {statusOptions.map((status) => (
+              {statusOptions.map(status => (
                 <DropdownMenuRadioItem key={status} value={status}>
                   <StatusIcon status={status} size={14} />
                   {StatusLabels[status]}
@@ -91,7 +91,7 @@ export function IntervalRow({ interval }: IntervalRowProps) {
           params={{ intervalId: interval.id }}
           className="flex-1 min-w-0 flex flex-col gap-0.5 no-underline text-foreground"
         >
-          <span className="text-sm font-medium truncate">{interval.title || 'Untitled'}</span>
+          <span className="text-sm font-medium truncate">{interval.title || "Untitled"}</span>
           {preview && <span className="text-xs text-muted-foreground truncate">{preview}</span>}
         </Link>
 
@@ -102,7 +102,7 @@ export function IntervalRow({ interval }: IntervalRowProps) {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuRadioGroup value={interval.priority} onValueChange={handlePriorityChange}>
-              {priorityOptions.map((priority) => (
+              {priorityOptions.map(priority => (
                 <DropdownMenuRadioItem key={priority} value={priority}>
                   <PriorityIcon priority={priority} size={14} />
                   {PriorityLabels[priority]}
@@ -129,7 +129,9 @@ export function IntervalRow({ interval }: IntervalRowProps) {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete interval?</AlertDialogTitle>
             <AlertDialogDescription>
-              "{interval.title || 'Untitled'}" will be permanently deleted. This action cannot be undone.
+              "
+              {interval.title || "Untitled"}
+              " will be permanently deleted. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

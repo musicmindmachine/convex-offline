@@ -1,11 +1,11 @@
-import { createFileRoute, ClientOnly } from '@tanstack/react-router';
-import { ConvexHttpClient } from 'convex/browser';
-import { api } from '../../../convex/_generated/api';
-import { useIntervalsContext } from '../../contexts/IntervalsContext';
-import { IntervalDetail } from '../../components/IntervalDetail';
-import type { Interval } from '../../types/interval';
+import { createFileRoute, ClientOnly } from "@tanstack/react-router";
+import { ConvexHttpClient } from "convex/browser";
+import { api } from "../../../convex/_generated/api";
+import { useIntervalsContext } from "../../contexts/IntervalsContext";
+import { IntervalDetail } from "../../components/IntervalDetail";
+import type { Interval } from "../../types/interval";
 
-export const Route = createFileRoute('/intervals/$intervalId')({
+export const Route = createFileRoute("/intervals/$intervalId")({
   loader: async ({ params }) => {
     const convexUrl = import.meta.env.VITE_CONVEX_URL;
     if (!convexUrl) return { interval: null };
@@ -14,7 +14,8 @@ export const Route = createFileRoute('/intervals/$intervalId')({
     try {
       const interval = await httpClient.query(api.intervals.get, { id: params.intervalId });
       return { interval };
-    } catch {
+    }
+    catch {
       return { interval: null };
     }
   },
@@ -28,11 +29,13 @@ function IntervalPageComponent() {
   return (
     <ClientOnly
       fallback={
-        ssrInterval ? (
-          <StaticIntervalView interval={ssrInterval as Interval} />
-        ) : (
-          <IntervalLoading />
-        )
+        ssrInterval
+          ? (
+              <StaticIntervalView interval={ssrInterval as Interval} />
+            )
+          : (
+              <IntervalLoading />
+            )
       }
     >
       <LiveIntervalView intervalId={intervalId} />
@@ -42,7 +45,7 @@ function IntervalPageComponent() {
 
 function LiveIntervalView({ intervalId }: { intervalId: string }) {
   const { collection, intervals, isLoading } = useIntervalsContext();
-  const interval = intervals.find((i) => i.id === intervalId);
+  const interval = intervals.find(i => i.id === intervalId);
 
   if (isLoading) {
     return <IntervalLoading />;
@@ -59,7 +62,7 @@ function StaticIntervalView({ interval }: { interval: Interval }) {
   return (
     <div className="interval-detail">
       <div className="interval-detail-header">
-        <h1 className="interval-title">{interval.title || 'Untitled'}</h1>
+        <h1 className="interval-title">{interval.title || "Untitled"}</h1>
       </div>
       <div className="interval-detail-body">
         <div className="interval-description-placeholder">Loading editor...</div>

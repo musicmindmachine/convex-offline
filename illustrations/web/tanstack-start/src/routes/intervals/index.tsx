@@ -1,8 +1,8 @@
-import { createFileRoute, ClientOnly } from '@tanstack/react-router';
-import { IntervalList } from '../../components/IntervalList';
-import { Skeleton } from '../../components/ui/skeleton';
+import { createFileRoute, ClientOnly } from "@tanstack/react-router";
+import { IntervalList } from "../../components/IntervalList";
+import { Skeleton } from "../../components/ui/skeleton";
 
-export const Route = createFileRoute('/intervals/')({
+export const Route = createFileRoute("/intervals/")({
   component: IntervalsIndexComponent,
 });
 

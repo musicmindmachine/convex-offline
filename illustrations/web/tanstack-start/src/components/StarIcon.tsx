@@ -4,14 +4,14 @@ interface StarIconProps {
   animate?: boolean;
 }
 
-export function StarIcon({ size = 24, className = '', animate = false }: StarIconProps) {
+export function StarIcon({ size = 24, className = "", animate = false }: StarIconProps) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
       width={size}
       height={size}
       viewBox="0 0 32 32"
-      className={`star-icon ${animate ? 'star-icon-animate' : ''} ${className}`}
+      className={`star-icon ${animate ? "star-icon-animate" : ""} ${className}`}
       aria-hidden="true"
     >
       <title>Notebook star icon</title>

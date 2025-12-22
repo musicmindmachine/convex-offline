@@ -1,15 +1,15 @@
 # AGENTS.md - Development Guide
 
 ## Commands
-- **Build:** `bun run build` (uses Rslib, outputs to `dist/`)
-- **Test:** `bun test` (Vitest). Run single: `bun test src/path/to/test.ts`
-- **Lint & Format:** `bun run check:fix` (Biome) - **ALWAYS RUN BEFORE COMMITTING**
-- **Type Check:** Build includes type checking via Rslib
+- **Build:** `bun run build` (uses tsdown, outputs to `dist/`)
+- **Test:** `bun run test` (Vitest). Run single: `bun test src/path/to/test.ts`
+- **Lint & Format:** `bun run lint:fix` (ESLint + Stylistic) - **ALWAYS RUN BEFORE COMMITTING**
+- **Type Check:** Build includes type checking via tsdown
 
 ## Code Style & Conventions
-- **Formatting:** 2 spaces, single quotes, semicolons (enforced by Biome).
+- **Formatting:** 2 spaces, double quotes, semicolons (enforced by ESLint Stylistic).
 - **Imports:** Use `import type` for types. Use `node:` protocol for Node built-ins.
-- **Logging:** Use `LogTape`. Avoid `console.*` (warns in Biome, allowed in tests).
+- **Logging:** Use `LogTape`. Avoid `console.*` (warns in ESLint, allowed in tests).
 - **Structure:** Single package. `src/client` (browser), `src/server` (Convex), `src/component`.
 - **Documentation:** ALWAYS use `Context7` tool for library docs (Convex, Yjs, TanStack).
 - **Deletion:** Hard deletes in main table; soft deletes (append-only) in component.

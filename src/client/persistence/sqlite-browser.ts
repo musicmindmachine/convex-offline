@@ -15,9 +15,9 @@
  * const persistence = await createBrowserSqlitePersistence(SQL, 'myapp');
  * ```
  */
-import { SqlJsAdapter, type SqlJsDatabase } from './adapters/sqljs.js';
-import { sqlitePersistence } from './sqlite.js';
-import type { Persistence } from './types.js';
+import { SqlJsAdapter, type SqlJsDatabase } from "./adapters/sqljs.js";
+import { sqlitePersistence } from "./sqlite.js";
+import type { Persistence } from "./types.js";
 
 /**
  * Interface for the sql.js module (the result of initSqlJs).
@@ -36,7 +36,8 @@ async function loadFromOPFS(dbName: string): Promise<Uint8Array | null> {
     const file = await handle.getFile();
     const buffer = await file.arrayBuffer();
     return new Uint8Array(buffer);
-  } catch {
+  }
+  catch {
     // File doesn't exist yet
     return null;
   }
@@ -56,7 +57,8 @@ function createOPFSSaver(dbName: string): (data: Uint8Array) => Promise<void> {
       new Uint8Array(buffer).set(data);
       await writable.write(buffer);
       await writable.close();
-    } catch {
+    }
+    catch {
       // Silently fail - OPFS may not be available
     }
   };
@@ -89,7 +91,7 @@ function createOPFSSaver(dbName: string): (data: Uint8Array) => Promise<void> {
  */
 export async function createBrowserSqlitePersistence(
   SQL: SqlJsStatic,
-  dbName: string
+  dbName: string,
 ): Promise<Persistence> {
   // Load existing database from OPFS if available
   const existingData = await loadFromOPFS(dbName);

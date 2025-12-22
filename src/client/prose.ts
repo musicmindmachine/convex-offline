@@ -5,15 +5,15 @@
  * Uses document-level tracking to prevent race conditions.
  */
 
-import * as Y from 'yjs';
-import type { Collection } from '@tanstack/db';
-import { getLogger } from '$/client/logger';
-import { serializeYMapValue } from '$/client/merge';
+import * as Y from "yjs";
+import type { Collection } from "@tanstack/db";
+import { getLogger } from "$/client/logger";
+import { serializeYMapValue } from "$/client/merge";
 
 /** Server origin - changes from server should not trigger local sync */
-const SERVER_ORIGIN = 'server';
+const SERVER_ORIGIN = "server";
 
-const logger = getLogger(['replicate', 'prose']);
+const logger = getLogger(["replicate", "prose"]);
 
 // Default debounce time for prose sync
 const DEFAULT_DEBOUNCE_MS = 1000;
@@ -62,12 +62,13 @@ export function isApplyingFromServer(collection: string, documentId: string): bo
 export function setApplyingFromServer(
   collection: string,
   documentId: string,
-  value: boolean
+  value: boolean,
 ): void {
   const key = `${collection}:${documentId}`;
   if (value) {
     applyingFromServer.set(key, true);
-  } else {
+  }
+  else {
     applyingFromServer.delete(key);
   }
 }
@@ -89,8 +90,9 @@ function setPendingInternal(key: string, value: boolean): void {
       for (const cb of listeners) {
         try {
           cb(value);
-        } catch (err) {
-          logger.error('Pending listener error', { key, error: String(err) });
+        }
+        catch (err) {
+          logger.error("Pending listener error", { key, error: String(err) });
         }
       }
     }
@@ -110,7 +112,7 @@ export function isPending(collection: string, documentId: string): boolean {
 export function subscribePending(
   collection: string,
   documentId: string,
-  callback: (pending: boolean) => void
+  callback: (pending: boolean) => void,
 ): () => void {
   const key = `${collection}:${documentId}`;
 
@@ -145,7 +147,7 @@ export function cancelPending(collection: string, documentId: string): void {
     clearTimeout(timer);
     debounceTimers.delete(key);
     setPendingInternal(key, false);
-    logger.debug('Cancelled pending sync due to remote update', { collection, documentId });
+    logger.debug("Cancelled pending sync due to remote update", { collection, documentId });
   }
 }
 
@@ -162,7 +164,7 @@ export function cancelAllPending(collection: string): void {
       setPendingInternal(key, false);
     }
   }
-  logger.debug('Cancelled all pending syncs', { collection });
+  logger.debug("Cancelled all pending syncs", { collection });
 }
 
 // ============================================================================
@@ -201,7 +203,7 @@ export function observeFragment(config: ProseObserverConfig): () => void {
   // Skip if already observing this document
   const existingCleanup = fragmentObservers.get(key);
   if (existingCleanup) {
-    logger.debug('Fragment already being observed', { collection, documentId, field });
+    logger.debug("Fragment already being observed", { collection, documentId, field });
     return existingCleanup;
   }
 
@@ -224,7 +226,7 @@ export function observeFragment(config: ProseObserverConfig): () => void {
 
       const itemYMap = ymap.get(documentId) as Y.Map<unknown> | undefined;
       if (!itemYMap) {
-        logger.error('Document not found', { collection, documentId });
+        logger.error("Document not found", { collection, documentId });
         setPendingInternal(key, false);
         return;
       }
@@ -237,7 +239,7 @@ export function observeFragment(config: ProseObserverConfig): () => void {
           : Y.encodeStateAsUpdateV2(ydoc);
 
         if (delta.length <= 2) {
-          logger.debug('No changes to sync', { collection, documentId });
+          logger.debug("No changes to sync", { collection, documentId });
           setPendingInternal(key, false);
           return;
         }
@@ -245,7 +247,7 @@ export function observeFragment(config: ProseObserverConfig): () => void {
         const crdtBytes = delta.buffer as ArrayBuffer;
         const currentVector = Y.encodeStateVector(ydoc);
 
-        logger.debug('Syncing prose delta', {
+        logger.debug("Syncing prose delta", {
           collection,
           documentId,
           deltaSize: delta.byteLength,
@@ -259,7 +261,7 @@ export function observeFragment(config: ProseObserverConfig): () => void {
           { metadata: { contentSync: { crdtBytes, materializedDoc } } },
           (draft: any) => {
             draft.updatedAt = Date.now();
-          }
+          },
         );
         await result.isPersisted.promise;
 
@@ -267,9 +269,10 @@ export function observeFragment(config: ProseObserverConfig): () => void {
         lastSyncedVectors.set(key, currentVector);
         failedSyncQueue.delete(key);
         setPendingInternal(key, false);
-        logger.debug('Prose sync completed', { collection, documentId });
-      } catch (err) {
-        logger.error('Prose sync failed, queued for retry', {
+        logger.debug("Prose sync completed", { collection, documentId });
+      }
+      catch (err) {
+        logger.error("Prose sync failed, queued for retry", {
           collection,
           documentId,
           error: String(err),
@@ -284,7 +287,7 @@ export function observeFragment(config: ProseObserverConfig): () => void {
     // Also retry any failed syncs for this document
     if (failedSyncQueue.has(key)) {
       failedSyncQueue.delete(key);
-      logger.debug('Retrying failed sync', { collection, documentId });
+      logger.debug("Retrying failed sync", { collection, documentId });
     }
   };
 
@@ -296,11 +299,11 @@ export function observeFragment(config: ProseObserverConfig): () => void {
     cancelPending(collection, documentId);
     fragmentObservers.delete(key);
     lastSyncedVectors.delete(key);
-    logger.debug('Fragment observer cleaned up', { collection, documentId, field });
+    logger.debug("Fragment observer cleaned up", { collection, documentId, field });
   };
 
   fragmentObservers.set(key, cleanup);
-  logger.debug('Fragment observer registered', { collection, documentId, field });
+  logger.debug("Fragment observer registered", { collection, documentId, field });
 
   return cleanup;
 }
@@ -365,5 +368,5 @@ export function cleanup(collection: string): void {
     }
   }
 
-  logger.debug('Prose cleanup complete', { collection });
+  logger.debug("Prose cleanup complete", { collection });
 }

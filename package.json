@@ -18,7 +18,6 @@
   ],
   "type": "module",
   "private": false,
-  "workspaces": ["example"],
   "resolutions": {
     "convex": "1.31.2",
     "@standard-schema/spec": "1.1.0",
@@ -32,7 +31,11 @@
   "scripts": {
     "build": "tsdown",
     "dev": "tsdown --watch",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "exports": {
     ".": {
@@ -108,6 +111,7 @@
     "fake-indexeddb": "6.2.5",
     "globals": "16.5.0",
     "lib0": "0.2.114",
+    "publint": "0.3.12",
     "tsdown": "0.18.2",
     "typescript": "5.9.3",
     "typescript-eslint": "8.50.0",

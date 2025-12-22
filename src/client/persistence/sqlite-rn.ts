@@ -10,9 +10,9 @@
  * const persistence = await createReactNativeSqlitePersistence(db, 'myapp');
  * ```
  */
-import { OPSqliteAdapter, type OPSQLiteDatabase } from './adapters/opsqlite.js';
-import { sqlitePersistence } from './sqlite.js';
-import type { Persistence } from './types.js';
+import { OPSqliteAdapter, type OPSQLiteDatabase } from "./adapters/opsqlite.js";
+import { sqlitePersistence } from "./sqlite.js";
+import type { Persistence } from "./types.js";
 
 /**
  * Create React Native SQLite persistence using op-sqlite.
@@ -37,7 +37,7 @@ import type { Persistence } from './types.js';
  */
 export async function createReactNativeSqlitePersistence(
   db: OPSQLiteDatabase,
-  dbName: string
+  dbName: string,
 ): Promise<Persistence> {
   const adapter = new OPSqliteAdapter(db);
   return sqlitePersistence({ adapter, dbName });

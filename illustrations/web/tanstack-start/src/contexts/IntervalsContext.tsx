@@ -1,7 +1,7 @@
-import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
-import { useLiveQuery } from '@tanstack/react-db';
-import { useIntervals, initIntervalsPersistence, type Interval } from '../collections/useIntervals';
-import { initCommentsPersistence } from '../collections/useComments';
+import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
+import { useLiveQuery } from "@tanstack/react-db";
+import { useIntervals, initIntervalsPersistence, type Interval } from "../collections/useIntervals";
+import { initCommentsPersistence } from "../collections/useComments";
 
 interface IntervalsContextValue {
   collection: ReturnType<typeof useIntervals>;
@@ -67,7 +67,7 @@ export function IntervalsProvider({ children }: { children: ReactNode }) {
 export function useIntervalsContext() {
   const ctx = useContext(IntervalsContext);
   if (!ctx) {
-    throw new Error('useIntervalsContext must be used within IntervalsProvider');
+    throw new Error("useIntervalsContext must be used within IntervalsProvider");
   }
   return ctx;
 }

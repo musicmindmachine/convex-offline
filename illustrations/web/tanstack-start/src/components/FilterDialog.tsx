@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
-import { SlidersHorizontal, X } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { StatusIcon } from './StatusIcon';
-import { PriorityIcon } from './PriorityIcon';
-import { cn } from '@/lib/utils';
+import { useState, useEffect } from "react";
+import { SlidersHorizontal, X } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { StatusIcon } from "./StatusIcon";
+import { PriorityIcon } from "./PriorityIcon";
+import { cn } from "@/lib/utils";
 import {
   Status,
   Priority,
@@ -13,7 +13,7 @@ import {
   PriorityLabels,
   type StatusValue,
   type PriorityValue,
-} from '../types/interval';
+} from "../types/interval";
 
 interface FilterDialogProps {
   isOpen: boolean;
@@ -32,7 +32,7 @@ export function FilterDialog({
   onStatusChange,
   onPriorityChange,
 }: FilterDialogProps) {
-  const [selectedSection, setSelectedSection] = useState<'status' | 'priority'>('status');
+  const [selectedSection, setSelectedSection] = useState<"status" | "priority">("status");
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   const statusOptions = Object.values(Status) as StatusValue[];
@@ -43,42 +43,45 @@ export function FilterDialog({
   // Reset state when opened
   useEffect(() => {
     if (isOpen) {
-      setSelectedSection('status');
+      setSelectedSection("status");
       setSelectedIndex(0);
     }
   }, [isOpen]);
 
   // Handle keyboard navigation
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    const currentOptions = selectedSection === 'status' ? statusOptions : priorityOptions;
+    const currentOptions = selectedSection === "status" ? statusOptions : priorityOptions;
     const optionsCount = currentOptions.length + 1; // +1 for "All" option
 
     switch (e.key) {
-      case 'ArrowDown':
+      case "ArrowDown":
         e.preventDefault();
-        setSelectedIndex((i) => Math.min(i + 1, optionsCount - 1));
+        setSelectedIndex(i => Math.min(i + 1, optionsCount - 1));
         break;
-      case 'ArrowUp':
+      case "ArrowUp":
         e.preventDefault();
-        setSelectedIndex((i) => Math.max(i - 1, 0));
+        setSelectedIndex(i => Math.max(i - 1, 0));
         break;
-      case 'Tab':
+      case "Tab":
         e.preventDefault();
-        setSelectedSection((s) => (s === 'status' ? 'priority' : 'status'));
+        setSelectedSection(s => (s === "status" ? "priority" : "status"));
         setSelectedIndex(0);
         break;
-      case 'Enter':
+      case "Enter":
         e.preventDefault();
-        if (selectedSection === 'status') {
+        if (selectedSection === "status") {
           if (selectedIndex === 0) {
             onStatusChange(null);
-          } else {
+          }
+          else {
             onStatusChange(statusOptions[selectedIndex - 1]);
           }
-        } else {
+        }
+        else {
           if (selectedIndex === 0) {
             onPriorityChange(null);
-          } else {
+          }
+          else {
             onPriorityChange(priorityOptions[selectedIndex - 1]);
           }
         }
@@ -92,7 +95,7 @@ export function FilterDialog({
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+    <Dialog open={isOpen} onOpenChange={open => !open && onClose()}>
       <DialogContent
         className="w-[85vw] max-w-[85vw] sm:max-w-[400px] h-auto max-h-[80vh] sm:max-h-[85vh] p-0 gap-0 rounded-none"
         showCloseButton={false}
@@ -142,10 +145,10 @@ export function FilterDialog({
               <FilterOption
                 label="All statuses"
                 isSelected={statusFilter === null}
-                isFocused={selectedSection === 'status' && selectedIndex === 0}
+                isFocused={selectedSection === "status" && selectedIndex === 0}
                 onClick={() => onStatusChange(null)}
                 onMouseEnter={() => {
-                  setSelectedSection('status');
+                  setSelectedSection("status");
                   setSelectedIndex(0);
                 }}
               />
@@ -155,10 +158,10 @@ export function FilterDialog({
                   label={StatusLabels[status]}
                   icon={<StatusIcon status={status} size={14} />}
                   isSelected={statusFilter === status}
-                  isFocused={selectedSection === 'status' && selectedIndex === index + 1}
+                  isFocused={selectedSection === "status" && selectedIndex === index + 1}
                   onClick={() => onStatusChange(status)}
                   onMouseEnter={() => {
-                    setSelectedSection('status');
+                    setSelectedSection("status");
                     setSelectedIndex(index + 1);
                   }}
                 />
@@ -177,10 +180,10 @@ export function FilterDialog({
               <FilterOption
                 label="All priorities"
                 isSelected={priorityFilter === null}
-                isFocused={selectedSection === 'priority' && selectedIndex === 0}
+                isFocused={selectedSection === "priority" && selectedIndex === 0}
                 onClick={() => onPriorityChange(null)}
                 onMouseEnter={() => {
-                  setSelectedSection('priority');
+                  setSelectedSection("priority");
                   setSelectedIndex(0);
                 }}
               />
@@ -190,10 +193,10 @@ export function FilterDialog({
                   label={PriorityLabels[priority]}
                   icon={<PriorityIcon priority={priority} size={14} />}
                   isSelected={priorityFilter === priority}
-                  isFocused={selectedSection === 'priority' && selectedIndex === index + 1}
+                  isFocused={selectedSection === "priority" && selectedIndex === index + 1}
                   onClick={() => onPriorityChange(priority)}
                   onMouseEnter={() => {
-                    setSelectedSection('priority');
+                    setSelectedSection("priority");
                     setSelectedIndex(index + 1);
                   }}
                 />
@@ -207,19 +210,22 @@ export function FilterDialog({
           <span>
             <kbd className="px-1.5 py-0.5 mx-0.5 font-mono text-[0.6875rem] bg-background border border-border rounded-sm">
               ↑↓
-            </kbd>{' '}
+            </kbd>
+            {" "}
             navigate
           </span>
           <span>
             <kbd className="px-1.5 py-0.5 mx-0.5 font-mono text-[0.6875rem] bg-background border border-border rounded-sm">
               tab
-            </kbd>{' '}
+            </kbd>
+            {" "}
             switch section
           </span>
           <span>
             <kbd className="px-1.5 py-0.5 mx-0.5 font-mono text-[0.6875rem] bg-background border border-border rounded-sm">
               esc
-            </kbd>{' '}
+            </kbd>
+            {" "}
             close
           </span>
         </div>
@@ -244,14 +250,14 @@ function FilterOption({ label, icon, isSelected, isFocused, onClick, onMouseEnte
       aria-selected={isSelected}
       tabIndex={0}
       className={cn(
-        'w-full flex items-center gap-3 py-2 px-3 text-left cursor-pointer',
-        'transition-colors hover:bg-muted hover:text-foreground border-l-2 border-transparent',
-        isFocused && 'bg-muted text-foreground border-l-2 border-sidebar-accent',
-        isSelected && !isFocused && 'text-primary'
+        "w-full flex items-center gap-3 py-2 px-3 text-left cursor-pointer",
+        "transition-colors hover:bg-muted hover:text-foreground border-l-2 border-transparent",
+        isFocused && "bg-muted text-foreground border-l-2 border-sidebar-accent",
+        isSelected && !isFocused && "text-primary",
       )}
       onClick={onClick}
       onMouseEnter={onMouseEnter}
-      onKeyDown={(e) => e.key === 'Enter' && onClick()}
+      onKeyDown={e => e.key === "Enter" && onClick()}
     >
       {icon && <span className="shrink-0">{icon}</span>}
       <span className="text-sm">{label}</span>

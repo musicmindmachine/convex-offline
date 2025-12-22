@@ -1,6 +1,6 @@
-import { defineSchema, type TableDefinition } from 'convex/server';
-import { v } from 'convex/values';
-import { schema } from '@trestleinc/replicate/server';
+import { defineSchema, type TableDefinition } from "convex/server";
+import { v } from "convex/values";
+import { schema } from "@trestleinc/replicate/server";
 
 export default defineSchema({
   intervals: schema.table(
@@ -15,11 +15,11 @@ export default defineSchema({
     },
     (t: TableDefinition) =>
       t
-        .index('by_doc_id', ['id'])
-        .index('by_timestamp', ['timestamp'])
-        .index('by_status', ['status'])
-        .index('by_priority', ['priority'])
-        .index('by_updated', ['updatedAt'])
+        .index("by_doc_id", ["id"])
+        .index("by_timestamp", ["timestamp"])
+        .index("by_status", ["status"])
+        .index("by_priority", ["priority"])
+        .index("by_updated", ["updatedAt"]),
   ),
 
   comments: schema.table(
@@ -32,8 +32,8 @@ export default defineSchema({
     },
     (t: TableDefinition) =>
       t
-        .index('by_doc_id', ['id'])
-        .index('by_timestamp', ['timestamp'])
-        .index('by_interval', ['intervalId'])
+        .index("by_doc_id", ["id"])
+        .index("by_timestamp", ["timestamp"])
+        .index("by_interval", ["intervalId"]),
   ),
 });

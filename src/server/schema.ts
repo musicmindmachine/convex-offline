@@ -1,14 +1,14 @@
-import { defineTable } from 'convex/server';
-import { v } from 'convex/values';
+import { defineTable } from "convex/server";
+import { v } from "convex/values";
 
 /** Fields automatically added to replicated tables */
-export type ReplicationFields = {
+export interface ReplicationFields {
   timestamp: number;
-};
+}
 
 export const prose = () =>
   v.object({
-    type: v.literal('doc'),
+    type: v.literal("doc"),
     content: v.optional(v.array(v.any())),
   });
 

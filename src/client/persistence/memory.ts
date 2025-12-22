@@ -3,8 +3,8 @@
  *
  * State is not persisted across sessions - useful for tests and development.
  */
-import type * as Y from 'yjs';
-import type { Persistence, PersistenceProvider, KeyValueStore } from './types.js';
+import type * as Y from "yjs";
+import type { Persistence, PersistenceProvider, KeyValueStore } from "./types.js";
 
 /**
  * In-memory key-value store.
@@ -55,7 +55,7 @@ class MemoryPersistenceProvider implements PersistenceProvider {
 export function memoryPersistence(): Persistence {
   const kv = new MemoryKeyValueStore();
   return {
-    createDocPersistence: (_collection: string, _ydoc: Y.Doc) => new MemoryPersistenceProvider(),
+    createDocPersistence: (_: string, __: Y.Doc) => new MemoryPersistenceProvider(),
     kv,
   };
 }

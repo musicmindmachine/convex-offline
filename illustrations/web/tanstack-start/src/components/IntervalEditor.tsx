@@ -1,10 +1,10 @@
-import { EditorContent, useEditor } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
-import Collaboration from '@tiptap/extension-collaboration';
-import Placeholder from '@tiptap/extension-placeholder';
-import { Effect, Fiber } from 'effect';
-import { useEffect, useState, useRef } from 'react';
-import type { EditorBinding } from '@trestleinc/replicate/client';
+import { EditorContent, useEditor } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import Collaboration from "@tiptap/extension-collaboration";
+import Placeholder from "@tiptap/extension-placeholder";
+import { Effect, Fiber } from "effect";
+import { useEffect, useState, useRef } from "react";
+import type { EditorBinding } from "@trestleinc/replicate/client";
 
 import {
   Status,
@@ -13,28 +13,28 @@ import {
   PriorityLabels,
   type StatusValue,
   type PriorityValue,
-} from '../types/interval';
-import type { Interval } from '../types/interval';
-import { StatusIcon } from './StatusIcon';
-import { PriorityIcon } from './PriorityIcon';
+} from "../types/interval";
+import type { Interval } from "../types/interval";
+import { StatusIcon } from "./StatusIcon";
+import { PriorityIcon } from "./PriorityIcon";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
-} from './ui/dropdown-menu';
+} from "./ui/dropdown-menu";
 
 interface IntervalEditorProps {
   intervalId: string;
   collection: {
     utils: {
-      prose(documentId: string, field: 'description'): Promise<EditorBinding>;
+      prose(documentId: string, field: "description"): Promise<EditorBinding>;
     };
     update(id: string, updater: (draft: Interval) => void): void;
   };
   interval: Interval;
-  onPropertyUpdate?: (updates: Partial<Pick<Interval, 'status' | 'priority'>>) => void;
+  onPropertyUpdate?: (updates: Partial<Pick<Interval, "status" | "priority">>) => void;
 }
 
 export function IntervalEditor({ intervalId, collection, interval, onPropertyUpdate }: IntervalEditorProps) {
@@ -49,8 +49,8 @@ export function IntervalEditor({ intervalId, collection, interval, onPropertyUpd
 
     // Create an interruptible effect for fetching the binding
     const fetchBinding = Effect.tryPromise({
-      try: () => collection.utils.prose(intervalId, 'description'),
-      catch: (e) => e as Error,
+      try: () => collection.utils.prose(intervalId, "description"),
+      catch: e => e as Error,
     });
 
     // Fork the effect to get a fiber we can interrupt
@@ -59,9 +59,9 @@ export function IntervalEditor({ intervalId, collection, interval, onPropertyUpd
     // Handle the result when the fiber completes
     Fiber.join(fiber)
       .pipe(
-        Effect.tap((result) => Effect.sync(() => setBinding(result))),
-        Effect.catchAll((err) => Effect.sync(() => setError(err))),
-        Effect.runPromise
+        Effect.tap(result => Effect.sync(() => setBinding(result))),
+        Effect.catchAll(err => Effect.sync(() => setError(err))),
+        Effect.runPromise,
       )
       .catch(() => {
         // Silently ignore interruption - expected when switching intervals
@@ -76,7 +76,10 @@ export function IntervalEditor({ intervalId, collection, interval, onPropertyUpd
   if (error) {
     return (
       <div className="editor-loading" aria-live="polite">
-        <p className="text-error">Failed to load editor: {error.message}</p>
+        <p className="text-error">
+          Failed to load editor:
+          {error.message}
+        </p>
       </div>
     );
   }
@@ -112,7 +115,7 @@ interface IntervalEditorViewProps {
     update(id: string, updater: (draft: Interval) => void): void;
   };
   intervalId: string;
-  onPropertyUpdate?: (updates: Partial<Pick<Interval, 'status' | 'priority'>>) => void;
+  onPropertyUpdate?: (updates: Partial<Pick<Interval, "status" | "priority">>) => void;
 }
 
 function IntervalEditorView({
@@ -137,16 +140,16 @@ function IntervalEditorView({
           fragment: binding.fragment,
         }),
         Placeholder.configure({
-          placeholder: 'Write your essay here...',
+          placeholder: "Write your essay here...",
         }),
       ],
       editorProps: {
         attributes: {
-          class: 'tiptap-editor interval-essay',
+          class: "tiptap-editor interval-essay",
         },
       },
     },
-    [binding.fragment]
+    [binding.fragment],
   );
 
   // Sync title from external changes (collaborative edits, other tabs)
@@ -172,14 +175,14 @@ function IntervalEditorView({
     setIsEditingTitle(false);
     if (title.trim() !== interval.title) {
       collection.update(intervalId, (draft: Interval) => {
-        draft.title = title.trim() || 'Untitled';
+        draft.title = title.trim() || "Untitled";
         draft.updatedAt = Date.now();
       });
     }
   };
 
   const handleTitleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
+    if (e.key === "Enter") {
       e.preventDefault();
       (e.target as HTMLInputElement).blur();
     }
@@ -203,9 +206,9 @@ function IntervalEditorView({
               <DropdownMenuContent align="start">
                 <DropdownMenuRadioGroup
                   value={interval.status}
-                  onValueChange={(v) => onPropertyUpdate({ status: v as StatusValue })}
+                  onValueChange={v => onPropertyUpdate({ status: v as StatusValue })}
                 >
-                  {statusOptions.map((status) => (
+                  {statusOptions.map(status => (
                     <DropdownMenuRadioItem key={status} value={status}>
                       <StatusIcon status={status} size={14} />
                       {StatusLabels[status]}
@@ -223,9 +226,9 @@ function IntervalEditorView({
               <DropdownMenuContent align="start">
                 <DropdownMenuRadioGroup
                   value={interval.priority}
-                  onValueChange={(v) => onPropertyUpdate({ priority: v as PriorityValue })}
+                  onValueChange={v => onPropertyUpdate({ priority: v as PriorityValue })}
                 >
-                  {priorityOptions.map((priority) => (
+                  {priorityOptions.map(priority => (
                     <DropdownMenuRadioItem key={priority} value={priority}>
                       <PriorityIcon priority={priority} size={14} />
                       {PriorityLabels[priority]}
@@ -238,25 +241,27 @@ function IntervalEditorView({
         )}
 
         {/* Title */}
-        {isEditingTitle ? (
-          <input
-            ref={inputRef}
-            type="text"
-            value={title}
-            onChange={(e) => handleTitleChange(e.target.value)}
-            onBlur={handleTitleBlur}
-            onKeyDown={handleTitleKeyDown}
-            className="w-full font-display text-3xl font-normal text-foreground bg-transparent border-none border-b-2 border-primary p-0 pb-1 leading-tight outline-none"
-          />
-        ) : (
-          <button
-            type="button"
-            className="w-full font-display text-3xl font-normal text-foreground leading-tight cursor-text transition-colors hover:text-primary text-left bg-transparent border-none p-0"
-            onClick={() => setIsEditingTitle(true)}
-          >
-            {title || 'Untitled'}
-          </button>
-        )}
+        {isEditingTitle
+          ? (
+              <input
+                ref={inputRef}
+                type="text"
+                value={title}
+                onChange={e => handleTitleChange(e.target.value)}
+                onBlur={handleTitleBlur}
+                onKeyDown={handleTitleKeyDown}
+                className="w-full font-display text-3xl font-normal text-foreground bg-transparent border-none border-b-2 border-primary p-0 pb-1 leading-tight outline-none"
+              />
+            )
+          : (
+              <button
+                type="button"
+                className="w-full font-display text-3xl font-normal text-foreground leading-tight cursor-text transition-colors hover:text-primary text-left bg-transparent border-none p-0"
+                onClick={() => setIsEditingTitle(true)}
+              >
+                {title || "Untitled"}
+              </button>
+            )}
       </div>
 
       {/* Editor content */}

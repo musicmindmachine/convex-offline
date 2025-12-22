@@ -18,7 +18,7 @@
  * });
  * ```
  */
-import type { SqliteAdapter } from '../sqlite-level.js';
+import type { SqliteAdapter } from "../sqlite-level.js";
 
 /**
  * Interface for sql.js Database.
@@ -85,13 +85,13 @@ export class SqlJsAdapter implements SqliteAdapter {
 
     // Handle statements that don't return data
     if (
-      sql.trim().toUpperCase().startsWith('CREATE') ||
-      sql.trim().toUpperCase().startsWith('INSERT') ||
-      sql.trim().toUpperCase().startsWith('UPDATE') ||
-      sql.trim().toUpperCase().startsWith('DELETE') ||
-      sql.trim().toUpperCase().startsWith('BEGIN') ||
-      sql.trim().toUpperCase().startsWith('COMMIT') ||
-      sql.trim().toUpperCase().startsWith('ROLLBACK')
+      sql.trim().toUpperCase().startsWith("CREATE")
+      || sql.trim().toUpperCase().startsWith("INSERT")
+      || sql.trim().toUpperCase().startsWith("UPDATE")
+      || sql.trim().toUpperCase().startsWith("DELETE")
+      || sql.trim().toUpperCase().startsWith("BEGIN")
+      || sql.trim().toUpperCase().startsWith("COMMIT")
+      || sql.trim().toUpperCase().startsWith("ROLLBACK")
     ) {
       this.db.run(sql, params);
       await this.persist();

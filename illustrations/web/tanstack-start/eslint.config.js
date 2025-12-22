@@ -1,5 +1,7 @@
 import eslint from "@eslint/js";
 import convex from "@convex-dev/eslint-plugin";
+import reactPlugin from "eslint-plugin-react";
+import reactHooks from "eslint-plugin-react-hooks";
 import stylistic from "@stylistic/eslint-plugin";
 import globals from "globals";
 import tseslint from "typescript-eslint";
@@ -16,6 +18,19 @@ export default tseslint.config(
     jsx: true,
   }),
 
+  reactPlugin.configs.flat.recommended,
+  reactPlugin.configs.flat["jsx-runtime"],
+
+  {
+    plugins: {
+      "react-hooks": reactHooks,
+    },
+    rules: {
+      "react-hooks/rules-of-hooks": "error",
+      "react-hooks/exhaustive-deps": "warn",
+    },
+  },
+
   convex.configs.recommended,
 
   {
@@ -29,23 +44,17 @@ export default tseslint.config(
         tsconfigRootDir: import.meta.dirname,
       },
     },
+    settings: {
+      react: {
+        version: "detect",
+      },
+    },
   },
 
   {
     rules: {
       "no-console": "warn",
       "@typescript-eslint/no-explicit-any": "off",
-      "@typescript-eslint/no-unsafe-assignment": "off",
-      "@typescript-eslint/no-unsafe-member-access": "off",
-      "@typescript-eslint/no-unsafe-call": "off",
-      "@typescript-eslint/no-unsafe-argument": "off",
-      "@typescript-eslint/no-unsafe-return": "off",
-      "@typescript-eslint/no-floating-promises": "off",
-      "@typescript-eslint/require-await": "off",
-      "@typescript-eslint/restrict-template-expressions": "off",
-      "@typescript-eslint/prefer-nullish-coalescing": "off",
-      "@typescript-eslint/no-misused-promises": "off",
-      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
       "@stylistic/max-len": ["error", { code: 100 }],
     },
   },
@@ -53,14 +62,11 @@ export default tseslint.config(
   {
     ignores: [
       "**/dist/**",
+      "**/dev-dist/**",
       "**/_generated/**",
       "**/*.d.ts",
       "**/routeTree.gen.ts",
-      "**/coverage/**",
-      "**/illustrations/**",
       "**/node_modules/**",
-      "*.config.js",
-      "*.config.ts",
     ],
   },
 
@@ -68,6 +74,20 @@ export default tseslint.config(
     files: ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts"],
     rules: {
       "no-console": "off",
+    },
+  },
+
+  {
+    files: ["scripts/**"],
+    rules: {
+      "no-console": "off",
+    },
+  },
+
+  {
+    files: ["src/components/ui/**"],
+    rules: {
+      "react/prop-types": "off",
     },
   },
 );

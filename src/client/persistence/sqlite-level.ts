@@ -11,7 +11,7 @@ import {
   AbstractIterator,
   AbstractKeyIterator,
   AbstractValueIterator,
-} from 'abstract-level';
+} from "abstract-level";
 
 /**
  * Interface for SQLite database operations.
@@ -51,9 +51,9 @@ export class SqliteLevel<K = string, V = string> extends AbstractLevel<K, V> {
         additionalMethods: {},
       },
       {
-        keyEncoding: options?.keyEncoding ?? 'utf8',
-        valueEncoding: options?.valueEncoding ?? 'utf8',
-      }
+        keyEncoding: options?.keyEncoding ?? "utf8",
+        valueEncoding: options?.valueEncoding ?? "utf8",
+      },
     );
 
     if (options?.adapter) {
@@ -73,8 +73,9 @@ export class SqliteLevel<K = string, V = string> extends AbstractLevel<K, V> {
     if (!this.adapter) {
       if (this.adapterFactory) {
         this.adapter = await this.adapterFactory();
-      } else {
-        throw new Error('No SQLite adapter configured. Call setAdapterFactory() before open().');
+      }
+      else {
+        throw new Error("No SQLite adapter configured. Call setAdapterFactory() before open().");
       }
     }
 
@@ -100,10 +101,10 @@ export class SqliteLevel<K = string, V = string> extends AbstractLevel<K, V> {
   }
 
   async _get(key: K): Promise<V | undefined> {
-    if (!this.adapter) throw new Error('Database not open');
+    if (!this.adapter) throw new Error("Database not open");
 
     const keyBytes = this.encodeKey(key);
-    const result = await this.adapter.execute('SELECT value FROM entries WHERE key = ?', [
+    const result = await this.adapter.execute("SELECT value FROM entries WHERE key = ?", [
       keyBytes,
     ]);
 
@@ -115,60 +116,62 @@ export class SqliteLevel<K = string, V = string> extends AbstractLevel<K, V> {
   }
 
   async _put(key: K, value: V): Promise<void> {
-    if (!this.adapter) throw new Error('Database not open');
+    if (!this.adapter) throw new Error("Database not open");
 
     const keyBytes = this.encodeKey(key);
     const valueBytes = this.encodeValue(value);
 
-    await this.adapter.execute('INSERT OR REPLACE INTO entries (key, value) VALUES (?, ?)', [
+    await this.adapter.execute("INSERT OR REPLACE INTO entries (key, value) VALUES (?, ?)", [
       keyBytes,
       valueBytes,
     ]);
   }
 
   async _del(key: K): Promise<void> {
-    if (!this.adapter) throw new Error('Database not open');
+    if (!this.adapter) throw new Error("Database not open");
 
     const keyBytes = this.encodeKey(key);
-    await this.adapter.execute('DELETE FROM entries WHERE key = ?', [keyBytes]);
+    await this.adapter.execute("DELETE FROM entries WHERE key = ?", [keyBytes]);
   }
 
   async _batch(
-    operations: Array<{ type: 'put'; key: K; value: V } | { type: 'del'; key: K }>
+    operations: ({ type: "put"; key: K; value: V } | { type: "del"; key: K })[],
   ): Promise<void> {
-    if (!this.adapter) throw new Error('Database not open');
+    if (!this.adapter) throw new Error("Database not open");
 
     // Execute all operations in a transaction
-    await this.adapter.execute('BEGIN TRANSACTION');
+    await this.adapter.execute("BEGIN TRANSACTION");
 
     try {
       for (const op of operations) {
-        if (op.type === 'put') {
+        if (op.type === "put") {
           const keyBytes = this.encodeKey(op.key);
           const valueBytes = this.encodeValue(op.value);
-          await this.adapter.execute('INSERT OR REPLACE INTO entries (key, value) VALUES (?, ?)', [
+          await this.adapter.execute("INSERT OR REPLACE INTO entries (key, value) VALUES (?, ?)", [
             keyBytes,
             valueBytes,
           ]);
-        } else if (op.type === 'del') {
+        }
+        else if (op.type === "del") {
           const keyBytes = this.encodeKey(op.key);
-          await this.adapter.execute('DELETE FROM entries WHERE key = ?', [keyBytes]);
+          await this.adapter.execute("DELETE FROM entries WHERE key = ?", [keyBytes]);
         }
       }
-      await this.adapter.execute('COMMIT');
-    } catch (error) {
-      await this.adapter.execute('ROLLBACK');
+      await this.adapter.execute("COMMIT");
+    }
+    catch (error) {
+      await this.adapter.execute("ROLLBACK");
       throw error;
     }
   }
 
   async _clear(): Promise<void> {
-    if (!this.adapter) throw new Error('Database not open');
-    await this.adapter.execute('DELETE FROM entries');
+    if (!this.adapter) throw new Error("Database not open");
+    await this.adapter.execute("DELETE FROM entries");
   }
 
   _iterator(options: Record<string, unknown>): AbstractIterator<typeof this, K, V> {
-    if (!this.adapter) throw new Error('Database not open');
+    if (!this.adapter) throw new Error("Database not open");
     return new SqliteIterator(this, this.adapter, options) as unknown as AbstractIterator<
       typeof this,
       K,
@@ -177,7 +180,7 @@ export class SqliteLevel<K = string, V = string> extends AbstractLevel<K, V> {
   }
 
   _keys(options: Record<string, unknown>): AbstractKeyIterator<typeof this, K> {
-    if (!this.adapter) throw new Error('Database not open');
+    if (!this.adapter) throw new Error("Database not open");
     return new SqliteKeyIterator(this, this.adapter, options) as unknown as AbstractKeyIterator<
       typeof this,
       K
@@ -185,7 +188,7 @@ export class SqliteLevel<K = string, V = string> extends AbstractLevel<K, V> {
   }
 
   _values(options: Record<string, unknown>): AbstractValueIterator<typeof this, K, V> {
-    if (!this.adapter) throw new Error('Database not open');
+    if (!this.adapter) throw new Error("Database not open");
     return new SqliteValueIterator(this, this.adapter, options) as unknown as AbstractValueIterator<
       typeof this,
       K,
@@ -198,7 +201,7 @@ export class SqliteLevel<K = string, V = string> extends AbstractLevel<K, V> {
     if (key instanceof Uint8Array) {
       return key;
     }
-    if (typeof key === 'string') {
+    if (typeof key === "string") {
       return new TextEncoder().encode(key);
     }
     return new TextEncoder().encode(String(key));
@@ -208,7 +211,7 @@ export class SqliteLevel<K = string, V = string> extends AbstractLevel<K, V> {
     if (value instanceof Uint8Array) {
       return value;
     }
-    if (typeof value === 'string') {
+    if (typeof value === "string") {
       return new TextEncoder().encode(value);
     }
     return new TextEncoder().encode(JSON.stringify(value));
@@ -225,7 +228,7 @@ export class SqliteLevel<K = string, V = string> extends AbstractLevel<K, V> {
 class SqliteIterator<K, V> extends AbstractIterator<SqliteLevel<K, V>, K, V> {
   private adapter: SqliteAdapter;
   private options: Record<string, unknown>;
-  private rows: Array<{ key: Uint8Array; value: Uint8Array }> | null = null;
+  private rows: { key: Uint8Array; value: Uint8Array }[] | null = null;
   private index = 0;
 
   constructor(db: SqliteLevel<K, V>, adapter: SqliteAdapter, options: Record<string, unknown>) {
@@ -249,12 +252,12 @@ class SqliteIterator<K, V> extends AbstractIterator<SqliteLevel<K, V>, K, V> {
     return undefined;
   }
 
-  async _nextv(size: number): Promise<Array<[K, V]>> {
+  async _nextv(size: number): Promise<[K, V][]> {
     if (this.rows === null) {
       await this.loadRows();
     }
 
-    const result: Array<[K, V]> = [];
+    const result: [K, V][] = [];
     while (this.rows && this.index < this.rows.length && result.length < size) {
       const row = this.rows[this.index++];
       const key = new TextDecoder().decode(row.key) as K;
@@ -274,46 +277,46 @@ class SqliteIterator<K, V> extends AbstractIterator<SqliteLevel<K, V>, K, V> {
       lte?: K;
     };
 
-    let sql = 'SELECT key, value FROM entries';
+    let sql = "SELECT key, value FROM entries";
     const params: unknown[] = [];
     const conditions: string[] = [];
 
     if (gt !== undefined) {
-      conditions.push('key > ?');
+      conditions.push("key > ?");
       params.push(this.encodeKey(gt));
     }
     if (gte !== undefined) {
-      conditions.push('key >= ?');
+      conditions.push("key >= ?");
       params.push(this.encodeKey(gte));
     }
     if (lt !== undefined) {
-      conditions.push('key < ?');
+      conditions.push("key < ?");
       params.push(this.encodeKey(lt));
     }
     if (lte !== undefined) {
-      conditions.push('key <= ?');
+      conditions.push("key <= ?");
       params.push(this.encodeKey(lte));
     }
 
     if (conditions.length > 0) {
-      sql += ` WHERE ${conditions.join(' AND ')}`;
+      sql += ` WHERE ${conditions.join(" AND ")}`;
     }
 
-    sql += ` ORDER BY key ${reverse ? 'DESC' : 'ASC'}`;
+    sql += ` ORDER BY key ${reverse ? "DESC" : "ASC"}`;
 
     if (limit !== undefined && limit >= 0) {
       sql += ` LIMIT ${limit}`;
     }
 
     const result = await this.adapter.execute(sql, params);
-    this.rows = result.rows as Array<{ key: Uint8Array; value: Uint8Array }>;
+    this.rows = result.rows as { key: Uint8Array; value: Uint8Array }[];
   }
 
   private encodeKey(key: K): Uint8Array {
     if (key instanceof Uint8Array) {
       return key;
     }
-    if (typeof key === 'string') {
+    if (typeof key === "string") {
       return new TextEncoder().encode(key);
     }
     return new TextEncoder().encode(String(key));
@@ -326,7 +329,7 @@ class SqliteIterator<K, V> extends AbstractIterator<SqliteLevel<K, V>, K, V> {
 class SqliteKeyIterator<K, V> extends AbstractKeyIterator<SqliteLevel<K, V>, K> {
   private adapter: SqliteAdapter;
   private options: Record<string, unknown>;
-  private rows: Array<{ key: Uint8Array }> | null = null;
+  private rows: { key: Uint8Array }[] | null = null;
   private index = 0;
 
   constructor(db: SqliteLevel<K, V>, adapter: SqliteAdapter, options: Record<string, unknown>) {
@@ -351,15 +354,15 @@ class SqliteKeyIterator<K, V> extends AbstractKeyIterator<SqliteLevel<K, V>, K> 
   private async loadRows(): Promise<void> {
     const { reverse, limit } = this.options as { reverse?: boolean; limit?: number };
 
-    let sql = 'SELECT key FROM entries';
-    sql += ` ORDER BY key ${reverse ? 'DESC' : 'ASC'}`;
+    let sql = "SELECT key FROM entries";
+    sql += ` ORDER BY key ${reverse ? "DESC" : "ASC"}`;
 
     if (limit !== undefined && limit >= 0) {
       sql += ` LIMIT ${limit}`;
     }
 
     const result = await this.adapter.execute(sql);
-    this.rows = result.rows as Array<{ key: Uint8Array }>;
+    this.rows = result.rows as { key: Uint8Array }[];
   }
 }
 
@@ -369,7 +372,7 @@ class SqliteKeyIterator<K, V> extends AbstractKeyIterator<SqliteLevel<K, V>, K> 
 class SqliteValueIterator<K, V> extends AbstractValueIterator<SqliteLevel<K, V>, K, V> {
   private adapter: SqliteAdapter;
   private options: Record<string, unknown>;
-  private rows: Array<{ value: Uint8Array }> | null = null;
+  private rows: { value: Uint8Array }[] | null = null;
   private index = 0;
 
   constructor(db: SqliteLevel<K, V>, adapter: SqliteAdapter, options: Record<string, unknown>) {
@@ -394,14 +397,14 @@ class SqliteValueIterator<K, V> extends AbstractValueIterator<SqliteLevel<K, V>,
   private async loadRows(): Promise<void> {
     const { reverse, limit } = this.options as { reverse?: boolean; limit?: number };
 
-    let sql = 'SELECT value FROM entries';
-    sql += ` ORDER BY key ${reverse ? 'DESC' : 'ASC'}`;
+    let sql = "SELECT value FROM entries";
+    sql += ` ORDER BY key ${reverse ? "DESC" : "ASC"}`;
 
     if (limit !== undefined && limit >= 0) {
       sql += ` LIMIT ${limit}`;
     }
 
     const result = await this.adapter.execute(sql);
-    this.rows = result.rows as Array<{ value: Uint8Array }>;
+    this.rows = result.rows as { value: Uint8Array }[];
   }
 }

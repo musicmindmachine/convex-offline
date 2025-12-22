@@ -3,17 +3,17 @@
  *
  * Provides swappable storage backends for Y.Doc and key-value data.
  */
-export type { Persistence, PersistenceProvider, KeyValueStore } from './types.js';
-export type { SqlitePersistenceOptions } from './sqlite.js';
-export type { SqlJsStatic } from './sqlite-browser.js';
-export type { SqliteAdapter } from './sqlite-level.js';
+export type { Persistence, PersistenceProvider, KeyValueStore } from "./types.js";
+export type { SqlitePersistenceOptions } from "./sqlite.js";
+export type { SqlJsStatic } from "./sqlite-browser.js";
+export type { SqliteAdapter } from "./sqlite-level.js";
 
 // Internal imports for the persistence object
-import { indexeddbPersistence } from './indexeddb.js';
-import { memoryPersistence } from './memory.js';
-import { sqlitePersistence } from './sqlite.js';
-import { createBrowserSqlitePersistence } from './sqlite-browser.js';
-import { createReactNativeSqlitePersistence } from './sqlite-rn.js';
+import { indexeddbPersistence } from "./indexeddb.js";
+import { memoryPersistence } from "./memory.js";
+import { sqlitePersistence } from "./sqlite.js";
+import { createBrowserSqlitePersistence } from "./sqlite-browser.js";
+import { createReactNativeSqlitePersistence } from "./sqlite-rn.js";
 
 /**
  * Persistence API - nested object pattern for ergonomic access.

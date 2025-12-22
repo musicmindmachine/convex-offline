@@ -1,23 +1,24 @@
-import type { ReactNode } from 'react';
-import type { XmlFragmentJSON, XmlNodeJSON } from '@trestleinc/replicate';
+import type { ReactNode } from "react";
+import type { XmlFragmentJSON, XmlNodeJSON } from "@trestleinc/replicate";
 
 // Safe URL protocols for sanitization (prevents javascript: XSS)
-const SAFE_URL_PROTOCOLS = ['http:', 'https:', 'mailto:', 'tel:'];
+const SAFE_URL_PROTOCOLS = ["http:", "https:", "mailto:", "tel:"];
 
 function sanitizeUrl(url: string | undefined): string | undefined {
   if (!url) return undefined;
   try {
-    const parsed = new URL(url, 'https://placeholder.com');
+    const parsed = new URL(url, "https://placeholder.com");
     return SAFE_URL_PROTOCOLS.includes(parsed.protocol) ? url : undefined;
-  } catch {
+  }
+  catch {
     return undefined;
   }
 }
 
 // Generate stable key from node content
 function getNodeKey(node: XmlNodeJSON, index: number): string {
-  const type = node.type || 'unknown';
-  const text = node.text?.slice(0, 20) || '';
+  const type = node.type || "unknown";
+  const text = node.text?.slice(0, 20) || "";
   return `${type}-${index}-${text}`;
 }
 
@@ -49,16 +50,16 @@ interface BlockRendererProps {
 
 function BlockRenderer({ node }: BlockRendererProps) {
   switch (node.type) {
-    case 'paragraph':
+    case "paragraph":
       return (
         <p>
           <InlineRenderer content={node.content} />
         </p>
       );
 
-    case 'heading': {
+    case "heading": {
       const level = Math.max(1, Math.min((node.attrs?.level as number) || 1, 6));
-      const HeadingTag = `h${level}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
+      const HeadingTag = `h${level}` as "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
       return (
         <HeadingTag>
           <InlineRenderer content={node.content} />
@@ -66,41 +67,41 @@ function BlockRenderer({ node }: BlockRendererProps) {
       );
     }
 
-    case 'bulletListItem':
+    case "bulletListItem":
       return (
         <li>
           <InlineRenderer content={node.content} />
           {node.content
-            ?.filter((c) => c.type !== 'text')
+            ?.filter(c => c.type !== "text")
             .map((child, i) => (
               <BlockRenderer key={getNodeKey(child, i)} node={child} />
             ))}
         </li>
       );
 
-    case 'numberedListItem':
+    case "numberedListItem":
       return (
         <li>
           <InlineRenderer content={node.content} />
           {node.content
-            ?.filter((c) => c.type !== 'text')
+            ?.filter(c => c.type !== "text")
             .map((child, i) => (
               <BlockRenderer key={getNodeKey(child, i)} node={child} />
             ))}
         </li>
       );
 
-    case 'checkListItem': {
+    case "checkListItem": {
       const checked = node.attrs?.checked as boolean;
       return (
-        <li className={`check-item ${checked ? 'checked' : ''}`}>
-          <span className="check-box">{checked ? '☑' : '☐'}</span>
+        <li className={`check-item ${checked ? "checked" : ""}`}>
+          <span className="check-box">{checked ? "☑" : "☐"}</span>
           <InlineRenderer content={node.content} />
         </li>
       );
     }
 
-    case 'codeBlock':
+    case "codeBlock":
       return (
         <pre>
           <code>
@@ -109,7 +110,7 @@ function BlockRenderer({ node }: BlockRendererProps) {
         </pre>
       );
 
-    case 'blockquote':
+    case "blockquote":
       return (
         <blockquote>
           {node.content?.map((child, i) => (
@@ -118,21 +119,23 @@ function BlockRenderer({ node }: BlockRendererProps) {
         </blockquote>
       );
 
-    case 'image': {
+    case "image": {
       const imgSrc = sanitizeUrl(node.attrs?.src as string);
       return (
         <figure>
-          {imgSrc ? (
-            <img src={imgSrc} alt={(node.attrs?.alt as string) || ''} />
-          ) : (
-            <span className="text-muted">[Invalid image URL]</span>
-          )}
+          {imgSrc
+            ? (
+                <img src={imgSrc} alt={(node.attrs?.alt as string) || ""} />
+              )
+            : (
+                <span className="text-muted">[Invalid image URL]</span>
+              )}
           {node.attrs?.caption ? <figcaption>{String(node.attrs.caption)}</figcaption> : null}
         </figure>
       );
     }
 
-    case 'table':
+    case "table":
       return (
         <table>
           <tbody>
@@ -149,7 +152,7 @@ function BlockRenderer({ node }: BlockRendererProps) {
         </table>
       );
 
-    case 'horizontalRule':
+    case "horizontalRule":
       return <hr />;
 
     default:
@@ -178,37 +181,39 @@ function InlineRenderer({ content }: InlineRendererProps) {
     <>
       {content.map((node, i) => {
         const key = getNodeKey(node, i);
-        if (node.type === 'text') {
-          let element: ReactNode = node.text || '';
+        if (node.type === "text") {
+          let element: ReactNode = node.text || "";
 
           // Apply marks (bold, italic, etc.)
           if (node.marks) {
             for (const mark of node.marks) {
               switch (mark.type) {
-                case 'bold':
+                case "bold":
                   element = <strong>{element}</strong>;
                   break;
-                case 'italic':
+                case "italic":
                   element = <em>{element}</em>;
                   break;
-                case 'strike':
+                case "strike":
                   element = <s>{element}</s>;
                   break;
-                case 'underline':
+                case "underline":
                   element = <u>{element}</u>;
                   break;
-                case 'code':
+                case "code":
                   element = <code>{element}</code>;
                   break;
-                case 'link': {
+                case "link": {
                   const href = sanitizeUrl(mark.attrs?.href as string);
-                  element = href ? (
-                    <a href={href} rel="noopener noreferrer" target="_blank">
-                      {element}
-                    </a>
-                  ) : (
-                    <span>{element}</span>
-                  );
+                  element = href
+                    ? (
+                        <a href={href} rel="noopener noreferrer" target="_blank">
+                          {element}
+                        </a>
+                      )
+                    : (
+                        <span>{element}</span>
+                      );
                   break;
                 }
               }

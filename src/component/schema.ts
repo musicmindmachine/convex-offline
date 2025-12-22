@@ -1,5 +1,5 @@
-import { defineSchema, defineTable } from 'convex/server';
-import { v } from 'convex/values';
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
 
 export default defineSchema({
   documents: defineTable({
@@ -9,9 +9,9 @@ export default defineSchema({
     version: v.number(),
     timestamp: v.number(),
   })
-    .index('by_collection', ['collection'])
-    .index('by_collection_document_version', ['collection', 'documentId', 'version'])
-    .index('by_timestamp', ['collection', 'timestamp']),
+    .index("by_collection", ["collection"])
+    .index("by_collection_document_version", ["collection", "documentId", "version"])
+    .index("by_timestamp", ["collection", "timestamp"]),
 
   snapshots: defineTable({
     collection: v.string(),
@@ -23,7 +23,7 @@ export default defineSchema({
       v.object({
         deltaCount: v.number(),
         totalSize: v.number(),
-      })
+      }),
     ),
-  }).index('by_document', ['collection', 'documentId']),
+  }).index("by_document", ["collection", "documentId"]),
 });

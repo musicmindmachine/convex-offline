@@ -1,12 +1,12 @@
-import { v } from 'convex/values';
-import type { GenericMutationCtx, GenericQueryCtx, GenericDataModel } from 'convex/server';
-import { queryGeneric, mutationGeneric } from 'convex/server';
+import { v } from "convex/values";
+import type { GenericMutationCtx, GenericQueryCtx, GenericDataModel } from "convex/server";
+import { queryGeneric, mutationGeneric } from "convex/server";
 
 export class Replicate<T extends object> {
   constructor(
     public component: any,
     public collectionName: string,
-    private options?: { threshold?: number }
+    private options?: { threshold?: number },
   ) {}
 
   createStreamQuery(opts?: {
@@ -30,7 +30,7 @@ export class Replicate<T extends object> {
             version: v.number(),
             timestamp: v.number(),
             operationType: v.string(),
-          })
+          }),
         ),
         checkpoint: v.object({ lastModified: v.number() }),
         hasMore: v.boolean(),
@@ -80,8 +80,8 @@ export class Replicate<T extends object> {
           docs = await opts.transform(docs);
         }
 
-        const latestTimestamp =
-          docs.length > 0 ? Math.max(...docs.map((doc: any) => doc.timestamp || 0)) : 0;
+        const latestTimestamp
+          = docs.length > 0 ? Math.max(...docs.map((doc: any) => doc.timestamp || 0)) : 0;
 
         const response: {
           documents: T[];
@@ -201,7 +201,7 @@ export class Replicate<T extends object> {
 
         const existing = await ctx.db
           .query(collection)
-          .withIndex('by_doc_id', (q) => q.eq('id', args.documentId))
+          .withIndex("by_doc_id", q => q.eq("id", args.documentId))
           .first();
 
         if (existing) {
@@ -245,7 +245,7 @@ export class Replicate<T extends object> {
         metadata: v.any(),
       }),
       handler: async (ctx, args) => {
-        const documentId = args.documentId as string;
+        const documentId = args.documentId;
         if (opts?.evalRemove) {
           await opts.evalRemove(ctx, documentId);
         }
@@ -261,7 +261,7 @@ export class Replicate<T extends object> {
 
         const existing = await ctx.db
           .query(collection)
-          .withIndex('by_doc_id', (q) => q.eq('id', documentId))
+          .withIndex("by_doc_id", q => q.eq("id", documentId))
           .first();
 
         if (existing) {

@@ -3,7 +3,7 @@
  *
  * Supports IndexedDB (browser), SQLite (React Native), and in-memory (testing).
  */
-import type * as Y from 'yjs';
+import type * as Y from "yjs";
 
 /**
  * Provider that persists Y.Doc state to storage.

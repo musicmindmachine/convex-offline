@@ -1,11 +1,11 @@
-import { Status, StatusLabels, type StatusValue } from '../types/interval';
+import { Status, StatusLabels, type StatusValue } from "../types/interval";
 
 const statusColors: Record<StatusValue, string> = {
-  [Status.BACKLOG]: '#6b7280', // gray-500
-  [Status.TODO]: '#3b82f6', // blue-500
-  [Status.IN_PROGRESS]: '#f59e0b', // amber-500
-  [Status.DONE]: '#22c55e', // green-500
-  [Status.CANCELED]: '#ef4444', // red-500
+  [Status.BACKLOG]: "#6b7280", // gray-500
+  [Status.TODO]: "#3b82f6", // blue-500
+  [Status.IN_PROGRESS]: "#f59e0b", // amber-500
+  [Status.DONE]: "#22c55e", // green-500
+  [Status.CANCELED]: "#ef4444", // red-500
 };
 
 interface StatusIconProps {
@@ -14,7 +14,7 @@ interface StatusIconProps {
   className?: string;
 }
 
-export function StatusIcon({ status, size = 14, className = '' }: StatusIconProps) {
+export function StatusIcon({ status, size = 14, className = "" }: StatusIconProps) {
   const color = statusColors[status];
   const label = StatusLabels[status];
 

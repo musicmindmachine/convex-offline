@@ -1,63 +1,64 @@
 /// <reference types="vite/client" />
-import { TanStackDevtools } from '@tanstack/react-devtools';
-import type { QueryClient } from '@tanstack/react-query';
+import { TanStackDevtools } from "@tanstack/react-devtools";
+import type { QueryClient } from "@tanstack/react-query";
 import {
   createRootRouteWithContext,
   HeadContent,
   Outlet,
   Scripts,
   ClientOnly,
-} from '@tanstack/react-router';
-import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools';
-import { configure, getConsoleSink, type LogRecord } from '@logtape/logtape';
-import { ConvexProvider, ConvexReactClient } from 'convex/react';
-import { useState, useEffect, createContext, useContext } from 'react';
-import { Search, Plus, ArrowLeft, SlidersHorizontal } from 'lucide-react';
-import { useNavigate } from '@tanstack/react-router';
-import { Button } from '../components/ui/button';
-import { ConvexRxErrorBoundary } from '../components/ErrorBoundary';
-import { ReloadPrompt } from '../components/ReloadPrompt';
-import { Sidebar } from '../components/Sidebar';
-import { SearchPanel } from '../components/SearchPanel';
-import { FilterDialog } from '../components/FilterDialog';
-import { IntervalsProvider } from '../contexts/IntervalsContext';
-import { useCreateInterval } from '../hooks/useCreateInterval';
-import { cn } from '@/lib/utils';
-import type { StatusValue, PriorityValue } from '../types/interval';
+} from "@tanstack/react-router";
+import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
+import { configure, getConsoleSink, type LogRecord } from "@logtape/logtape";
+import { ConvexProvider, ConvexReactClient } from "convex/react";
+import { useState, useEffect, createContext, useContext } from "react";
+import { Search, Plus, ArrowLeft, SlidersHorizontal } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import { Button } from "../components/ui/button";
+import { ConvexRxErrorBoundary } from "../components/ErrorBoundary";
+import { ReloadPrompt } from "../components/ReloadPrompt";
+import { Sidebar } from "../components/Sidebar";
+import { SearchPanel } from "../components/SearchPanel";
+import { FilterDialog } from "../components/FilterDialog";
+import { IntervalsProvider } from "../contexts/IntervalsContext";
+import { useCreateInterval } from "../hooks/useCreateInterval";
+import { cn } from "@/lib/utils";
+import type { StatusValue, PriorityValue } from "../types/interval";
 
-import appCss from '../styles.css?url';
+import appCss from "../styles.css?url";
 
 try {
   await configure({
     sinks: {
       console: getConsoleSink({
         formatter(record: LogRecord): readonly unknown[] {
-          let msg = '';
+          let msg = "";
           const values: unknown[] = [];
           for (let i = 0; i < record.message.length; i++) {
             if (i % 2 === 0) msg += record.message[i];
             else {
-              msg += '%o';
+              msg += "%o";
               values.push(record.message[i]);
             }
           }
 
           const hasProperties = Object.keys(record.properties).length > 0;
-          const propsMsg = hasProperties ? ' | Props: %o' : '';
+          const propsMsg = hasProperties ? " | Props: %o" : "";
 
           return [
-            `${record.level.toUpperCase()} %c${record.category.join('·')}%c ${msg}${propsMsg}`,
-            'color: gray;',
-            'color: default;',
+            `${record.level.toUpperCase()} %c${record.category.join("·")}%c ${msg}${propsMsg}`,
+            "color: gray;",
+            "color: default;",
             ...values,
             ...(hasProperties ? [record.properties] : []),
           ];
         },
       }),
     },
-    loggers: [{ category: ['convex-replicate'], lowestLevel: 'debug', sinks: ['console'] }],
+    loggers: [{ category: ["convex-replicate"], lowestLevel: "debug", sinks: ["console"] }],
   });
-} catch {
+}
+catch {
   // LogTape already configured during HMR - this is expected
 }
 
@@ -98,25 +99,25 @@ interface RouterContext {
 export const Route = createRootRouteWithContext<RouterContext>()({
   head: () => ({
     meta: [
-      { charSet: 'utf-8' },
-      { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-      { title: 'Interval' },
-      { name: 'description', content: 'Offline-first interval tracker with real-time sync' },
+      { charSet: "utf-8" },
+      { name: "viewport", content: "width=device-width, initial-scale=1" },
+      { title: "Interval" },
+      { name: "description", content: "Offline-first interval tracker with real-time sync" },
       // Open Graph
-      { property: 'og:title', content: 'Interval' },
-      { property: 'og:description', content: 'Offline-first interval tracker with real-time sync' },
-      { property: 'og:image', content: '/logo512.png' },
-      { property: 'og:type', content: 'website' },
+      { property: "og:title", content: "Interval" },
+      { property: "og:description", content: "Offline-first interval tracker with real-time sync" },
+      { property: "og:image", content: "/logo512.png" },
+      { property: "og:type", content: "website" },
       // Twitter
-      { name: 'twitter:card', content: 'summary' },
-      { name: 'twitter:title', content: 'Interval' },
-      { name: 'twitter:description', content: 'Offline-first interval tracker with real-time sync' },
-      { name: 'twitter:image', content: '/logo512.png' },
+      { name: "twitter:card", content: "summary" },
+      { name: "twitter:title", content: "Interval" },
+      { name: "twitter:description", content: "Offline-first interval tracker with real-time sync" },
+      { name: "twitter:image", content: "/logo512.png" },
     ],
     links: [
-      { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
-      { rel: 'apple-touch-icon', href: '/logo192.png' },
-      { rel: 'stylesheet', href: appCss },
+      { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
+      { rel: "apple-touch-icon", href: "/logo192.png" },
+      { rel: "stylesheet", href: appCss },
     ],
   }),
 
@@ -134,24 +135,28 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <ConvexRxErrorBoundary>
           <ClientOnly
             fallback={
-              convexReactClient ? (
-                <ConvexProvider client={convexReactClient}>{children}</ConvexProvider>
-              ) : (
-                children
-              )
+              convexReactClient
+                ? (
+                    <ConvexProvider client={convexReactClient}>{children}</ConvexProvider>
+                  )
+                : (
+                    children
+                  )
             }
           >
-            {convexReactClient ? (
-              <ConvexProvider client={convexReactClient}>
-                <IntervalsProvider>{children}</IntervalsProvider>
-              </ConvexProvider>
-            ) : (
-              children
-            )}
+            {convexReactClient
+              ? (
+                  <ConvexProvider client={convexReactClient}>
+                    <IntervalsProvider>{children}</IntervalsProvider>
+                  </ConvexProvider>
+                )
+              : (
+                  children
+                )}
           </ClientOnly>
           <TanStackDevtools
-            config={{ position: 'bottom-right' }}
-            plugins={[{ name: 'Tanstack Router', render: <TanStackRouterDevtoolsPanel /> }]}
+            config={{ position: "bottom-right" }}
+            plugins={[{ name: "Tanstack Router", render: <TanStackRouterDevtoolsPanel /> }]}
           />
         </ConvexRxErrorBoundary>
         <ReloadPrompt />
@@ -234,7 +239,7 @@ function MobileActionBar({
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => navigate({ to: '/intervals' })}
+          onClick={() => navigate({ to: "/intervals" })}
           aria-label="Back to intervals"
           className="h-10 w-10"
         >
@@ -256,7 +261,7 @@ function MobileActionBar({
           size="icon"
           onClick={onFilterOpen}
           aria-label="Filter intervals"
-          className={cn('h-10 w-10', hasActiveFilters && 'text-primary')}
+          className={cn("h-10 w-10", hasActiveFilters && "text-primary")}
         >
           <SlidersHorizontal className="w-5 h-5" />
         </Button>
@@ -286,26 +291,26 @@ function KeyboardShortcuts({ onSearchOpen }: { onSearchOpen: () => void }) {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't trigger shortcuts when typing in inputs/textareas
       const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
         return;
       }
 
       // Cmd+K or Ctrl+K: Open search
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
         onSearchOpen();
       }
 
       // Option+N (Alt+N): Create new interval
       // Use e.code for Mac compatibility (Option key produces special chars like ñ)
-      if (e.altKey && e.code === 'KeyN') {
+      if (e.altKey && e.code === "KeyN") {
         e.preventDefault();
         createInterval();
       }
     };
 
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onSearchOpen, createInterval]);
 
   return null;

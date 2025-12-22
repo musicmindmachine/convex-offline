@@ -32,17 +32,17 @@
  * const persistence = await sqlitePersistence({ adapter });
  * ```
  */
-import type * as Y from 'yjs';
-import { LeveldbPersistence } from 'y-leveldb';
-import { SqliteLevel, type SqliteAdapter } from './sqlite-level.js';
-import type { Persistence, PersistenceProvider, KeyValueStore } from './types.js';
+import type * as Y from "yjs";
+import { LeveldbPersistence } from "y-leveldb";
+import { SqliteLevel, type SqliteAdapter } from "./sqlite-level.js";
+import type { Persistence, PersistenceProvider, KeyValueStore } from "./types.js";
 
 /**
  * SQLite-backed key-value store using sqlite-level.
  */
 class SqliteKeyValueStore implements KeyValueStore {
   private db: SqliteLevel<string, string>;
-  private prefix = 'kv:';
+  private prefix = "kv:";
 
   constructor(db: SqliteLevel<string, string>) {
     this.db = db;
@@ -55,7 +55,8 @@ class SqliteKeyValueStore implements KeyValueStore {
         return undefined;
       }
       return JSON.parse(value) as T;
-    } catch {
+    }
+    catch {
       return undefined;
     }
   }
@@ -139,7 +140,7 @@ export interface SqlitePersistenceOptions {
  * ```
  */
 export async function sqlitePersistence(options: SqlitePersistenceOptions): Promise<Persistence> {
-  const { adapter, dbName = 'replicate' } = options;
+  const { adapter, dbName = "replicate" } = options;
 
   // Create sqlite-level database with the provided adapter
   const db = new SqliteLevel<string, string>(dbName);

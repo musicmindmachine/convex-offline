@@ -6,30 +6,30 @@ import {
   type StatusValue,
   type PriorityValue,
   type Interval,
-} from '../types/interval';
-import { StatusIcon } from './StatusIcon';
-import { PriorityIcon } from './PriorityIcon';
+} from "../types/interval";
+import { StatusIcon } from "./StatusIcon";
+import { PriorityIcon } from "./PriorityIcon";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
-} from './ui/dropdown-menu';
+} from "./ui/dropdown-menu";
 
 interface IntervalPropertiesProps {
   interval: Interval;
-  onUpdate: (updates: Partial<Pick<Interval, 'status' | 'priority'>>) => void;
+  onUpdate: (updates: Partial<Pick<Interval, "status" | "priority">>) => void;
 }
 
 export function IntervalProperties({ interval, onUpdate }: IntervalPropertiesProps) {
   const statusOptions = Object.values(Status) as StatusValue[];
   const priorityOptions = Object.values(Priority) as PriorityValue[];
 
-  const createdDate = new Date(interval.createdAt).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
+  const createdDate = new Date(interval.createdAt).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
   });
 
   return (
@@ -49,9 +49,9 @@ export function IntervalProperties({ interval, onUpdate }: IntervalPropertiesPro
           <DropdownMenuContent align="start">
             <DropdownMenuRadioGroup
               value={interval.status}
-              onValueChange={(v) => onUpdate({ status: v as StatusValue })}
+              onValueChange={v => onUpdate({ status: v as StatusValue })}
             >
-              {statusOptions.map((status) => (
+              {statusOptions.map(status => (
                 <DropdownMenuRadioItem key={status} value={status}>
                   <StatusIcon status={status} size={14} />
                   {StatusLabels[status]}
@@ -73,9 +73,9 @@ export function IntervalProperties({ interval, onUpdate }: IntervalPropertiesPro
           <DropdownMenuContent align="start">
             <DropdownMenuRadioGroup
               value={interval.priority}
-              onValueChange={(v) => onUpdate({ priority: v as PriorityValue })}
+              onValueChange={v => onUpdate({ priority: v as PriorityValue })}
             >
-              {priorityOptions.map((priority) => (
+              {priorityOptions.map(priority => (
                 <DropdownMenuRadioItem key={priority} value={priority}>
                   <PriorityIcon priority={priority} size={14} />
                   {PriorityLabels[priority]}

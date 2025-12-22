@@ -1,13 +1,13 @@
-import { Effect, Context, Layer } from 'effect';
-import * as Y from 'yjs';
-import { yjsTransact, serializeYMap } from '$/client/merge';
-import { ReconciliationError as ReconciliationErrorImport } from '$/client/errors';
+import { Effect, Context, Layer } from "effect";
+import * as Y from "yjs";
+import { yjsTransact, serializeYMap } from "$/client/merge";
+import { ReconciliationError as ReconciliationErrorImport } from "$/client/errors";
 
 /**
  * Reconciliation handles removal of phantom documents -
  * documents that exist locally but have been deleted on the server.
  */
-export class Reconciliation extends Context.Tag('Reconciliation')<
+export class Reconciliation extends Context.Tag("Reconciliation")<
   Reconciliation,
   {
     /**
@@ -25,7 +25,7 @@ export class Reconciliation extends Context.Tag('Reconciliation')<
       ymap: Y.Map<unknown>,
       collection: string,
       serverDocs: readonly T[],
-      getKey: (doc: T) => string
+      getKey: (doc: T) => string,
     ) => Effect.Effect<T[], ReconciliationErrorImport>;
   }
 >() {}
@@ -38,7 +38,7 @@ export const ReconciliationLive = Layer.succeed(
       ymap: Y.Map<unknown>,
       collection: string,
       serverDocs: readonly T[],
-      getKey: (doc: T) => string
+      getKey: (doc: T) => string,
     ) =>
       Effect.gen(function* (_) {
         const serverDocIds = new Set(serverDocs.map(getKey));
@@ -52,7 +52,7 @@ export const ReconciliationLive = Layer.succeed(
         });
 
         if (toDelete.length === 0) {
-          yield* _(Effect.logDebug('No phantom documents found', { collection }));
+          yield* _(Effect.logDebug("No phantom documents found", { collection }));
           return [];
         }
 
@@ -60,7 +60,7 @@ export const ReconciliationLive = Layer.succeed(
           Effect.logWarning(`Found ${toDelete.length} phantom documents`, {
             collection,
             phantomDocs: toDelete.slice(0, 10), // Log first 10
-          })
+          }),
         );
 
         // Extract items before deletion for TanStack DB sync
@@ -81,28 +81,28 @@ export const ReconciliationLive = Layer.succeed(
               ymap.delete(key);
             }
           },
-          'reconciliation'
+          "reconciliation",
         );
 
         yield* _(
-          Effect.logInfo('Reconciliation completed', {
+          Effect.logInfo("Reconciliation completed", {
             collection,
             deletedCount: removedItems.length,
-          })
+          }),
         );
 
         // Return removed items for TanStack DB sync
         return removedItems;
       }).pipe(
-        Effect.catchAll((cause) =>
+        Effect.catchAll(cause =>
           Effect.fail(
             new ReconciliationErrorImport({
               collection,
-              reason: 'Reconciliation failed',
+              reason: "Reconciliation failed",
               cause,
-            })
-          )
-        )
+            }),
+          ),
+        ),
       ),
-  })
+  }),
 );

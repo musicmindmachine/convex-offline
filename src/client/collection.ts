@@ -1,16 +1,16 @@
-import * as Y from 'yjs';
-import { createMutex } from 'lib0/mutex';
-import type { Persistence, PersistenceProvider } from '$/client/persistence/types';
-import type { ConvexClient } from 'convex/browser';
-import { getFunctionName, type FunctionReference } from 'convex/server';
-import type { CollectionConfig, Collection, NonSingleResult } from '@tanstack/db';
-import type { StandardSchemaV1 } from '@standard-schema/spec';
-import { Effect, Layer } from 'effect';
-import { getLogger } from '$/client/logger';
-import { ProseError, NonRetriableError } from '$/client/errors';
-import { Checkpoint, createCheckpointLayer } from '$/client/services/checkpoint';
-import { Reconciliation, ReconciliationLive } from '$/client/services/reconciliation';
-import { createReplicateOps, type BoundReplicateOps } from '$/client/replicate';
+import * as Y from "yjs";
+import { createMutex } from "lib0/mutex";
+import type { Persistence, PersistenceProvider } from "$/client/persistence/types";
+import type { ConvexClient } from "convex/browser";
+import { getFunctionName, type FunctionReference } from "convex/server";
+import type { CollectionConfig, Collection, NonSingleResult } from "@tanstack/db";
+import type { StandardSchemaV1 } from "@standard-schema/spec";
+import { Effect, Layer } from "effect";
+import { getLogger } from "$/client/logger";
+import { ProseError, NonRetriableError } from "$/client/errors";
+import { Checkpoint, createCheckpointLayer } from "$/client/services/checkpoint";
+import { Reconciliation, ReconciliationLive } from "$/client/services/reconciliation";
+import { createReplicateOps, type BoundReplicateOps } from "$/client/replicate";
 import {
   createYjsDocument,
   getYMap,
@@ -22,20 +22,20 @@ import {
   fragmentFromJSON,
   serializeYMapValue,
   getFragmentFromYMap,
-} from '$/client/merge';
-import * as prose from '$/client/prose';
-import { extractProseFields } from '$/client/prose-schema';
-import { z } from 'zod';
+} from "$/client/merge";
+import * as prose from "$/client/prose";
+import { extractProseFields } from "$/client/prose-schema";
+import { z } from "zod";
 
 /** Origin markers for Yjs transactions */
 enum YjsOrigin {
-  Local = 'local',
-  Fragment = 'fragment',
-  Server = 'server',
+  Local = "local",
+  Fragment = "fragment",
+  Server = "server",
 }
-import type { ProseFields, XmlFragmentJSON } from '$/shared/types';
+import type { ProseFields } from "$/shared/types";
 
-const logger = getLogger(['replicate', 'collection']);
+const logger = getLogger(["replicate", "collection"]);
 
 interface HttpError extends Error {
   status?: number;
@@ -65,8 +65,8 @@ interface CollectionTransaction<T> {
 
 function handleMutationError(
   error: unknown,
-  operation: 'Insert' | 'Update' | 'Delete',
-  collection: string
+  operation: "Insert" | "Update" | "Delete",
+  collection: string,
 ): never {
   const httpError = error as HttpError;
   logger.error(`${operation} failed`, {
@@ -76,10 +76,10 @@ function handleMutationError(
   });
 
   if (httpError?.status === 401 || httpError?.status === 403) {
-    throw new NonRetriableError('Authentication failed');
+    throw new NonRetriableError("Authentication failed");
   }
   if (httpError?.status === 422) {
-    throw new NonRetriableError('Validation error');
+    throw new NonRetriableError("Validation error");
   }
   throw error;
 }
@@ -87,27 +87,27 @@ function handleMutationError(
 const cleanupFunctions = new Map<string, () => void>();
 
 /** Server-rendered material data for SSR hydration */
-export type Materialized<T> = {
-  documents: ReadonlyArray<T>;
+export interface Materialized<T> {
+  documents: readonly T[];
   checkpoint?: { lastModified: number };
   count?: number;
   crdtBytes?: ArrayBuffer;
-};
+}
 
 /** API object from replicate() */
 interface ConvexCollectionApi {
-  stream: FunctionReference<'query'>;
-  insert: FunctionReference<'mutation'>;
-  update: FunctionReference<'mutation'>;
-  remove: FunctionReference<'mutation'>;
-  recovery: FunctionReference<'query'>;
-  material?: FunctionReference<'query'>;
+  stream: FunctionReference<"query">;
+  insert: FunctionReference<"mutation">;
+  update: FunctionReference<"mutation">;
+  remove: FunctionReference<"mutation">;
+  recovery: FunctionReference<"query">;
+  material?: FunctionReference<"query">;
 }
 
 interface ConvexCollectionOptionsBaseConfig<
   T extends object,
   TSchema extends StandardSchemaV1 = never,
-  TKey extends string | number = string | number
+  TKey extends string | number = string | number,
 > {
   schema: TSchema;
   getKey: (item: T) => TKey;
@@ -221,7 +221,7 @@ function getOrCreateFragmentUndoManager(
   collection: string,
   documentId: string,
   field: string,
-  fragment: Y.XmlFragment
+  fragment: Y.XmlFragment,
 ): Y.UndoManager {
   const key = `${collection}:${documentId}:${field}`;
 
@@ -243,7 +243,7 @@ function getOrCreateFragmentUndoManager(
 type ConvexCollectionOptionsResult<
   T extends object,
   TKey extends string | number = string | number,
-  TSchema extends StandardSchemaV1 = never
+  TSchema extends StandardSchemaV1 = never,
 > = CollectionConfig<T, TKey, TSchema> & NonSingleResult & {
   _convexClient: ConvexClient;
   _collection: string;
@@ -280,14 +280,14 @@ type ConvexCollectionOptionsResult<
  */
 export function convexCollectionOptions<
   TSchema extends z.ZodObject<z.ZodRawShape>,
-  TKey extends string | number = string | number
+  TKey extends string | number = string | number,
 >(
-  config: ConvexCollectionOptionsBaseConfig<z.infer<TSchema>, TSchema, TKey>
+  config: ConvexCollectionOptionsBaseConfig<z.infer<TSchema>, TSchema, TKey>,
 ): ConvexCollectionOptionsResult<z.infer<TSchema>, TKey, TSchema>;
 
 // Implementation (must be compatible with both overloads)
 export function convexCollectionOptions(
-  config: ConvexCollectionOptionsBaseConfig<any, any, any>
+  config: ConvexCollectionOptionsBaseConfig<any, any, any>,
 ): ConvexCollectionOptionsResult<any, any, any> {
   const {
     schema,
@@ -301,13 +301,13 @@ export function convexCollectionOptions(
 
   // Extract collection name from function reference path (e.g., "intervals:stream" -> "intervals")
   const functionPath = getFunctionName(api.stream);
-  const collection = functionPath.split(':')[0];
+  const collection = functionPath.split(":")[0];
   if (!collection) {
-    throw new Error('Could not extract collection name from api.stream function reference');
+    throw new Error("Could not extract collection name from api.stream function reference");
   }
 
-  const proseFields: string[] =
-    schema && schema instanceof z.ZodObject ? extractProseFields(schema) : [];
+  const proseFields: string[]
+    = schema && schema instanceof z.ZodObject ? extractProseFields(schema) : [];
 
   // DataType is 'any' in implementation - type safety comes from overload signatures
   type DataType = any;
@@ -317,7 +317,7 @@ export function convexCollectionOptions(
   // Create utils object - prose() waits for Y.Doc to be ready via collectionDocs
   const utils: ConvexCollectionUtils<DataType> = {
     async prose(documentId: string, field: ProseFields<DataType>): Promise<EditorBinding> {
-      const fieldStr = field as string;
+      const fieldStr = field;
 
       // Validate field is in prose config
       if (!proseFieldSet.has(fieldStr)) {
@@ -340,14 +340,15 @@ export function convexCollectionOptions(
             if (collectionDocs.has(collection)) {
               clearInterval(check);
               resolve();
-            } else if (Date.now() - startTime > maxWait) {
+            }
+            else if (Date.now() - startTime > maxWait) {
               clearInterval(check);
               reject(
                 new ProseError({
                   documentId,
                   field: fieldStr,
                   collection,
-                })
+                }),
               );
             }
           }, 10);
@@ -391,7 +392,7 @@ export function convexCollectionOptions(
         collection,
         documentId,
         fieldStr,
-        fragment
+        fragment,
       );
 
       // Return EditorBinding with reactive pending state from prose module
@@ -457,30 +458,30 @@ export function convexCollectionOptions(
 
       const serverResponse = yield* Effect.tryPromise({
         try: () => convexClient.query(materialApi, {}),
-        catch: (error) => new Error(`Reconciliation query failed: ${error}`),
+        catch: error => new Error(`Reconciliation query failed: ${error}`),
       });
 
       const serverDocs = Array.isArray(serverResponse)
         ? serverResponse
-        : ((serverResponse as any).documents as DataType[] | undefined) || [];
+        : ((serverResponse).documents as DataType[] | undefined) || [];
 
       const removedItems = yield* reconciliation.reconcile(
         ydoc,
         ymap,
         collection,
         serverDocs,
-        (doc: DataType) => String(getKey(doc))
+        (doc: DataType) => String(getKey(doc)),
       );
 
       if (removedItems.length > 0) {
         ops.delete(removedItems);
       }
     }).pipe(
-      Effect.catchAll((error) =>
+      Effect.catchAll(error =>
         Effect.gen(function* () {
-          yield* Effect.logError('Reconciliation failed', { collection, error });
-        })
-      )
+          yield* Effect.logError("Reconciliation failed", { collection, error });
+        }),
+      ),
     );
 
   /**
@@ -489,7 +490,7 @@ export function convexCollectionOptions(
    */
   const recoverSync = async (): Promise<void> => {
     if (!api.recovery) {
-      logger.debug('No recovery API configured, skipping recovery sync', { collection });
+      logger.debug("No recovery API configured, skipping recovery sync", { collection });
       return;
     }
 
@@ -497,7 +498,7 @@ export function convexCollectionOptions(
       // Encode local state vector
       const localStateVector = Y.encodeStateVector(ydoc);
 
-      logger.debug('Starting recovery sync', {
+      logger.debug("Starting recovery sync", {
         collection,
         localVectorSize: localStateVector.byteLength,
       });
@@ -514,20 +515,22 @@ export function convexCollectionOptions(
           applyUpdate(ydoc, new Uint8Array(response.diff), YjsOrigin.Server);
         });
 
-        logger.info('Recovery sync applied diff', {
+        logger.info("Recovery sync applied diff", {
           collection,
           diffSize: response.diff.byteLength,
         });
-      } else {
-        logger.debug('Recovery sync - no diff needed', { collection });
+      }
+      else {
+        logger.debug("Recovery sync - no diff needed", { collection });
       }
 
       // Store server state vector for future reference
       if (response.serverStateVector) {
         serverStateVectors.set(collection, new Uint8Array(response.serverStateVector));
       }
-    } catch (error) {
-      logger.error('Recovery sync failed', {
+    }
+    catch (error) {
+      logger.error("Recovery sync failed", {
         collection,
         error: String(error),
       });
@@ -550,14 +553,15 @@ export function convexCollectionOptions(
               // Add fragment to map FIRST (binds it to the Y.Doc)
               itemYMap.set(k, fragment);
               // THEN populate content (now it's part of the document)
-              fragmentFromJSON(fragment, v as XmlFragmentJSON);
-            } else {
+              fragmentFromJSON(fragment, v);
+            }
+            else {
               itemYMap.set(k, v);
             }
           });
         });
       },
-      YjsOrigin.Local
+      YjsOrigin.Local,
     );
     return delta;
   };
@@ -571,7 +575,7 @@ export function convexCollectionOptions(
           if (itemYMap) {
             const modifiedFields = mut.modified as Record<string, unknown>;
             if (!modifiedFields) {
-              logger.warn('mut.modified is null/undefined', { collection, key: String(mut.key) });
+              logger.warn("mut.modified is null/undefined", { collection, key: String(mut.key) });
               return;
             }
             Object.entries(modifiedFields).forEach(([k, v]) => {
@@ -582,28 +586,29 @@ export function convexCollectionOptions(
               // Server sync goes: subscription → applyUpdate(ydoc) → CRDT merge
               // Writing serialized JSON back would corrupt the CRDT state
               if (proseFieldSet.has(k)) {
-                logger.debug('Skipping prose field in applyYjsUpdate', { field: k });
+                logger.debug("Skipping prose field in applyYjsUpdate", { field: k });
                 return;
               }
 
               // Also skip if existing value is a Y.XmlFragment (defensive check)
               if (existingValue instanceof Y.XmlFragment) {
-                logger.debug('Preserving live fragment field', { field: k });
+                logger.debug("Preserving live fragment field", { field: k });
                 return;
               }
 
               // Regular field update
               itemYMap.set(k, v);
             });
-          } else {
-            logger.error('Update attempted on non-existent item', {
+          }
+          else {
+            logger.error("Update attempted on non-existent item", {
               collection,
               key: String(mut.key),
             });
           }
         });
       },
-      YjsOrigin.Local
+      YjsOrigin.Local,
     );
     return delta;
   };
@@ -616,7 +621,7 @@ export function convexCollectionOptions(
           ymap.delete(String(mut.key));
         });
       },
-      YjsOrigin.Local
+      YjsOrigin.Local,
     );
     return delta;
   };
@@ -624,7 +629,7 @@ export function convexCollectionOptions(
   return {
     id: collection,
     getKey,
-    schema: schema as any,
+    schema: schema,
     _convexClient: convexClient,
     _collection: collection,
     _proseFields: proseFields,
@@ -648,8 +653,9 @@ export function convexCollectionOptions(
             materializedDoc,
           });
         }
-      } catch (error) {
-        handleMutationError(error, 'Insert', collection);
+      }
+      catch (error) {
+        handleMutationError(error, "Insert", collection);
       }
     },
 
@@ -661,7 +667,7 @@ export function convexCollectionOptions(
         // Skip if this update originated from server (prevents echo loops)
         // Now checks DOCUMENT-level flag, not collection-level
         if (prose.isApplyingFromServer(collection, documentKey)) {
-          logger.debug('Skipping onUpdate - data from server', { collection, documentKey });
+          logger.debug("Skipping onUpdate - data from server", { collection, documentKey });
           return;
         }
 
@@ -694,8 +700,9 @@ export function convexCollectionOptions(
             materializedDoc: fullDoc,
           });
         }
-      } catch (error) {
-        handleMutationError(error, 'Update', collection);
+      }
+      catch (error) {
+        handleMutationError(error, "Update", collection);
       }
     },
 
@@ -704,7 +711,7 @@ export function convexCollectionOptions(
         await Promise.all([persistenceReadyPromise, optimisticReadyPromise]);
         const delta = applyYjsDelete(transaction.mutations);
         const itemsToDelete = transaction.mutations
-          .map((mut) => mut.original)
+          .map(mut => mut.original)
           .filter((item): item is DataType => item !== undefined && Object.keys(item).length > 0);
         ops.delete(itemsToDelete);
         if (delta.length > 0) {
@@ -714,13 +721,14 @@ export function convexCollectionOptions(
             crdtBytes: delta.slice().buffer,
           });
         }
-      } catch (error) {
-        handleMutationError(error, 'Delete', collection);
+      }
+      catch (error) {
+        handleMutationError(error, "Delete", collection);
       }
     },
 
     sync: {
-      rowUpdateMode: 'partial',
+      rowUpdateMode: "partial",
       sync: (params: any) => {
         const { markReady, collection: collectionInstance } = params;
 
@@ -755,11 +763,11 @@ export function convexCollectionOptions(
 
             docPersistence = persistence.createDocPersistence(collection, ydoc);
             docPersistence.whenSynced.then(() => {
-              logger.debug('Persistence synced', { collection });
+              logger.debug("Persistence synced", { collection });
               resolvePersistenceReady?.();
             });
             await persistenceReadyPromise;
-            logger.info('Persistence ready', { collection, ymapSize: ymap.size });
+            logger.info("Persistence ready", { collection, ymapSize: ymap.size });
 
             // Create bound replicate operations for this collection
             // These are tied to this collection's TanStack DB params
@@ -788,39 +796,40 @@ export function convexCollectionOptions(
             if (ymap.size > 0) {
               const items = extractItems<DataType>(ymap);
               ops.replace(items); // Atomic replace, not accumulative insert
-              logger.info('Data loaded to TanStack DB', {
+              logger.info("Data loaded to TanStack DB", {
                 collection,
                 itemCount: items.length,
               });
-            } else {
+            }
+            else {
               // No data - clear TanStack DB to avoid stale state
               ops.replace([]);
-              logger.info('No data, cleared TanStack DB', { collection });
+              logger.info("No data, cleared TanStack DB", { collection });
             }
 
             // Step 3: Reconcile phantom documents (still in loading state)
-            logger.debug('Running reconciliation', { collection, ymapSize: ymap.size });
+            logger.debug("Running reconciliation", { collection, ymapSize: ymap.size });
             await Effect.runPromise(reconcile(ops).pipe(Effect.provide(servicesLayer)));
-            logger.debug('Reconciliation complete', { collection });
+            logger.debug("Reconciliation complete", { collection });
 
             // Step 4: Mark ready - UI shows data immediately
             markReady();
-            logger.info('Collection ready', { collection, ymapSize: ymap.size });
+            logger.info("Collection ready", { collection, ymapSize: ymap.size });
 
             // Step 4: Load checkpoint for subscription (background replication)
-            const checkpoint =
-              ssrCheckpoint ||
-              (await Effect.runPromise(
-                Effect.gen(function* () {
-                  const checkpointSvc = yield* Checkpoint;
-                  return yield* checkpointSvc.loadCheckpoint(collection);
-                }).pipe(Effect.provide(checkpointLayer))
-              ));
+            const checkpoint
+              = ssrCheckpoint
+                || (await Effect.runPromise(
+                  Effect.gen(function* () {
+                    const checkpointSvc = yield* Checkpoint;
+                    return yield* checkpointSvc.loadCheckpoint(collection);
+                  }).pipe(Effect.provide(checkpointLayer)),
+                ));
 
-            logger.info('Checkpoint loaded', {
+            logger.info("Checkpoint loaded", {
               collection,
               checkpoint,
-              source: ssrCheckpoint ? 'SSR' : 'IndexedDB',
+              source: ssrCheckpoint ? "SSR" : "IndexedDB",
               ymapSize: ymap.size,
             });
 
@@ -833,16 +842,17 @@ export function convexCollectionOptions(
 
               mux(() => {
                 try {
-                  logger.debug('Applying snapshot', {
+                  logger.debug("Applying snapshot", {
                     collection,
                     bytesLength: crdtBytes.byteLength,
                   });
                   applyUpdate(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Server);
                   const items = extractItems<DataType>(ymap);
-                  logger.debug('Snapshot applied', { collection, itemCount: items.length });
+                  logger.debug("Snapshot applied", { collection, itemCount: items.length });
                   ops.replace(items);
-                } catch (error) {
-                  logger.error('Error applying snapshot', { collection, error: String(error) });
+                }
+                catch (error) {
+                  logger.error("Error applying snapshot", { collection, error: String(error) });
                   throw new Error(`Snapshot application failed: ${error}`);
                 }
               });
@@ -858,7 +868,7 @@ export function convexCollectionOptions(
 
               mux(() => {
                 try {
-                  logger.debug('Applying delta', {
+                  logger.debug("Applying delta", {
                     collection,
                     documentId,
                     bytesLength: crdtBytes.byteLength,
@@ -868,28 +878,32 @@ export function convexCollectionOptions(
                   applyUpdate(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Server);
 
                   if (!documentId) {
-                    logger.debug('Delta applied (no documentId)', { collection });
+                    logger.debug("Delta applied (no documentId)", { collection });
                     return;
                   }
 
                   const itemAfter = extractItem<DataType>(ymap, documentId);
                   if (itemAfter) {
-                    logger.debug('Upserting item after delta', { collection, documentId });
+                    logger.debug("Upserting item after delta", { collection, documentId });
                     ops.upsert([itemAfter]);
-                  } else if (itemBefore) {
-                    logger.debug('Deleting item after delta', { collection, documentId });
-                    ops.delete([itemBefore]);
-                  } else {
-                    logger.debug('No change detected after delta', { collection, documentId });
                   }
-                } catch (error) {
-                  logger.error('Error applying delta', {
+                  else if (itemBefore) {
+                    logger.debug("Deleting item after delta", { collection, documentId });
+                    ops.delete([itemBefore]);
+                  }
+                  else {
+                    logger.debug("No change detected after delta", { collection, documentId });
+                  }
+                }
+                catch (error) {
+                  logger.error("Error applying delta", {
                     collection,
                     documentId,
                     error: String(error),
                   });
                   throw new Error(`Delta application failed for ${documentId}: ${error}`);
-                } finally {
+                }
+                finally {
                   // Clear document-level flag after delta processing
                   if (documentId) {
                     prose.setApplyingFromServer(collection, documentId, false);
@@ -903,7 +917,7 @@ export function convexCollectionOptions(
               try {
                 // Validate response shape
                 if (!response || !Array.isArray(response.changes)) {
-                  logger.error('Invalid subscription response', { response });
+                  logger.error("Invalid subscription response", { response });
                   return;
                 }
 
@@ -913,18 +927,20 @@ export function convexCollectionOptions(
                 for (const change of changes) {
                   const { operationType, crdtBytes, documentId } = change;
                   if (!crdtBytes) {
-                    logger.warn('Skipping change with missing crdtBytes', { change });
+                    logger.warn("Skipping change with missing crdtBytes", { change });
                     continue;
                   }
 
                   try {
-                    if (operationType === 'snapshot') {
+                    if (operationType === "snapshot") {
                       handleSnapshotChange(crdtBytes);
-                    } else {
+                    }
+                    else {
                       handleDeltaChange(crdtBytes, documentId);
                     }
-                  } catch (changeError) {
-                    logger.error('Failed to apply change', {
+                  }
+                  catch (changeError) {
+                    logger.error("Failed to apply change", {
                       operationType,
                       documentId,
                       error: String(changeError),
@@ -938,20 +954,22 @@ export function convexCollectionOptions(
                   try {
                     const key = `checkpoint:${collection}`;
                     await persistence.kv.set(key, newCheckpoint);
-                    logger.debug('Checkpoint saved', { collection, checkpoint: newCheckpoint });
-                  } catch (checkpointError) {
-                    logger.error('Failed to save checkpoint', {
+                    logger.debug("Checkpoint saved", { collection, checkpoint: newCheckpoint });
+                  }
+                  catch (checkpointError) {
+                    logger.error("Failed to save checkpoint", {
                       collection,
                       error: String(checkpointError),
                     });
                   }
                 }
-              } catch (error) {
-                logger.error('Subscription handler error', { collection, error: String(error) });
+              }
+              catch (error) {
+                logger.error("Subscription handler error", { collection, error: String(error) });
               }
             };
 
-            logger.info('Establishing subscription', {
+            logger.info("Establishing subscription", {
               collection,
               checkpoint,
               limit: 1000,
@@ -961,7 +979,7 @@ export function convexCollectionOptions(
               api.stream,
               { checkpoint, limit: 1000 },
               (response: any) => {
-                logger.debug('Subscription received update', {
+                logger.debug("Subscription received update", {
                   collection,
                   changesCount: response.changes?.length ?? 0,
                   checkpoint: response.checkpoint,
@@ -970,14 +988,15 @@ export function convexCollectionOptions(
 
                 // Call async handler directly - no Effect wrapper
                 handleSubscriptionUpdate(response);
-              }
+              },
             );
 
             // Note: markReady() was already called above (local-first)
             // Subscription is background replication, not blocking
-            logger.info('Subscription established', { collection });
-          } catch (error) {
-            logger.error('Failed to set up collection', { error, collection });
+            logger.info("Subscription established", { collection });
+          }
+          catch (error) {
+            logger.error("Failed to set up collection", { error, collection });
             // Still mark ready on error so UI isn't stuck loading
             markReady();
           }
