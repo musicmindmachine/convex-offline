@@ -14,7 +14,7 @@ sequenceDiagram
     participant UI as React Component
     participant Collection as TanStack DB Collection
     participant Yjs as Yjs CRDT
-    participant Storage as Local Storage<br/>(IndexedDB/SQLite)
+    participant Storage as Local Storage<br/>(SQLite)
     participant Convex as Convex Backend
     participant Table as Main Table
 
@@ -41,7 +41,7 @@ graph TB
     subgraph Client
         TDB[TanStack DB]
         Yjs[Yjs CRDT]
-        Local[(IndexedDB/SQLite)]
+        Local[(SQLite)]
         TDB <--> Yjs
         Yjs <--> Local
     end
@@ -144,20 +144,27 @@ export const {
   insert,
   update,
   remove,
+  mark,     // Peer sync progress tracking
+  compact,  // Manual compaction trigger
 } = r<Task>({
   collection: 'tasks',
-  compaction: { threshold: 5_000_000 },  // Optional: size threshold for auto-compaction (default: 5MB)
+  compaction: {
+    sizeThreshold: "5mb",  // Type-safe size: "100kb", "5mb", "1gb"
+    peerTimeout: "24h",    // Type-safe duration: "30m", "24h", "7d"
+  },
 });
 ```
 
 **What `replicate()` generates:**
 
-- `stream` - Real-time CRDT stream query (checkpoint-based subscriptions)
+- `stream` - Real-time CRDT stream query (cursor-based subscriptions with `seq` numbers)
 - `material` - SSR-friendly query (for server-side rendering)
 - `recovery` - State vector sync query (for startup reconciliation)
 - `insert` - Dual-storage insert mutation (auto-compacts when threshold exceeded)
 - `update` - Dual-storage update mutation (auto-compacts when threshold exceeded)
 - `remove` - Dual-storage delete mutation (auto-compacts when threshold exceeded)
+- `mark` - Report sync progress to server (peer tracking for safe compaction)
+- `compact` - Manual compaction trigger (peer-aware, respects active peer sync state)
 
 ### Step 4: Create a Custom Hook
 
@@ -166,41 +173,46 @@ Create a hook that wraps TanStack DB with Convex collection options:
 ```typescript
 // src/useTasks.ts
 import { createCollection, type Collection } from '@tanstack/react-db';
-import { convexCollectionOptions } from '@trestleinc/replicate/client';
+import { convexCollectionOptions, persistence } from '@trestleinc/replicate/client';
 import { api } from '../convex/_generated/api';
 import { convexClient } from './router';
 import { useMemo } from 'react';
+import { z } from 'zod';
 
-export interface Task {
-  id: string;
-  text: string;
-  isCompleted: boolean;
-}
+// Define your Zod schema (required)
+const taskSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  isCompleted: z.boolean(),
+});
+
+export type Task = z.infer<typeof taskSchema>;
 
 // Define collection type with TanStack DB discriminator
-// The singleResult property satisfies TanStack DB's NonSingleResult union type
 type TasksCollection = Collection<Task> & {
   singleResult?: never;
 };
 
 // Module-level singleton to prevent multiple collection instances
-// This ensures only one sync process runs, even across component remounts
 let tasksCollection: TasksCollection | null = null;
 
+// Initialize persistence (SQLite for browser)
+import initSqlJs from 'sql.js';
+const SQL = await initSqlJs({ locateFile: (file) => `/${file}` });
+const tasksPersistence = await persistence.sqlite.browser(SQL, 'tasks-db');
+
 export function useTasks(
-  initialData?: { documents: Task[], checkpoint?: any, count?: number, crdtBytes?: Uint8Array }
+  initialData?: { documents: Task[], cursor?: number, count?: number, crdtBytes?: ArrayBuffer }
 ) {
   return useMemo(() => {
     if (!tasksCollection) {
-      // Note: The `as unknown as` cast is required because TanStack DB's
-      // type inference expects StandardSchemaV1 compliance. This cast is
-      // safe as convexCollectionOptions returns the correct runtime type.
       tasksCollection = createCollection(
-        convexCollectionOptions<Task>({
-          convexClient,
-          api: api.tasks,
-          collection: 'tasks',
+        convexCollectionOptions({
+          schema: taskSchema,           // Required: Zod schema
           getKey: (task) => task.id,
+          convexClient,
+          api: api.tasks,               // Collection name auto-extracted from function path
+          persistence: tasksPersistence, // Required: SQLite, memory, or custom
           material: initialData,
         })
       ) as unknown as TasksCollection;
@@ -209,6 +221,12 @@ export function useTasks(
   }, [initialData]);
 }
 ```
+
+**Key differences from previous versions:**
+- `schema` is now **required** (Zod schema for type inference and prose field detection)
+- `collection` prop removed (auto-extracted from `api.stream` function path)
+- `prose` prop removed (auto-detected from schema fields using `prose()` type)
+- `persistence` is now **required** (SQLite, memory, or custom adapter)
 
 ### Step 5: Use in Components
 
@@ -315,18 +333,51 @@ function TasksPage() {
 
 ## Sync Protocol
 
-Replicate uses two complementary sync mechanisms:
+Replicate uses cursor-based sync with peer tracking for safe compaction.
 
-### `stream` - Real-time Checkpoint Sync
+### `stream` - Cursor-Based Real-Time Sync
 
-The primary sync mechanism for real-time updates. Uses checkpoint-based incremental sync:
+The primary sync mechanism uses monotonically increasing sequence numbers (`seq`):
 
-1. Client subscribes with last known checkpoint (timestamp)
-2. Server returns all deltas since that checkpoint
-3. Client applies deltas and updates checkpoint
-4. Subscription stays open for live updates
+1. Client subscribes with last known `cursor` (seq number)
+2. Server returns all changes with `seq > cursor`
+3. Client applies changes and updates local cursor
+4. Client calls `mark` to report sync progress to server
+5. Subscription stays open for live updates
 
-This is efficient for ongoing sync but requires the server to have deltas going back to the client's checkpoint.
+This approach enables:
+- **Safe compaction**: Server knows which deltas each peer has synced
+- **Peer tracking**: Active peers are tracked via `mark` calls
+- **No data loss**: Compaction only removes deltas all active peers have received
+
+### `mark` - Peer Sync Tracking
+
+Clients report their sync progress to the server:
+
+```typescript
+// Called automatically after applying changes
+await convexClient.mutation(api.tasks.mark, {
+  peerId: "client-uuid",
+  syncedSeq: 42,  // Last processed seq number
+});
+```
+
+The server tracks:
+- Which peers are actively syncing
+- Each peer's last synced `seq` number
+- Peer timeout for cleanup (configurable via `peerTimeout`)
+
+### `compact` - Peer-Aware Compaction
+
+Compaction is safe because it respects peer sync state:
+
+1. Server checks minimum `syncedSeq` across all active peers
+2. Only deletes deltas where `seq < minSyncedSeq`
+3. Ensures no active peer loses data they haven't synced
+
+**Compaction triggers:**
+- **Automatic**: When document deltas exceed `sizeThreshold`
+- **Manual**: Via `compact` mutation
 
 ### `recovery` - State Vector Sync
 
@@ -341,12 +392,7 @@ Used on startup to reconcile client and server state using Yjs state vectors:
 **When recovery is used:**
 - App startup (before stream subscription begins)
 - After extended offline periods
-- When checkpoint-based sync can't satisfy the request (deltas compacted)
-
-**Why both?**
-- `stream` is optimized for real-time (small checkpoint, fast subscription)
-- `recovery` handles cold starts and large gaps efficiently (state vectors)
-- Together they ensure clients always sync correctly regardless of history
+- When cursor-based sync can't satisfy the request (deltas compacted)
 
 ## Delete Pattern: Hard Delete with Event History
 
@@ -407,6 +453,8 @@ export const {
   insert,
   update,
   remove,
+  mark,
+  compact,
 } = r<Task>({
   collection: 'tasks',
 
@@ -422,6 +470,16 @@ export const {
       if (!userId) throw new Error('Unauthorized');
     },
     evalRemove: async (ctx, documentId) => {
+      const userId = await ctx.auth.getUserIdentity();
+      if (!userId) throw new Error('Unauthorized');
+    },
+    evalMark: async (ctx, peerId) => {
+      // Validate peer identity
+      const userId = await ctx.auth.getUserIdentity();
+      if (!userId) throw new Error('Unauthorized');
+    },
+    evalCompact: async (ctx, documentId) => {
+      // Restrict compaction to admin users
       const userId = await ctx.auth.getUserIdentity();
       if (!userId) throw new Error('Unauthorized');
     },
@@ -470,17 +528,10 @@ Choose the right storage backend for your platform:
 ```typescript
 import { persistence, adapters } from '@trestleinc/replicate/client';
 
-// Browser: IndexedDB (default, no config needed)
-convexCollectionOptions<Task>({
-  // ... other options
-  persistence: persistence.indexeddb(),
-});
-
 // Browser SQLite: Uses sql.js WASM with OPFS persistence
-// You initialize sql.js and pass the SQL object
 import initSqlJs from 'sql.js';
 const SQL = await initSqlJs({ locateFile: (file) => `/${file}` });
-convexCollectionOptions<Task>({
+convexCollectionOptions({
   // ... other options
   persistence: await persistence.sqlite.browser(SQL, 'my-app-db'),
 });
@@ -488,25 +539,62 @@ convexCollectionOptions<Task>({
 // React Native SQLite: Uses op-sqlite (native SQLite)
 import { open } from '@op-engineering/op-sqlite';
 const db = open({ name: 'my-app-db' });
-convexCollectionOptions<Task>({
+convexCollectionOptions({
   // ... other options
   persistence: await persistence.sqlite.native(db, 'my-app-db'),
 });
 
 // Testing: In-memory (no persistence)
-convexCollectionOptions<Task>({
+convexCollectionOptions({
   // ... other options
   persistence: persistence.memory(),
 });
-```
 
-**IndexedDB** (default) - Uses y-indexeddb for Y.Doc persistence and browser-level for metadata. Browser only.
+// Custom backend: Implement StorageAdapter interface
+convexCollectionOptions({
+  // ... other options
+  persistence: persistence.custom(new MyCustomAdapter()),
+});
+```
 
 **SQLite Browser** - Uses sql.js (SQLite compiled to WASM) with OPFS persistence. You initialize sql.js yourself and pass the SQL object.
 
 **SQLite Native** - Uses op-sqlite for React Native. You create the database and pass it.
 
-**Memory** - No persistence, useful for testing without IndexedDB side effects.
+**Memory** - No persistence, useful for testing.
+
+**Custom** - Implement `StorageAdapter` for any storage backend.
+
+### Custom Storage Backends
+
+Implement `StorageAdapter` for custom storage (Chrome extensions, localStorage, cloud storage):
+
+```typescript
+import { persistence, type StorageAdapter } from '@trestleinc/replicate/client';
+
+class ChromeStorageAdapter implements StorageAdapter {
+  async get(key: string): Promise<Uint8Array | undefined> {
+    const result = await chrome.storage.local.get(key);
+    return result[key] ? new Uint8Array(result[key]) : undefined;
+  }
+
+  async set(key: string, value: Uint8Array): Promise<void> {
+    await chrome.storage.local.set({ [key]: Array.from(value) });
+  }
+
+  async delete(key: string): Promise<void> {
+    await chrome.storage.local.remove(key);
+  }
+
+  async keys(prefix: string): Promise<string[]> {
+    const all = await chrome.storage.local.get(null);
+    return Object.keys(all).filter(k => k.startsWith(prefix));
+  }
+}
+
+// Use custom adapter
+const chromePersistence = persistence.custom(new ChromeStorageAdapter());
+```
 
 ### Logging Configuration
 
@@ -532,25 +620,28 @@ await configure({
 
 ### Client-Side (`@trestleinc/replicate/client`)
 
-#### `convexCollectionOptions<T>(config)`
+#### `convexCollectionOptions<TSchema>(config)`
 
 Creates collection options for TanStack DB with Yjs CRDT integration.
 
 **Config:**
 ```typescript
 interface ConvexCollectionOptionsConfig<T> {
+  schema: ZodObject;              // Required: Zod schema for type inference
+  getKey: (item: T) => string | number;
   convexClient: ConvexClient;
   api: {
     stream: FunctionReference;    // Real-time subscription endpoint
     insert: FunctionReference;    // Insert mutation
     update: FunctionReference;    // Update mutation
     remove: FunctionReference;    // Delete mutation
+    recovery: FunctionReference;  // State vector sync
+    mark: FunctionReference;      // Peer sync tracking
+    compact: FunctionReference;   // Manual compaction
+    material?: FunctionReference; // SSR hydration query
   };
-  collection: string;
-  getKey: (item: T) => string | number;
-  persistence?: Persistence;      // Optional: defaults to indexeddbPersistence()
+  persistence: Persistence;       // Required: SQLite, memory, or custom
   material?: Materialized<T>;     // SSR hydration data
-  prose?: Array<keyof T>;         // Optional: prose fields for rich text
   undoCaptureTimeout?: number;    // Undo stack merge window (default: 500ms)
 }
 ```
@@ -559,13 +650,19 @@ interface ConvexCollectionOptionsConfig<T> {
 
 **Example:**
 ```typescript
+const taskSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  content: prose(),  // Auto-detected as prose field
+});
+
 const collection = createCollection(
-  convexCollectionOptions<Task>({
+  convexCollectionOptions({
+    schema: taskSchema,
+    getKey: (task) => task.id,
     convexClient,
     api: api.tasks,
-    collection: 'tasks',
-    getKey: (task) => task.id,
-    material: initialData,
+    persistence: await persistence.sqlite.browser(SQL, 'tasks'),
   })
 );
 ```
@@ -589,20 +686,18 @@ const plainText = prose.extract(task.content);
 #### Persistence Providers
 
 ```typescript
-import { persistence, adapters } from '@trestleinc/replicate/client';
+import { persistence, adapters, type StorageAdapter } from '@trestleinc/replicate/client';
 
 // Persistence providers
-persistence.indexeddb()           // Browser: IndexedDB (default)
 persistence.sqlite.browser(SQL, name)  // Browser: sql.js WASM + OPFS
 persistence.sqlite.native(db, name)    // React Native: op-sqlite
-persistence.memory()              // Testing: in-memory (no persistence)
+persistence.memory()                   // Testing: in-memory (no persistence)
+persistence.custom(adapter)            // Custom: your StorageAdapter implementation
 
 // SQLite adapters (for advanced use)
 adapters.sqljs    // SqlJsAdapter class for browser
 adapters.opsqlite // OPSqliteAdapter class for React Native
 ```
-
-**`persistence.indexeddb()`** - Browser-only, uses y-indexeddb + browser-level.
 
 **`persistence.sqlite.browser(SQL, name)`** - Browser SQLite using sql.js WASM. You initialize sql.js and pass the SQL object.
 
@@ -610,14 +705,39 @@ adapters.opsqlite // OPSqliteAdapter class for React Native
 
 **`persistence.memory()`** - In-memory, no persistence. Useful for testing.
 
+**`persistence.custom(adapter)`** - Custom storage backend. Pass your `StorageAdapter` implementation.
+
+#### `StorageAdapter` Interface
+
+Implement for custom storage backends:
+
+```typescript
+interface StorageAdapter {
+  /** Get value by key, returns undefined if not found */
+  get(key: string): Promise<Uint8Array | undefined>;
+
+  /** Set value by key */
+  set(key: string, value: Uint8Array): Promise<void>;
+
+  /** Delete value by key */
+  delete(key: string): Promise<void>;
+
+  /** List all keys matching prefix */
+  keys(prefix: string): Promise<string[]>;
+
+  /** Optional: cleanup when persistence is destroyed */
+  close?(): void;
+}
+```
+
 #### Error Classes
 
 ```typescript
 import { errors } from '@trestleinc/replicate/client';
 
 errors.Network           // Network-related failures
-errors.IDB               // IndexedDB read errors
-errors.IDBWrite          // IndexedDB write errors
+errors.IDB               // Storage read errors
+errors.IDBWrite          // Storage write errors
 errors.Reconciliation    // Phantom document cleanup errors
 errors.Prose             // Rich text field errors
 errors.CollectionNotReady// Collection not initialized
@@ -653,9 +773,10 @@ Configuration for the bound replicate function.
 interface ReplicateConfig<T> {
   collection: string;          // Collection name (e.g., 'tasks')
 
-  // Optional: Auto-compaction settings
+  // Optional: Compaction settings with type-safe values
   compaction?: {
-    threshold?: number;        // Size threshold in bytes (default: 5MB / 5_000_000)
+    sizeThreshold?: Size;      // Size threshold: "100kb", "5mb", "1gb" (default: "5mb")
+    peerTimeout?: Duration;    // Peer timeout: "30m", "24h", "7d" (default: "24h")
   };
 
   // Optional: Hooks for permissions and lifecycle
@@ -664,6 +785,8 @@ interface ReplicateConfig<T> {
     evalRead?: (ctx, collection) => Promise<void>;
     evalWrite?: (ctx, doc) => Promise<void>;
     evalRemove?: (ctx, documentId) => Promise<void>;
+    evalMark?: (ctx, peerId) => Promise<void>;
+    evalCompact?: (ctx, documentId) => Promise<void>;
 
     // Lifecycle callbacks (run after operation)
     onStream?: (ctx, result) => Promise<void>;
@@ -677,13 +800,19 @@ interface ReplicateConfig<T> {
 }
 ```
 
+**Type-safe values:**
+- `Size`: `"100kb"`, `"5mb"`, `"1gb"`, etc.
+- `Duration`: `"30m"`, `"24h"`, `"7d"`, etc.
+
 **Returns:** Object with generated functions:
-- `stream` - Real-time CRDT stream query (checkpoint-based)
+- `stream` - Real-time CRDT stream query (cursor-based with `seq` numbers)
 - `material` - SSR-friendly query for hydration
 - `recovery` - State vector sync query (for startup reconciliation)
 - `insert` - Dual-storage insert mutation (auto-compacts when threshold exceeded)
 - `update` - Dual-storage update mutation (auto-compacts when threshold exceeded)
 - `remove` - Dual-storage delete mutation (auto-compacts when threshold exceeded)
+- `mark` - Peer sync tracking mutation (reports `syncedSeq` to server)
+- `compact` - Manual compaction mutation (peer-aware, safe for active clients)
 
 #### `schema.table(userFields, applyIndexes?)`
 
@@ -721,15 +850,24 @@ Validator for ProseMirror-compatible JSON fields.
 content: schema.prose()  // Validates ProseMirror JSON structure
 ```
 
+### Shared Types (`@trestleinc/replicate/shared`)
+
+```typescript
+import type { ProseValue } from '@trestleinc/replicate/shared';
+
+// ProseValue - branded type for prose fields in Zod schemas
+// Use the prose() helper from client to create fields of this type
+```
+
 ## Examples
 
 ### Interval - Linear-style Issue Tracker
 
 A full-featured offline-first issue tracker built with Replicate, demonstrating real-world usage patterns.
 
-🔗 **Live Demo:** [interval.robelest.com](https://interval.robelest.com)
+**Live Demo:** [interval.robelest.com](https://interval.robelest.com)
 
-📦 **Source Code:** Available in two framework variants:
+**Source Code:** Available in two framework variants:
 - [`illustrations/web/tanstack-start/`](./illustrations/web/tanstack-start/) - TanStack Start (React)
 - [`illustrations/web/sveltekit/`](./illustrations/web/sveltekit/) - SvelteKit (Svelte)
 
@@ -743,7 +881,7 @@ A full-featured offline-first issue tracker built with Replicate, demonstrating 
 ## Development
 
 ```bash
-bun run build         # Build with Rslib (includes ESLint + TypeScript checking)
+bun run build         # Build with tsdown (includes ESLint + TypeScript checking)
 bun run dev           # Watch mode
 bun run clean         # Remove build artifacts
 ```
