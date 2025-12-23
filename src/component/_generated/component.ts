@@ -24,64 +24,72 @@ import type { FunctionReference } from "convex/server";
 export type ComponentApi<Name extends string | undefined = string | undefined> =
   {
     public: {
-      deleteDocument: FunctionReference<
+      compact: FunctionReference<
         "mutation",
         "internal",
         {
           collection: string;
-          crdtBytes: ArrayBuffer;
           documentId: string;
-          threshold?: number;
-          version: number;
+          peerTimeout?: number;
+          snapshotBytes: ArrayBuffer;
+          stateVector: ArrayBuffer;
         },
-        { compacted?: boolean; success: boolean },
+        { removed: number; retained: number; success: boolean },
+        Name
+      >;
+      deleteDocument: FunctionReference<
+        "mutation",
+        "internal",
+        { collection: string; crdtBytes: ArrayBuffer; documentId: string },
+        { seq: number; success: boolean },
         Name
       >;
       getInitialState: FunctionReference<
         "query",
         "internal",
         { collection: string },
-        { checkpoint: { lastModified: number }; crdtBytes: ArrayBuffer } | null,
+        { crdtBytes: ArrayBuffer; cursor: number } | null,
         Name
       >;
       insertDocument: FunctionReference<
         "mutation",
         "internal",
-        {
-          collection: string;
-          crdtBytes: ArrayBuffer;
-          documentId: string;
-          threshold?: number;
-          version: number;
-        },
-        { compacted?: boolean; success: boolean },
+        { collection: string; crdtBytes: ArrayBuffer; documentId: string },
+        { seq: number; success: boolean },
+        Name
+      >;
+      mark: FunctionReference<
+        "mutation",
+        "internal",
+        { collection: string; peerId: string; syncedSeq: number },
+        null,
         Name
       >;
       recovery: FunctionReference<
         "query",
         "internal",
         { clientStateVector: ArrayBuffer; collection: string },
-        { diff?: ArrayBuffer; serverStateVector: ArrayBuffer },
+        { cursor: number; diff?: ArrayBuffer; serverStateVector: ArrayBuffer },
         Name
       >;
       stream: FunctionReference<
         "query",
         "internal",
         {
-          checkpoint: { lastModified: number };
           collection: string;
+          cursor: number;
           limit?: number;
-          vector?: ArrayBuffer;
+          sizeThreshold?: number;
         },
         {
           changes: Array<{
             crdtBytes: ArrayBuffer;
-            documentId?: string;
+            documentId: string;
             operationType: string;
-            timestamp: number;
-            version: number;
+            seq: number;
           }>;
-          checkpoint: { lastModified: number };
+          compact?: string;
+          cursor: number;
           hasMore: boolean;
         },
         Name
@@ -89,14 +97,8 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       updateDocument: FunctionReference<
         "mutation",
         "internal",
-        {
-          collection: string;
-          crdtBytes: ArrayBuffer;
-          documentId: string;
-          threshold?: number;
-          version: number;
-        },
-        { compacted?: boolean; success: boolean },
+        { collection: string; crdtBytes: ArrayBuffer; documentId: string },
+        { seq: number; success: boolean },
         Name
       >;
     };

@@ -51,74 +51,90 @@ export declare const internal: FilterApi<
 export declare const components: {
   replicate: {
     public: {
-      deleteDocument: FunctionReference<
+      ack: FunctionReference<
+        "mutation",
+        "internal",
+        { collection: string; peerId: string; syncedSeq: number },
+        null
+      >;
+      compact: FunctionReference<
         "mutation",
         "internal",
         {
+          bytes: ArrayBuffer;
           collection: string;
-          crdtBytes: ArrayBuffer;
           documentId: string;
-          threshold?: number;
-          version: number;
+          frontiers: ArrayBuffer;
+          peerTimeout: number;
         },
-        { compacted?: boolean; success: boolean }
+        { reason?: string; removed: number; success: boolean }
       >;
-      getInitialState: FunctionReference<
+      deleteDocument: FunctionReference<
+        "mutation",
+        "internal",
+        { bytes: ArrayBuffer; collection: string; documentId: string },
+        { seq: number; success: boolean }
+      >;
+      initial: FunctionReference<
         "query",
         "internal",
         { collection: string },
-        { checkpoint: { lastModified: number }; crdtBytes: ArrayBuffer } | null
+        {
+          cursor: number;
+          deltas: Array<{
+            bytes: ArrayBuffer;
+            documentId: string;
+            seq: number;
+          }>;
+          snapshots: Array<{
+            bytes: ArrayBuffer;
+            documentId: string;
+            snapshotSeq: number;
+          }>;
+        }
       >;
       insertDocument: FunctionReference<
         "mutation",
         "internal",
-        {
-          collection: string;
-          crdtBytes: ArrayBuffer;
-          documentId: string;
-          threshold?: number;
-          version: number;
-        },
-        { compacted?: boolean; success: boolean }
+        { bytes: ArrayBuffer; collection: string; documentId: string },
+        { seq: number; success: boolean }
       >;
       recovery: FunctionReference<
         "query",
         "internal",
-        { clientStateVector: ArrayBuffer; collection: string },
-        { diff?: ArrayBuffer; serverStateVector: ArrayBuffer }
+        { collection: string },
+        {
+          cursor: number;
+          deltas: Array<ArrayBuffer>;
+          snapshots: Array<ArrayBuffer>;
+        }
       >;
       stream: FunctionReference<
         "query",
         "internal",
         {
-          checkpoint: { lastModified: number };
           collection: string;
+          cursor: number;
           limit?: number;
-          vector?: ArrayBuffer;
+          sizeThreshold?: number;
         },
         {
           changes: Array<{
-            crdtBytes: ArrayBuffer;
-            documentId?: string;
+            bytes: ArrayBuffer;
+            documentId: string;
             operationType: string;
-            timestamp: number;
-            version: number;
+            seq: number;
           }>;
-          checkpoint: { lastModified: number };
+          compact?: string;
+          cursor: number;
           hasMore: boolean;
         }
       >;
       updateDocument: FunctionReference<
         "mutation",
         "internal",
-        {
-          collection: string;
-          crdtBytes: ArrayBuffer;
-          documentId: string;
-          threshold?: number;
-          version: number;
-        },
-        { compacted?: boolean; success: boolean }
+        { bytes: ArrayBuffer; collection: string; documentId: string },
+        { seq: number; success: boolean }
       >;
     };
   };

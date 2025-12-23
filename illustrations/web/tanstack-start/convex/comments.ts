@@ -6,11 +6,10 @@ import type { Comment } from "../src/types/interval";
 
 const r = replicate(components.replicate);
 
-export const { stream, material, insert, update, remove, recovery } = r<Comment>({
+export const { stream, material, insert, update, remove, recovery, mark, compact } = r<Comment>({
   collection: "comments",
 });
 
-// Get a single comment by ID
 export const get = query({
   args: { id: v.string() },
   handler: async (ctx, { id }) => {
@@ -21,7 +20,6 @@ export const get = query({
   },
 });
 
-// List comments for an interval
 export const listByInterval = query({
   args: { intervalId: v.string() },
   handler: async (ctx, { intervalId }) => {

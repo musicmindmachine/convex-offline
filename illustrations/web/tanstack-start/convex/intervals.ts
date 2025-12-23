@@ -6,11 +6,10 @@ import type { Interval } from "../src/types/interval";
 
 const r = replicate(components.replicate);
 
-export const { stream, material, insert, update, remove, recovery } = r<Interval>({
+export const { stream, material, insert, update, remove, recovery, mark, compact } = r<Interval>({
   collection: "intervals",
 });
 
-// Get a single interval by ID
 export const get = query({
   args: { id: v.string() },
   handler: async (ctx, { id }) => {
@@ -21,7 +20,6 @@ export const get = query({
   },
 });
 
-// List all intervals ordered by last updated
 export const list = query({
   args: {},
   handler: async (ctx) => {
@@ -29,7 +27,6 @@ export const list = query({
   },
 });
 
-// List intervals by status
 export const listByStatus = query({
   args: { status: v.string() },
   handler: async (ctx, { status }) => {

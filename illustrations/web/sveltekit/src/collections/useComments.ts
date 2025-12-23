@@ -1,13 +1,14 @@
-import { createCollection, type Collection } from "@tanstack/react-db";
+import { browser } from "$app/environment";
+import { createCollection, type Collection } from "@tanstack/db";
 import {
   convexCollectionOptions,
   persistence,
   type EditorBinding,
   type Persistence,
 } from "@trestleinc/replicate/client";
-import { api } from "../../convex/_generated/api";
-import { convexClient } from "../router";
-import { commentSchema, type Comment } from "../types/interval";
+import { api } from "$convex/_generated/api";
+import { commentSchema, type Comment } from "$lib/types";
+import { getConvexClient } from "$lib/convex";
 import initSqlJs from "sql.js";
 
 type CommentsCollection = Collection<Comment> & {
@@ -31,10 +32,14 @@ export async function initCommentsPersistence(): Promise<Persistence> {
 }
 
 export function useComments(): CommentsCollection {
+  if (!browser) {
+    throw new Error("useComments can only be used in browser");
+  }
   if (!commentsPersistence) {
     throw new Error("Call initCommentsPersistence() before useComments()");
   }
   if (!commentsCollection) {
+    const convexClient = getConvexClient();
     commentsCollection = createCollection(
       convexCollectionOptions({
         schema: commentSchema,
@@ -48,4 +53,4 @@ export function useComments(): CommentsCollection {
   return commentsCollection;
 }
 
-export type { Comment } from "../types/interval";
+export type { Comment } from "$lib/types";

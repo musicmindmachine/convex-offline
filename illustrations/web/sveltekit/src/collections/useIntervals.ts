@@ -7,35 +7,30 @@ import {
   type Persistence,
 } from "@trestleinc/replicate/client";
 import { api } from "$convex/_generated/api";
-import type { Interval } from "$lib/types";
+import { intervalSchema, type Interval } from "$lib/types";
 import { getConvexClient } from "$lib/convex";
+import initSqlJs from "sql.js";
 
-// Collection with utils.prose() for editor bindings
 type IntervalsCollection = Collection<Interval> & {
   utils: {
     prose(documentId: string, field: "description"): Promise<EditorBinding>;
   };
-  singleResult?: never; // Explicitly satisfy NonSingleResult discriminator for TanStack DB
+  singleResult?: never;
 };
 
 let intervalsCollection: IntervalsCollection | null = null;
 let intervalsPersistence: Persistence | null = null;
 
-/**
- * Initialize intervals persistence (call before useIntervals).
- */
 export async function initIntervalsPersistence(): Promise<Persistence> {
   if (intervalsPersistence) return intervalsPersistence;
-  // Use IndexedDB instead of SQLite - no WASM required
-  intervalsPersistence = persistence.indexeddb("intervals");
+
+  const SQL = await initSqlJs({
+    locateFile: (file: string) => `https://sql.js.org/dist/${file}`,
+  });
+  intervalsPersistence = await persistence.sqlite.browser(SQL, "intervals");
   return intervalsPersistence;
 }
 
-/**
- * Get the intervals collection singleton.
- * Must call initIntervalsPersistence() first.
- * Only call in browser context.
- */
 export function useIntervals(): IntervalsCollection {
   if (!browser) {
     throw new Error("useIntervals can only be used in browser");
@@ -46,12 +41,11 @@ export function useIntervals(): IntervalsCollection {
   if (!intervalsCollection) {
     const convexClient = getConvexClient();
     intervalsCollection = createCollection(
-      convexCollectionOptions<Interval>({
+      convexCollectionOptions({
+        schema: intervalSchema,
         convexClient,
         api: api.intervals,
-        collection: "intervals",
         getKey: (interval: Interval) => interval.id,
-        prose: ["description"],
         persistence: intervalsPersistence,
       }),
     ) as unknown as IntervalsCollection;
@@ -59,5 +53,4 @@ export function useIntervals(): IntervalsCollection {
   return intervalsCollection;
 }
 
-// Re-export for convenience
 export type { Interval } from "$lib/types";
