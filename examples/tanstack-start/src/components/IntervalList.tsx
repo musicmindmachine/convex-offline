@@ -2,9 +2,14 @@ import { useMemo } from "react";
 import { useIntervalsContext } from "../contexts/IntervalsContext";
 import { useFilterContext } from "../routes/__root";
 import { IntervalRow } from "./IntervalRow";
+import { IntervalListSkeleton } from "./IntervalListSkeleton";
 
 export function IntervalList() {
-  const { intervals } = useIntervalsContext();
+  const { intervals, isLoading } = useIntervalsContext();
+
+  if (isLoading) {
+    return <IntervalListSkeleton />;
+  }
   const { statusFilter, priorityFilter } = useFilterContext();
 
   // Filter and sort intervals

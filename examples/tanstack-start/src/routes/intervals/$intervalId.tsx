@@ -1,6 +1,7 @@
 import { createFileRoute, ClientOnly } from "@tanstack/react-router";
 import { useIntervalsContext } from "../../contexts/IntervalsContext";
 import { IntervalDetail } from "../../components/IntervalDetail";
+import { IntervalEditorSkeleton } from "../../components/IntervalEditorSkeleton";
 
 export const Route = createFileRoute("/intervals/$intervalId")({
   component: IntervalPageComponent,
@@ -10,15 +11,19 @@ function IntervalPageComponent() {
   const { intervalId } = Route.useParams();
 
   return (
-    <ClientOnly fallback={null}>
+    <ClientOnly fallback={<IntervalEditorSkeleton />}>
       <LiveIntervalView intervalId={intervalId} />
     </ClientOnly>
   );
 }
 
 function LiveIntervalView({ intervalId }: { intervalId: string }) {
-  const { collection, intervals } = useIntervalsContext();
+  const { collection, intervals, isLoading } = useIntervalsContext();
   const interval = intervals.find(i => i.id === intervalId);
+
+  if (isLoading) {
+    return <IntervalEditorSkeleton />;
+  }
 
   if (!interval) {
     return <IntervalNotFound />;

@@ -1,5 +1,6 @@
 import { createFileRoute, ClientOnly } from "@tanstack/react-router";
 import { IntervalList } from "../../components/IntervalList";
+import { IntervalListSkeleton } from "../../components/IntervalListSkeleton";
 
 export const Route = createFileRoute("/intervals/")({
   component: IntervalsIndexComponent,
@@ -7,7 +8,7 @@ export const Route = createFileRoute("/intervals/")({
 
 function IntervalsIndexComponent() {
   return (
-    <ClientOnly fallback={null}>
+    <ClientOnly fallback={<IntervalListSkeleton />}>
       <IntervalList />
     </ClientOnly>
   );

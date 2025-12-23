@@ -2,6 +2,7 @@
   import { useLiveQuery } from "@tanstack/svelte-db";
   import { getFilterContext } from "$lib/contexts/filters.svelte";
   import IntervalRow from "$lib/components/IntervalRow.svelte";
+  import IntervalListSkeleton from "$lib/components/IntervalListSkeleton.svelte";
   import { intervals as intervalsLazy } from "$collections/useIntervals";
 
   const collection = intervalsLazy.get();
@@ -29,6 +30,9 @@
   });
 </script>
 
+{#if intervalsQuery.isLoading}
+  <IntervalListSkeleton />
+{:else}
 <div class="flex-1 flex flex-col min-h-0">
   {#if filteredIntervals().length === 0}
     <!-- Empty state -->
@@ -64,3 +68,4 @@
     </div>
   {/if}
 </div>
+{/if}
