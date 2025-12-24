@@ -61,6 +61,18 @@ export default tseslint.config(
       "**/node_modules/**",
       "*.config.js",
       "*.config.ts",
+      // Build artifacts
+      "**/.svelte-kit/**",
+      "**/.output/**",
+      // Config files in examples
+      "**/babel.config.js",
+      "**/metro.config.js",
+      "**/postcss.config.mjs",
+      "**/prettier.config.js",
+      "**/svelte.config.js",
+      "**/examples/**/eslint.config.js",
+      // SvelteKit service worker (uses different tsconfig)
+      "**/service-worker.ts",
     ],
   },
 
@@ -68,6 +80,31 @@ export default tseslint.config(
     files: ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts"],
     rules: {
       "no-console": "off",
+    },
+  },
+
+  {
+    files: ["src/component/logger.ts"],
+    rules: {
+      "no-console": "off",
+    },
+  },
+
+  {
+    files: ["examples/**/*.ts", "examples/**/*.tsx"],
+    rules: {
+      "no-console": "off",
+      "@stylistic/arrow-parens": "off",
+      "@stylistic/comma-dangle": "off",
+      "@stylistic/brace-style": "off",
+      "@stylistic/multiline-ternary": "off",
+      "@stylistic/max-len": "off",
+      "@stylistic/jsx-wrap-multilines": "off",
+      "@stylistic/operator-linebreak": "off",
+      "@typescript-eslint/array-type": "off",
+      "@typescript-eslint/no-redundant-type-constituents": "off",
+      "@typescript-eslint/no-duplicate-type-constituents": "off",
+      "@typescript-eslint/no-base-to-string": "off",
     },
   },
 );

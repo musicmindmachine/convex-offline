@@ -39,7 +39,7 @@ try {
           let msg = "";
           const values: unknown[] = [];
           for (let i = 0; i < record.message.length; i++) {
-            if (i % 2 === 0) msg += record.message[i];
+            if (i % 2 === 0) msg += String(record.message[i]);
             else {
               msg += "%o";
               values.push(record.message[i]);
@@ -88,8 +88,8 @@ export function useFilterContext() {
     return {
       statusFilter: null,
       priorityFilter: null,
-      setStatusFilter: () => {},
-      setPriorityFilter: () => {},
+      setStatusFilter: (_: StatusValue | null) => { /* noop */ },
+      setPriorityFilter: (_: PriorityValue | null) => { /* noop */ },
       hasActiveFilters: false,
     };
   }

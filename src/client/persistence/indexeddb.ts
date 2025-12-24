@@ -8,7 +8,7 @@ const KV_STORE = "kv";
 function openDatabase(dbName: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(`replicate-${dbName}`, 1);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => reject(request.error ?? new Error("IndexedDB open failed"));
     request.onsuccess = () => resolve(request.result);
     request.onupgradeneeded = () => {
       const db = request.result;
@@ -33,7 +33,7 @@ class IDBKeyValueStore implements KeyValueStore {
       const tx = this.db.transaction(KV_STORE, "readonly");
       const store = tx.objectStore(KV_STORE);
       const request = store.get(key);
-      request.onerror = () => reject(request.error);
+      request.onerror = () => reject(request.error ?? new Error("IndexedDB get failed"));
       request.onsuccess = () => resolve(request.result as T | undefined);
     });
   }
@@ -43,7 +43,7 @@ class IDBKeyValueStore implements KeyValueStore {
       const tx = this.db.transaction(KV_STORE, "readwrite");
       const store = tx.objectStore(KV_STORE);
       const request = store.put(value, key);
-      request.onerror = () => reject(request.error);
+      request.onerror = () => reject(request.error ?? new Error("IndexedDB set failed"));
       request.onsuccess = () => resolve();
     });
   }
@@ -53,7 +53,7 @@ class IDBKeyValueStore implements KeyValueStore {
       const tx = this.db.transaction(KV_STORE, "readwrite");
       const store = tx.objectStore(KV_STORE);
       const request = store.delete(key);
-      request.onerror = () => reject(request.error);
+      request.onerror = () => reject(request.error ?? new Error("IndexedDB delete failed"));
       request.onsuccess = () => resolve();
     });
   }
@@ -101,10 +101,12 @@ class IDBPersistenceProvider implements PersistenceProvider {
           resolve();
         };
 
-        updatesRequest.onerror = () => reject(updatesRequest.error);
+        updatesRequest.onerror = () =>
+          reject(updatesRequest.error ?? new Error("IndexedDB updates load failed"));
       };
 
-      snapshotRequest.onerror = () => reject(snapshotRequest.error);
+      snapshotRequest.onerror = () =>
+        reject(snapshotRequest.error ?? new Error("IndexedDB snapshot load failed"));
     });
   }
 
@@ -113,7 +115,7 @@ class IDBPersistenceProvider implements PersistenceProvider {
       const tx = this.db.transaction(UPDATES_STORE, "readwrite");
       const store = tx.objectStore(UPDATES_STORE);
       const request = store.add(update);
-      request.onerror = () => reject(request.error);
+      request.onerror = () => reject(request.error ?? new Error("IndexedDB save update failed"));
       request.onsuccess = () => resolve();
     });
   }

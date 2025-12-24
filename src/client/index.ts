@@ -1,4 +1,9 @@
-export { collection, type EditorBinding, type ConvexCollection, type Materialized } from "$/client/collection";
+export {
+  collection,
+  type EditorBinding,
+  type ConvexCollection,
+  type Materialized,
+} from "$/client/collection";
 
 import {
   NetworkError,

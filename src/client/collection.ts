@@ -18,8 +18,6 @@ import { CursorService, createCursorLayer, type Cursor } from "$/client/services
 import { Reconciliation, ReconciliationLive } from "$/client/services/reconciliation";
 import { createReplicateOps, type BoundReplicateOps } from "$/client/replicate";
 import {
-  createYjsDocument,
-  getYMap,
   transactWithDelta,
   applyUpdate,
   extractItems,
@@ -399,8 +397,8 @@ export function convexCollectionOptions(
 
   // Create ydoc/ymap synchronously for immediate local-first operations
   // Persistence sync will load state into this doc later
-  let ydoc: Y.Doc = new Y.Doc({ guid: collection } as any);
-  let ymap: Y.Map<unknown> = ydoc.getMap(collection);
+  const ydoc: Y.Doc = new Y.Doc({ guid: collection } as any);
+  const ymap: Y.Map<unknown> = ydoc.getMap(collection);
   let docPersistence: PersistenceProvider = null as any;
 
   // Register ydoc immediately so utils.prose() can access it
@@ -649,8 +647,8 @@ export function convexCollectionOptions(
       try {
         await Promise.all([persistenceReadyPromise, optimisticReadyPromise]);
 
-        if (isContentSync) {
-          const { crdtBytes, materializedDoc } = metadata!.contentSync!;
+        if (isContentSync && metadata?.contentSync) {
+          const { crdtBytes, materializedDoc } = metadata.contentSync;
           await convexClient.mutation(api.update, {
             documentId: documentKey,
             crdtBytes,

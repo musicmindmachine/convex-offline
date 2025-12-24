@@ -48,7 +48,7 @@ const IDB_STORE = "sqlite-db";
 function openIDB(dbName: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(`replicate-sqlite-${dbName}`, 1);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => reject(request.error ?? new Error("IndexedDB open failed"));
     request.onsuccess = () => resolve(request.result);
     request.onupgradeneeded = () => {
       request.result.createObjectStore(IDB_STORE);
@@ -88,7 +88,7 @@ async function saveToIDB(dbName: string, data: Uint8Array): Promise<void> {
     };
     request.onerror = () => {
       db.close();
-      reject(request.error);
+      reject(request.error ?? new Error("IndexedDB put failed"));
     };
   });
 }
