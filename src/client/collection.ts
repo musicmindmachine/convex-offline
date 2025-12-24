@@ -11,11 +11,10 @@ import {
   type BaseCollectionConfig,
 } from "@tanstack/db";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
-import { Effect, Layer } from "effect";
+import { Effect } from "effect";
 import { getLogger } from "$/client/logger";
 import { ProseError, NonRetriableError } from "$/client/errors";
 import { CursorService, createCursorLayer, type Cursor } from "$/client/services/cursor";
-import { Reconciliation, ReconciliationLive } from "$/client/services/reconciliation";
 import { createReplicateOps, type BoundReplicateOps } from "$/client/replicate";
 import {
   transactWithDelta,
@@ -410,7 +409,6 @@ export function convexCollectionOptions(
 
   // Create services layer with the persistence KV store
   const cursorLayer = createCursorLayer(persistence.kv);
-  const servicesLayer = Layer.mergeAll(cursorLayer, ReconciliationLive);
 
   let resolvePersistenceReady: (() => void) | undefined;
   const persistenceReadyPromise = new Promise<void>((resolve) => {
@@ -422,92 +420,43 @@ export function convexCollectionOptions(
     resolveOptimisticReady = resolve;
   });
 
-  const reconcile = (ops: BoundReplicateOps<DataType>) =>
-    Effect.gen(function* () {
-      if (!api.material) return;
-
-      const materialApi = api.material;
-      const reconciliation = yield* Reconciliation;
-
-      const serverResponse = yield* Effect.tryPromise({
-        try: () => convexClient.query(materialApi, {}),
-        catch: error => new Error(`Reconciliation query failed: ${error}`),
-      });
-
-      const serverDocs = Array.isArray(serverResponse)
-        ? serverResponse
-        : ((serverResponse).documents as DataType[] | undefined) || [];
-
-      const removedItems = yield* reconciliation.reconcile(
-        ydoc,
-        ymap,
-        collection,
-        serverDocs,
-        (doc: DataType) => String(getKey(doc)),
-      );
-
-      if (removedItems.length > 0) {
-        ops.delete(removedItems);
-      }
-    }).pipe(
-      Effect.catchAll(error =>
-        Effect.gen(function* () {
-          yield* Effect.logError("Reconciliation failed", { collection, error });
-        }),
-      ),
-    );
-
-  /**
-   * Recovery sync using state vectors.
-   * Fetches missing data from server based on local state vector.
-   */
-  const recoverSync = async (): Promise<void> => {
+  const recover = async (): Promise<Cursor> => {
     if (!api.recovery) {
-      logger.debug("No recovery API configured, skipping recovery sync", { collection });
-      return;
+      logger.debug("No recovery API configured", { collection });
+      return 0;
     }
 
     try {
-      // Encode local state vector
       const localStateVector = Y.encodeStateVector(ydoc);
-
-      logger.debug("Starting recovery sync", {
+      logger.debug("Starting recovery", {
         collection,
         localVectorSize: localStateVector.byteLength,
       });
 
-      // Query server for diff
       const response = await convexClient.query(api.recovery, {
         clientStateVector: localStateVector.buffer as ArrayBuffer,
       });
 
-      // Apply diff if any
       if (response.diff) {
         const mux = getOrCreateMutex(collection);
         mux(() => {
           applyUpdate(ydoc, new Uint8Array(response.diff), YjsOrigin.Server);
         });
-
-        logger.info("Recovery sync applied diff", {
-          collection,
-          diffSize: response.diff.byteLength,
-        });
-      }
-      else {
-        logger.debug("Recovery sync - no diff needed", { collection });
+        logger.info("Recovery applied diff", { collection, diffSize: response.diff.byteLength });
       }
 
-      // Store server state vector for future reference
       if (response.serverStateVector) {
         serverStateVectors.set(collection, new Uint8Array(response.serverStateVector));
       }
+
+      const cursor = response.cursor ?? 0;
+      await persistence.kv.set(`cursor:${collection}`, cursor);
+      logger.info("Recovery complete", { collection, cursor });
+      return cursor;
     }
     catch (error) {
-      logger.error("Recovery sync failed", {
-        collection,
-        error: String(error),
-      });
-      // Don't throw - recovery is best-effort, subscription will catch up
+      logger.error("Recovery failed", { collection, error: String(error) });
+      return 0;
     }
   };
 
@@ -744,57 +693,37 @@ export function convexCollectionOptions(
               applyUpdate(ydoc, new Uint8Array(ssrCRDTBytes), YjsOrigin.Server);
             }
 
-            // === LOCAL-FIRST FLOW WITH RECOVERY ===
-            // 1. Local data (IndexedDB/Yjs) is the source of truth
-            // 2. Recovery sync - get any missing data from server using state vectors
-            // 3. Push local+recovered data to TanStack DB with ops.replace
-            // 4. Reconcile phantom documents (hidden in loading state)
-            // 5. markReady() - UI renders DATA immediately
-            // 6. Subscription starts in background (replication)
+            const recoveryCursor = await recover();
 
-            // Step 1: Recovery sync - fetch missing server data
-            await recoverSync();
-
-            // Step 2: Push local+recovered data to TanStack DB
             if (ymap.size > 0) {
               const items = extractItems<DataType>(ymap);
-              ops.replace(items); // Atomic replace, not accumulative insert
+              ops.replace(items);
               logger.info("Data loaded to TanStack DB", {
                 collection,
                 itemCount: items.length,
               });
             }
             else {
-              // No data - clear TanStack DB to avoid stale state
               ops.replace([]);
               logger.info("No data, cleared TanStack DB", { collection });
             }
 
-            // Step 3: Reconcile phantom documents (still in loading state)
-            logger.debug("Running reconciliation", { collection, ymapSize: ymap.size });
-            await Effect.runPromise(reconcile(ops).pipe(Effect.provide(servicesLayer)));
-            logger.debug("Reconciliation complete", { collection });
-
-            // Step 4: Mark ready - UI shows data immediately
             markReady();
             logger.info("Collection ready", { collection, ymapSize: ymap.size });
 
-            // Step 4: Load cursor and peerId for subscription (background replication)
-            const [cursor, peerId] = await Effect.runPromise(
+            const peerId = await Effect.runPromise(
               Effect.gen(function* () {
                 const cursorSvc = yield* CursorService;
-                const c = ssrCursor ?? (yield* cursorSvc.loadCursor(collection));
-                const p = yield* cursorSvc.loadPeerId(collection);
-                return [c, p] as const;
+                return yield* cursorSvc.loadPeerId(collection);
               }).pipe(Effect.provide(cursorLayer)),
             );
+            const cursor = ssrCursor ?? recoveryCursor;
 
-            logger.info("Cursor loaded", {
+            logger.info("Starting subscription", {
               collection,
               cursor,
               peerId,
-              source: ssrCursor !== undefined ? "SSR" : "storage",
-              ymapSize: ymap.size,
+              source: ssrCursor !== undefined ? "SSR" : "recovery",
             });
 
             // Get mutex for thread-safe updates
