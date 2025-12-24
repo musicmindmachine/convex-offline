@@ -102,12 +102,12 @@ function createStorageBackend(dbName: string): StorageBackend {
   if (hasOPFS()) {
     return {
       load: () => loadFromOPFS(dbName),
-      save: (data) => saveToOPFS(dbName, data),
+      save: data => saveToOPFS(dbName, data),
     };
   }
   return {
     load: () => loadFromIDB(dbName),
-    save: (data) => saveToIDB(dbName, data),
+    save: data => saveToIDB(dbName, data),
   };
 }
 

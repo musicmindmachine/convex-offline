@@ -86,7 +86,8 @@ class SqlitePersistenceProvider implements PersistenceProvider {
     );
 
     if (snapshotResult.rows.length > 0) {
-      const snapshotData = snapshotResult.rows[0].data as Uint8Array;
+      const raw = snapshotResult.rows[0].data;
+      const snapshotData = raw instanceof Uint8Array ? raw : new Uint8Array(raw as ArrayBuffer);
       Y.applyUpdate(this.ydoc, snapshotData, "sqlite");
     }
 
@@ -96,7 +97,9 @@ class SqlitePersistenceProvider implements PersistenceProvider {
     );
 
     for (const row of updatesResult.rows) {
-      Y.applyUpdate(this.ydoc, row.data as Uint8Array, "sqlite");
+      const raw = row.data;
+      const updateData = raw instanceof Uint8Array ? raw : new Uint8Array(raw as ArrayBuffer);
+      Y.applyUpdate(this.ydoc, updateData, "sqlite");
     }
   }
 
