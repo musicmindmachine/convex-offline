@@ -2,7 +2,6 @@ import { useMemo } from "react";
 import { useLiveQuery } from "@tanstack/react-db";
 import { comments as commentsLazy } from "../collections/useComments";
 import { CommentEditor, NewCommentInput } from "./CommentEditor";
-import { Card, CardHeader, CardContent } from "./ui/card";
 import type { Comment } from "../types/interval";
 
 interface CommentListProps {
@@ -14,7 +13,7 @@ export function CommentList({ intervalId }: CommentListProps) {
   const { data: allComments = [], isLoading } = useLiveQuery(commentsCollection);
 
   const filteredComments = useMemo(() => {
-    return (allComments as Comment[])
+    return (allComments)
       .filter(c => c.intervalId === intervalId)
       .sort((a, b) => a.createdAt - b.createdAt);
   }, [allComments, intervalId]);
@@ -36,19 +35,19 @@ export function CommentList({ intervalId }: CommentListProps) {
   };
 
   return (
-    <div className="max-w-[680px] mx-auto px-8 pb-12 w-full border-t border-border pt-8 mt-8">
-      <h3 className="font-display text-lg font-normal mb-4">Comments</h3>
+    <div className="max-w-[680px] mx-auto px-8 pb-12 w-full border-t border-border pt-6 mt-8">
+      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Comments</h3>
 
       {isLoading
         ? (
-            <p className="text-sm text-muted-foreground py-4">Loading comments...</p>
+            <p className="text-sm text-muted-foreground">Loading...</p>
           )
         : filteredComments.length === 0
           ? (
-              <p className="text-sm text-muted-foreground py-4">No comments yet</p>
+              <p className="text-sm text-muted-foreground">No comments yet</p>
             )
           : (
-              <div className="space-y-4">
+              <div>
                 {filteredComments.map(comment => (
                   <CommentItem key={comment.id} comment={comment} collection={commentsCollection} />
                 ))}
@@ -69,18 +68,14 @@ function CommentItem({ comment, collection }: CommentItemProps) {
   const date = new Date(comment.createdAt).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
   });
 
   return (
-    <Card size="sm">
-      <CardHeader className="py-2 bg-muted/30 border-b border-border">
-        <span className="text-xs text-muted-foreground">{date}</span>
-      </CardHeader>
-      <CardContent>
+    <div className="flex items-start gap-2 pl-3 border-l-2 border-primary/20 mb-2">
+      <div className="flex-1 min-w-0">
         <CommentEditor commentId={comment.id} collection={collection} />
-      </CardContent>
-    </Card>
+      </div>
+      <span className="text-[10px] text-muted-foreground shrink-0 mt-0.5">{date}</span>
+    </div>
   );
 }

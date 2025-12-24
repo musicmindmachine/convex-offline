@@ -106,7 +106,7 @@ function SidebarIntervalsList() {
   const editInputRef = useRef<HTMLInputElement>(null);
 
   // Filter out items without valid ids and sort by updatedAt descending
-  const sortedIntervals = [...(intervals as Interval[])]
+  const sortedIntervals = [...(intervals)]
     .filter((i): i is Interval => typeof i.id === "string" && i.id.length > 0)
     .sort((a, b) => b.updatedAt - a.updatedAt);
 

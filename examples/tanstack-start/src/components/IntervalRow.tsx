@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { Trash2 } from "lucide-react";
-import { prose } from "@trestleinc/replicate/client";
 import { useIntervalsContext } from "../contexts/IntervalsContext";
 import { StatusIcon } from "./StatusIcon";
 import { PriorityIcon } from "./PriorityIcon";
@@ -33,9 +32,6 @@ interface IntervalRowProps {
 export function IntervalRow({ interval }: IntervalRowProps) {
   const { collection } = useIntervalsContext();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-
-  const description = prose.extract(interval.description);
-  const preview = description.slice(0, 100) + (description.length > 100 ? "..." : "");
 
   const statusOptions = Object.values(Status) as StatusValue[];
   const priorityOptions = Object.values(Priority) as PriorityValue[];
@@ -89,10 +85,9 @@ export function IntervalRow({ interval }: IntervalRowProps) {
         <Link
           to="/intervals/$intervalId"
           params={{ intervalId: interval.id }}
-          className="flex-1 min-w-0 flex flex-col gap-0.5 no-underline text-foreground"
+          className="flex-1 min-w-0 no-underline text-foreground"
         >
           <span className="text-sm font-medium truncate">{interval.title || "Untitled"}</span>
-          {preview && <span className="text-xs text-muted-foreground truncate">{preview}</span>}
         </Link>
 
         {/* Priority dropdown */}

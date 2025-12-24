@@ -54,7 +54,7 @@ function IntervalsProviderInner({ children }: { children: ReactNode }) {
     <IntervalsContext.Provider
       value={{
         collection,
-        intervals: intervalsData as Interval[],
+        intervals: intervalsData,
         isLoading,
       }}
     >

@@ -74,7 +74,7 @@ function CommentEditorView({ binding }: { binding: EditorBinding }) {
       ],
       editorProps: {
         attributes: {
-          class: "tiptap-editor prose text-sm outline-none min-h-[1.5em]",
+          class: "tiptap-editor comment-editor prose text-sm outline-none",
         },
       },
     },
@@ -101,15 +101,15 @@ export function NewCommentInput({ onSubmit }: NewCommentInputProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="mt-6 space-y-3">
+    <form onSubmit={handleSubmit} className="mt-4 flex items-end gap-2">
       <Textarea
         value={text}
         onChange={e => setText(e.target.value)}
-        placeholder="Write a comment..."
-        rows={3}
+        placeholder="Add a comment..."
+        className="min-h-0 resize-none text-sm"
       />
-      <Button type="submit" disabled={!text.trim()}>
-        Comment
+      <Button type="submit" size="sm" disabled={!text.trim()}>
+        Post
       </Button>
     </form>
   );

@@ -20,7 +20,6 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { StatusIcon } from "./StatusIcon";
 import { cn } from "@/lib/utils";
-import type { Interval } from "../types/interval";
 
 interface SearchPanelProps {
   isOpen: boolean;
@@ -51,7 +50,7 @@ export function SearchPanel({ isOpen, onClose }: SearchPanelProps) {
   // Memoize text extraction per interval
   const intervalsWithText = useMemo(
     () =>
-      (intervals as Interval[]).map(i => ({
+      (intervals).map(i => ({
         ...i,
         textContent: prose.extract(i.description).toLowerCase(),
       })),
@@ -227,16 +226,9 @@ export function SearchPanel({ isOpen, onClose }: SearchPanelProps) {
                         onKeyDown={e => e.key === "Enter" && handleSelect(interval.id)}
                       >
                         <StatusIcon status={interval.status} size={14} className="shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <span className="block text-sm font-medium truncate">
-                            {interval.title || "Untitled"}
-                          </span>
-                          {interval.textContent && (
-                            <span className="block text-xs text-muted-foreground truncate">
-                              {truncate(interval.textContent, 80)}
-                            </span>
-                          )}
-                        </div>
+                        <span className="flex-1 min-w-0 text-sm font-medium truncate">
+                          {interval.title || "Untitled"}
+                        </span>
                         <Button
                           variant="ghost"
                           size="icon-xs"
@@ -308,9 +300,4 @@ export function SearchPanel({ isOpen, onClose }: SearchPanelProps) {
       </AlertDialog>
     </>
   );
-}
-
-function truncate(str: string, length: number): string {
-  if (str.length <= length) return str;
-  return `${str.slice(0, length)}...`;
 }
