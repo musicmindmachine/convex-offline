@@ -260,7 +260,6 @@ export function convexCollectionOptions(
     persistence,
   } = config;
 
-  // Extract collection name from function reference path (e.g., "intervals:stream" -> "intervals")
   const functionPath = getFunctionName(api.stream);
   const collection = functionPath.split(":")[0];
   if (!collection) {
@@ -722,9 +721,6 @@ export function convexCollectionOptions(
               logger.info("No data, cleared TanStack DB", { collection });
             }
 
-            markReady();
-            logger.info("Collection ready", { collection, subdocCount: docIds.length });
-
             const peerId = await Effect.runPromise(
               Effect.gen(function* () {
                 const cursorSvc = yield* CursorService;
@@ -736,13 +732,16 @@ export function convexCollectionOptions(
             collectionConvexClients.set(collection, convexClient);
             collectionApis.set(collection, api);
 
-            const cursor = ssrCursor ?? recoveryCursor;
+            markReady();
+            logger.info("Collection ready", { collection, subdocCount: docIds.length });
+
+            const cursor = ssrCursor ?? (docIds.length > 0 ? recoveryCursor : 0);
 
             logger.info("Starting subscription", {
               collection,
               cursor,
               peerId,
-              source: ssrCursor !== undefined ? "SSR" : "recovery",
+              source: ssrCursor !== undefined ? "SSR" : docIds.length > 0 ? "recovery" : "fresh",
             });
 
             // Get mutex for thread-safe updates

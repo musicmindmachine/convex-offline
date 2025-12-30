@@ -4,7 +4,7 @@ import Collaboration from "@tiptap/extension-collaboration";
 import Placeholder from "@tiptap/extension-placeholder";
 import { Effect, Fiber } from "effect";
 import { useEffect, useState, useRef } from "react";
-import type { EditorBinding } from "@trestleinc/replicate/client";
+import type { ClientCursor, EditorBinding } from "@trestleinc/replicate/client";
 
 import {
   Status,
@@ -40,6 +40,7 @@ interface IntervalEditorProps {
 export function IntervalEditor({ intervalId, collection, interval, onPropertyUpdate }: IntervalEditorProps) {
   const [binding, setBinding] = useState<EditorBinding | null>(null);
   const [error, setError] = useState<Error | null>(null);
+  const [remoteCursors, setRemoteCursors] = useState<Map<string, ClientCursor>>(new Map());
 
   // Get editor binding using Effect-TS for proper cancellation
   useEffect(() => {
@@ -67,11 +68,26 @@ export function IntervalEditor({ intervalId, collection, interval, onPropertyUpd
         // Silently ignore interruption - expected when switching intervals
       });
 
-    // Cleanup: interrupt the fiber when intervalId changes or component unmounts
     return () => {
       Effect.runFork(Fiber.interrupt(fiber));
+      binding?.destroy();
     };
   }, [collection, intervalId]);
+
+  useEffect(() => {
+    if (!binding?.cursor) return;
+
+    const handleChange = () => {
+      setRemoteCursors(new Map(binding.cursor.others()));
+    };
+
+    binding.cursor.on("change", handleChange);
+    handleChange();
+
+    return () => {
+      binding.cursor.off("change", handleChange);
+    };
+  }, [binding]);
 
   if (error) {
     return (
@@ -93,8 +109,6 @@ export function IntervalEditor({ intervalId, collection, interval, onPropertyUpd
     );
   }
 
-  // Render editor only when binding is ready
-  // key={intervalId} forces complete remount when switching intervals
   return (
     <IntervalEditorView
       key={intervalId}
@@ -103,11 +117,11 @@ export function IntervalEditor({ intervalId, collection, interval, onPropertyUpd
       collection={collection}
       intervalId={intervalId}
       onPropertyUpdate={onPropertyUpdate}
+      remoteCursors={remoteCursors}
     />
   );
 }
 
-// Separate component to prevent editor recreation on parent re-renders
 interface IntervalEditorViewProps {
   binding: EditorBinding;
   interval: Interval;
@@ -116,6 +130,7 @@ interface IntervalEditorViewProps {
   };
   intervalId: string;
   onPropertyUpdate?: (updates: Partial<Pick<Interval, "status" | "priority">>) => void;
+  remoteCursors: Map<string, ClientCursor>;
 }
 
 function IntervalEditorView({
@@ -124,6 +139,7 @@ function IntervalEditorView({
   collection,
   intervalId,
   onPropertyUpdate,
+  remoteCursors,
 }: IntervalEditorViewProps) {
   const [title, setTitle] = useState(interval.title);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -257,10 +273,66 @@ function IntervalEditorView({
         </div>
       )}
 
-      {/* Editor content */}
+      {remoteCursors.size > 0 && (
+        <div className="flex items-center gap-2 mb-4">
+          {Array.from(remoteCursors.values()).map((cursor) => (
+            <CursorIndicator key={cursor.client} cursor={cursor} />
+          ))}
+        </div>
+      )}
+
       <div className="min-h-[200px]">
         <EditorContent editor={editor} />
       </div>
+    </div>
+  );
+}
+
+const DEFAULT_COLORS = [
+  "#F87171",
+  "#FB923C",
+  "#FBBF24",
+  "#A3E635",
+  "#34D399",
+  "#22D3EE",
+  "#60A5FA",
+  "#A78BFA",
+  "#F472B6",
+];
+
+function getColorForClient(clientId: string): string {
+  let hash = 0;
+  for (let i = 0; i < clientId.length; i++) {
+    hash = ((hash << 5) - hash) + clientId.charCodeAt(i);
+    hash |= 0;
+  }
+  return DEFAULT_COLORS[Math.abs(hash) % DEFAULT_COLORS.length];
+}
+
+interface CursorIndicatorProps {
+  cursor: ClientCursor;
+}
+
+function CursorIndicator({ cursor }: CursorIndicatorProps) {
+  const color = cursor.profile?.color || getColorForClient(cursor.client);
+  const name = cursor.profile?.name || cursor.user || "Anonymous";
+  const initial = name.charAt(0).toUpperCase();
+
+  return (
+    <div
+      className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium"
+      style={{ backgroundColor: `${color}20`, color }}
+      title={name}
+    >
+      <div
+        className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-semibold"
+        style={{ backgroundColor: color }}
+      >
+        {cursor.profile?.avatar
+          ? <img src={cursor.profile.avatar} alt={name} className="w-5 h-5 rounded-full object-cover" />
+          : initial}
+      </div>
+      <span className="max-w-[80px] truncate">{name}</span>
     </div>
   );
 }

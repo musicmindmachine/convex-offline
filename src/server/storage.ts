@@ -294,6 +294,7 @@ export class Replicate<T extends object> {
           head: v.number(),
           field: v.optional(v.string()),
         })),
+        interval: v.optional(v.number()),
       },
       returns: v.null(),
       handler: async (ctx, args) => {
@@ -309,6 +310,7 @@ export class Replicate<T extends object> {
           user: args.user,
           profile: args.profile,
           cursor: args.cursor,
+          interval: args.interval,
         });
 
         return null;

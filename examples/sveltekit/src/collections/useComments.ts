@@ -3,15 +3,9 @@ import { ConvexClient } from "convex/browser";
 import { PUBLIC_CONVEX_URL } from "$env/static/public";
 import { api } from "$convex/_generated/api";
 import { commentSchema } from "$lib/types";
-import initSqlJs from "sql.js";
 
 export const comments = collection.create({
-  persistence: async () => {
-    const SQL = await initSqlJs({
-      locateFile: (file: string) => `https://sql.js.org/dist/${file}`,
-    });
-    return persistence.sqlite.browser(SQL, "comments");
-  },
+  persistence: async () => persistence.memory(),
   config: () => ({
     schema: commentSchema,
     convexClient: new ConvexClient(PUBLIC_CONVEX_URL),

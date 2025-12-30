@@ -2,13 +2,15 @@
   import { onMount, onDestroy } from "svelte";
   import { browser } from "$app/environment";
   import type { Editor } from "@tiptap/core";
-  import type { EditorBinding } from "@trestleinc/replicate/client";
+  import type { EditorBinding, ClientCursor } from "@trestleinc/replicate/client";
   import type { Interval, StatusValue, PriorityValue } from "$lib/types";
   import { Status, Priority, StatusLabels, PriorityLabels } from "$lib/types";
   import { intervals } from "$collections/useIntervals";
   import StatusIcon from "./StatusIcon.svelte";
   import PriorityIcon from "./PriorityIcon.svelte";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
+  import * as Avatar from "$lib/components/ui/avatar";
+  import * as Tooltip from "$lib/components/ui/tooltip";
 
   interface Props {
     intervalId: string;
@@ -28,6 +30,7 @@
   let binding = $state<EditorBinding | null>(null);
   let error = $state<string | null>(null);
   let isLoading = $state(true);
+  let remoteCursors = $state<Map<string, ClientCursor>>(new Map());
 
   let isEditingTitle = $state(false);
   let editingTitle = $state("");
@@ -39,6 +42,23 @@
     if (isEditingTitle) {
       titleInputRef?.focus();
     }
+  });
+
+// Subscribe to cursor changes from other users
+  $effect(() => {
+    const cursor = binding?.cursor;
+    if (!cursor) return;
+
+    const handleChange = () => {
+      remoteCursors = new Map(cursor.others());
+    };
+
+    cursor.on("change", handleChange);
+    handleChange();
+
+    return () => {
+      cursor.off("change", handleChange);
+    };
   });
 
   $effect(() => {
@@ -71,6 +91,14 @@
             attributes: {
               class: "tiptap-editor prose",
             },
+          },
+          onSelectionUpdate: ({ editor: e }) => {
+            const { from, to } = e.state.selection;
+            binding?.cursor?.update({ anchor: from, head: to });
+          },
+          onCreate: ({ editor: e }) => {
+            const { from, to } = e.state.selection;
+            binding?.cursor?.update({ anchor: from, head: to });
           },
         });
       });
@@ -105,6 +133,7 @@
   });
 
   onDestroy(() => {
+    binding?.destroy();
     if (editor) {
       editor.destroy();
       editor = null;
@@ -173,50 +202,88 @@
     {/if}
 
     {#if onPropertyUpdate}
-      <div class="flex items-center gap-4 mt-4 mb-8 pb-6 border-b border-border text-sm">
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger
-            class="flex items-center gap-2 px-2 py-1 rounded-sm hover:bg-muted transition-colors"
-          >
-            <StatusIcon status={interval.status} size={14} />
-            <span>{StatusLabels[interval.status]}</span>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Content align="start">
-            <DropdownMenu.RadioGroup
-              value={interval.status}
-              onValueChange={v => onPropertyUpdate({ status: v as StatusValue })}
+      <div class="flex items-center justify-between gap-4 mt-4 mb-8 pb-6 border-b border-border text-sm">
+        <div class="flex items-center gap-4">
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger
+              class="flex items-center gap-2 px-2 py-1 rounded-sm hover:bg-muted transition-colors"
             >
-              {#each statusOptions as status}
-                <DropdownMenu.RadioItem value={status}>
-                  <StatusIcon {status} size={14} />
-                  <span class="ml-2">{StatusLabels[status]}</span>
-                </DropdownMenu.RadioItem>
-              {/each}
-            </DropdownMenu.RadioGroup>
-          </DropdownMenu.Content>
-        </DropdownMenu.Root>
+              <StatusIcon status={interval.status} size={14} />
+              <span>{StatusLabels[interval.status]}</span>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Content align="start">
+              <DropdownMenu.RadioGroup
+                value={interval.status}
+                onValueChange={v => onPropertyUpdate({ status: v as StatusValue })}
+              >
+                {#each statusOptions as status}
+                  <DropdownMenu.RadioItem value={status}>
+                    <StatusIcon {status} size={14} />
+                    <span class="ml-2">{StatusLabels[status]}</span>
+                  </DropdownMenu.RadioItem>
+                {/each}
+              </DropdownMenu.RadioGroup>
+            </DropdownMenu.Content>
+          </DropdownMenu.Root>
 
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger
-            class="flex items-center gap-2 px-2 py-1 rounded-sm hover:bg-muted transition-colors"
-          >
-            <PriorityIcon priority={interval.priority} size={14} />
-            <span>{PriorityLabels[interval.priority]}</span>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Content align="start">
-            <DropdownMenu.RadioGroup
-              value={interval.priority}
-              onValueChange={v => onPropertyUpdate({ priority: v as PriorityValue })}
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger
+              class="flex items-center gap-2 px-2 py-1 rounded-sm hover:bg-muted transition-colors"
             >
-              {#each priorityOptions as priority}
-                <DropdownMenu.RadioItem value={priority}>
-                  <PriorityIcon {priority} size={14} />
-                  <span class="ml-2">{PriorityLabels[priority]}</span>
-                </DropdownMenu.RadioItem>
+              <PriorityIcon priority={interval.priority} size={14} />
+              <span>{PriorityLabels[interval.priority]}</span>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Content align="start">
+              <DropdownMenu.RadioGroup
+                value={interval.priority}
+                onValueChange={v => onPropertyUpdate({ priority: v as PriorityValue })}
+              >
+                {#each priorityOptions as priority}
+                  <DropdownMenu.RadioItem value={priority}>
+                    <PriorityIcon {priority} size={14} />
+                    <span class="ml-2">{PriorityLabels[priority]}</span>
+                  </DropdownMenu.RadioItem>
+                {/each}
+              </DropdownMenu.RadioGroup>
+            </DropdownMenu.Content>
+          </DropdownMenu.Root>
+        </div>
+
+        {#if remoteCursors.size > 0}
+          <Tooltip.Provider>
+            <div
+              class="flex -space-x-2"
+              aria-label="Active collaborators"
+            >
+              {#each [...remoteCursors.values()] as cursor (cursor.client)}
+                <Tooltip.Root>
+                  <Tooltip.Trigger>
+                    <Avatar.Root
+                      class="size-7 ring-2 ring-background"
+                      style="--avatar-color: {cursor.profile?.color ?? '#6366f1'}"
+                    >
+                      {#if cursor.profile?.avatar}
+                        <Avatar.Image
+                          src={cursor.profile.avatar}
+                          alt={cursor.profile?.name ?? 'User'}
+                        />
+                      {/if}
+                      <Avatar.Fallback
+                        class="text-xs text-white"
+                        style="background-color: {cursor.profile?.color ?? '#6366f1'}"
+                      >
+                        {(cursor.profile?.name ?? 'A').charAt(0).toUpperCase()}
+                      </Avatar.Fallback>
+                    </Avatar.Root>
+                  </Tooltip.Trigger>
+                  <Tooltip.Content>
+                    <p>{cursor.profile?.name ?? 'Anonymous'}</p>
+                  </Tooltip.Content>
+                </Tooltip.Root>
               {/each}
-            </DropdownMenu.RadioGroup>
-          </DropdownMenu.Content>
-        </DropdownMenu.Root>
+            </div>
+          </Tooltip.Provider>
+        {/if}
       </div>
     {/if}
 

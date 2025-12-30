@@ -29,7 +29,7 @@ import { api } from "../../convex/_generated/api";
 
 import appCss from "../styles.css?url";
 
-const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL!);
+const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
 
 try {
   await configure({

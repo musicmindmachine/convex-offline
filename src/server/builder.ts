@@ -2,11 +2,7 @@ import type { GenericMutationCtx, GenericQueryCtx, GenericDataModel } from "conv
 import { Replicate } from "$/server/storage";
 import type { CompactionConfig } from "$/shared/types";
 
-/**
- * Configuration for replicate handlers (without component - used with factory pattern).
- */
-export interface ReplicateConfig<T extends object> {
-  collection: string;
+export interface CollectionOptions<T extends object> {
   compaction?: Partial<CompactionConfig>;
   hooks?: {
     evalRead?: (ctx: GenericQueryCtx<GenericDataModel>, collection: string) => void | Promise<void>;
@@ -26,86 +22,73 @@ export interface ReplicateConfig<T extends object> {
   };
 }
 
-/**
- * Create a replicate function bound to your component. Call this once in your
- * convex/replicate.ts file, then use the returned function for all collections.
- *
- * @example
- * ```typescript
- * // convex/replicate.ts (create once)
- * import { replicate } from '@trestleinc/replicate/server';
- * import { components } from './_generated/api';
- *
- * export const tasks = replicate(components.replicate)<Task>({ collection: 'tasks' });
- *
- * // Or bind once and reuse:
- * const r = replicate(components.replicate);
- * export const tasks = r<Task>({ collection: 'tasks' });
- * export const notebooks = r<Notebook>({ collection: 'notebooks' });
- * ```
- */
-export function replicate(component: any) {
-  return function boundReplicate<T extends object>(config: ReplicateConfig<T>) {
-    return replicateInternal<T>(component, config);
-  };
+export function collection<T extends object>(
+  component: any,
+  name: string,
+  options?: CollectionOptions<T>,
+) {
+  return collectionInternal<T>(component, name, options);
 }
 
-/**
- * Internal implementation for replicate.
- */
-function replicateInternal<T extends object>(component: any, config: ReplicateConfig<T>) {
-  const storage = new Replicate<T>(component, config.collection, config.compaction);
+function collectionInternal<T extends object>(
+  component: any,
+  name: string,
+  options?: CollectionOptions<T>,
+) {
+  const storage = new Replicate<T>(component, name, options?.compaction);
+
+  const hooks = options?.hooks;
 
   return {
-    __collection: config.collection,
+    __collection: name,
 
     stream: storage.createStreamQuery({
-      evalRead: config.hooks?.evalRead,
-      onStream: config.hooks?.onStream,
+      evalRead: hooks?.evalRead,
+      onStream: hooks?.onStream,
     }),
 
     material: storage.createSSRQuery({
-      evalRead: config.hooks?.evalRead,
-      transform: config.hooks?.transform,
+      evalRead: hooks?.evalRead,
+      transform: hooks?.transform,
     }),
 
     recovery: storage.createRecoveryQuery({
-      evalRead: config.hooks?.evalRead,
+      evalRead: hooks?.evalRead,
     }),
 
     insert: storage.createInsertMutation({
-      evalWrite: config.hooks?.evalWrite,
-      onInsert: config.hooks?.onInsert,
+      evalWrite: hooks?.evalWrite,
+      onInsert: hooks?.onInsert,
     }),
 
     update: storage.createUpdateMutation({
-      evalWrite: config.hooks?.evalWrite,
-      onUpdate: config.hooks?.onUpdate,
+      evalWrite: hooks?.evalWrite,
+      onUpdate: hooks?.onUpdate,
     }),
 
     remove: storage.createRemoveMutation({
-      evalRemove: config.hooks?.evalRemove,
-      onRemove: config.hooks?.onRemove,
+      evalRemove: hooks?.evalRemove,
+      onRemove: hooks?.onRemove,
     }),
 
     mark: storage.createMarkMutation({
-      evalWrite: config.hooks?.evalMark,
+      evalWrite: hooks?.evalMark,
     }),
 
     compact: storage.createCompactMutation({
-      evalWrite: config.hooks?.evalCompact,
+      evalWrite: hooks?.evalCompact,
     }),
 
     sessions: storage.createSessionsQuery({
-      evalRead: config.hooks?.evalRead,
+      evalRead: hooks?.evalRead,
     }),
 
     cursors: storage.createCursorsQuery({
-      evalRead: config.hooks?.evalRead,
+      evalRead: hooks?.evalRead,
     }),
 
     leave: storage.createLeaveMutation({
-      evalWrite: config.hooks?.evalLeave,
+      evalWrite: hooks?.evalLeave,
     }),
   };
 }

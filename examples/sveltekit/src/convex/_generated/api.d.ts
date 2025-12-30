@@ -63,6 +63,17 @@ export declare const components: {
         },
         { removed: number; retained: number; success: boolean }
       >;
+      cursors: FunctionReference<
+        "query",
+        "internal",
+        { collection: string; document: string; exclude?: string },
+        Array<{
+          client: string;
+          cursor: { anchor: number; field?: string; head: number };
+          profile?: any;
+          user?: string;
+        }>
+      >;
       deleteDocument: FunctionReference<
         "mutation",
         "internal",
@@ -81,10 +92,25 @@ export declare const components: {
         { collection: string; crdtBytes: ArrayBuffer; documentId: string },
         { seq: number; success: boolean }
       >;
+      leave: FunctionReference<
+        "mutation",
+        "internal",
+        { client: string; collection: string; document: string },
+        null
+      >;
       mark: FunctionReference<
         "mutation",
         "internal",
-        { collection: string; peerId: string; syncedSeq: number },
+        {
+          client: string;
+          collection: string;
+          cursor?: { anchor: number; field?: string; head: number };
+          document: string;
+          interval?: number;
+          profile?: { avatar?: string; color?: string; name?: string };
+          seq?: number;
+          user?: string;
+        },
         null
       >;
       recovery: FunctionReference<
@@ -92,6 +118,18 @@ export declare const components: {
         "internal",
         { clientStateVector: ArrayBuffer; collection: string },
         { cursor: number; diff?: ArrayBuffer; serverStateVector: ArrayBuffer }
+      >;
+      sessions: FunctionReference<
+        "query",
+        "internal",
+        { collection: string; document: string; group?: boolean },
+        Array<{
+          client: string;
+          document: string;
+          profile?: any;
+          seen: number;
+          user?: string;
+        }>
       >;
       stream: FunctionReference<
         "query",

@@ -38,9 +38,10 @@ interface CursorTrackerConfig {
   field: string;
   user?: string;
   profile?: UserProfile;
+  heartbeatInterval?: number;
 }
 
-const CURSOR_DEBOUNCE_MS = 200;
+const DEFAULT_HEARTBEAT_INTERVAL = 10000;
 
 export class CursorTracker {
   private position: CursorPosition | null = null;
@@ -53,10 +54,11 @@ export class CursorTracker {
   private field: string;
   private user?: string;
   private profile?: UserProfile;
+  private heartbeatInterval: number;
   private unsubscribe?: () => void;
   private listeners = new Set<() => void>();
-  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  private pendingPosition: CursorPosition | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private startTimeout: ReturnType<typeof setTimeout> | null = null;
   private destroyed = false;
 
   constructor(config: CursorTrackerConfig) {
@@ -68,9 +70,14 @@ export class CursorTracker {
     this.field = config.field;
     this.user = config.user;
     this.profile = config.profile;
+    this.heartbeatInterval = config.heartbeatInterval ?? DEFAULT_HEARTBEAT_INTERVAL;
 
     this.subscribeToServer();
-    this.setupVisibilityHandlers();
+    this.startTimeout = setTimeout(() => {
+      if (!this.destroyed) {
+        this.startHeartbeat();
+      }
+    }, 0);
 
     logger.debug("CursorTracker created", {
       collection: this.collection,
@@ -86,8 +93,7 @@ export class CursorTracker {
 
   update(position: Omit<CursorPosition, "field">): void {
     this.position = { ...position, field: this.field };
-    this.pendingPosition = this.position;
-    this.debouncedSync();
+    this.sendHeartbeat();
   }
 
   others(): Map<string, ClientCursor> {
@@ -115,58 +121,51 @@ export class CursorTracker {
       document: this.document,
     });
 
+    if (this.startTimeout) {
+      clearTimeout(this.startTimeout);
+      this.startTimeout = null;
+    }
+    this.stopHeartbeat();
     this.unsubscribe?.();
     this.listeners.clear();
 
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = null;
-    }
-
-    document.removeEventListener("visibilitychange", this.handleVisibility);
-    window.removeEventListener("beforeunload", this.handleUnload);
-
-    this.convexClient.mutation(this.api.leave, {
-      document: this.document,
-      client: this.client,
-    }).catch((error) => {
-      logger.warn("Leave mutation failed", { error: String(error) });
-    });
-  }
-
-  private debouncedSync(): void {
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
-    }
-
-    this.debounceTimer = setTimeout(() => {
-      this.syncToServer();
-    }, CURSOR_DEBOUNCE_MS);
-  }
-
-  private async syncToServer(): Promise<void> {
-    if (!this.pendingPosition || this.destroyed) return;
-
-    const positionToSync = this.pendingPosition;
-    this.pendingPosition = null;
-
-    try {
-      await this.convexClient.mutation(this.api.mark, {
+    if (this.heartbeatTimer) {
+      this.convexClient.mutation(this.api.leave, {
         document: this.document,
         client: this.client,
-        cursor: positionToSync,
-        user: this.user,
-        profile: this.profile,
+      }).catch((error) => {
+        logger.warn("Leave mutation failed", { error: String(error) });
       });
+    }
+  }
 
-      logger.debug("Cursor synced", {
-        document: this.document,
-        cursor: positionToSync,
-      });
+  private startHeartbeat(): void {
+    this.sendHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      this.sendHeartbeat();
+    }, this.heartbeatInterval);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
     }
-    catch (error) {
-      logger.warn("Cursor sync failed", { error: String(error) });
-    }
+  }
+
+  private sendHeartbeat(): void {
+    if (this.destroyed) return;
+
+    this.convexClient.mutation(this.api.mark, {
+      document: this.document,
+      client: this.client,
+      cursor: this.position ?? undefined,
+      user: this.user,
+      profile: this.profile,
+      interval: this.heartbeatInterval,
+    }).catch((error) => {
+      logger.warn("Heartbeat failed", { error: String(error) });
+    });
   }
 
   private subscribeToServer(): void {
@@ -196,35 +195,4 @@ export class CursorTracker {
       }
     }
   }
-
-  private setupVisibilityHandlers(): void {
-    document.addEventListener("visibilitychange", this.handleVisibility);
-    window.addEventListener("beforeunload", this.handleUnload);
-  }
-
-  private handleVisibility = (): void => {
-    if (document.hidden) {
-      this.convexClient.mutation(this.api.leave, {
-        document: this.document,
-        client: this.client,
-      }).catch((error) => {
-        logger.warn("Leave on visibility change failed", { error: String(error) });
-      });
-    }
-  };
-
-  private handleUnload = (): void => {
-    const url = (this.convexClient as any).address;
-    if (url && navigator.sendBeacon) {
-      const leaveUrl = `${url}/api/mutation`;
-      const body = JSON.stringify({
-        path: "leave",
-        args: {
-          document: this.document,
-          client: this.client,
-        },
-      });
-      navigator.sendBeacon(leaveUrl, body);
-    }
-  };
 }

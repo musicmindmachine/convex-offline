@@ -1,6 +1,7 @@
 import * as Y from "yjs";
 import { v } from "convex/values";
 import { mutation, query } from "$/component/_generated/server";
+import { api } from "$/component/_generated/api";
 import { getLogger } from "$/component/logger";
 import { OperationType } from "$/shared/types";
 
@@ -90,6 +91,8 @@ export const deleteDocument = mutation({
   },
 });
 
+const DEFAULT_HEARTBEAT_INTERVAL = 10000;
+
 export const mark = mutation({
   args: {
     collection: v.string(),
@@ -107,10 +110,13 @@ export const mark = mutation({
       head: v.number(),
       field: v.optional(v.string()),
     })),
+    interval: v.optional(v.number()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
     const now = Date.now();
+    const interval = args.interval ?? DEFAULT_HEARTBEAT_INTERVAL;
+
     const existing = await ctx.db
       .query("sessions")
       .withIndex("client", (q: any) =>
@@ -120,7 +126,21 @@ export const mark = mutation({
       )
       .first();
 
-    const updates: Record<string, unknown> = { seen: now };
+    if (existing?.timeoutId) {
+      await ctx.scheduler.cancel(existing.timeoutId);
+    }
+
+    const timeoutId = await ctx.scheduler.runAfter(
+      interval * 2.5,
+      api.public.leave,
+      {
+        collection: args.collection,
+        document: args.document,
+        client: args.client,
+      },
+    );
+
+    const updates: Record<string, unknown> = { seen: now, timeoutId };
 
     if (args.seq !== undefined) {
       updates.seq = existing ? Math.max(existing.seq, args.seq) : args.seq;
@@ -146,6 +166,7 @@ export const mark = mutation({
         profile: args.profile,
         cursor: args.cursor,
         active: args.cursor ? now : undefined,
+        timeoutId,
       });
     }
 
@@ -585,9 +606,14 @@ export const leave = mutation({
       .first();
 
     if (existing) {
+      // Cancel existing scheduled timeout if present
+      if (existing.timeoutId) {
+        await ctx.scheduler.cancel(existing.timeoutId);
+      }
       await ctx.db.patch(existing._id, {
         cursor: undefined,
         active: undefined,
+        timeoutId: undefined,
       });
     }
 

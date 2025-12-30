@@ -1,6 +1,7 @@
 import * as Y from "yjs";
 import { getLogger } from "$/client/logger";
 import type { PersistenceProvider } from "$/client/persistence/types";
+import { fragmentToJSON } from "$/client/merge";
 
 const logger = getLogger(["replicate", "subdocs"]);
 
@@ -245,7 +246,9 @@ export function serializeSubdocFields(fieldsMap: Y.Map<unknown>): Record<string,
 
   fieldsMap.forEach((value, key) => {
     if (value instanceof Y.XmlFragment) {
-      result[key] = value.toJSON();
+      // Use fragmentToJSON for proper { type: "doc", content: [...] } format
+      // Native toJSON() returns "" for empty fragments which breaks schema validation
+      result[key] = fragmentToJSON(value);
     }
     else if (value instanceof Y.Map) {
       result[key] = value.toJSON();

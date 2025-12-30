@@ -39,6 +39,7 @@ export default defineSchema({
       field: v.optional(v.string()),
     })),
     active: v.optional(v.number()),
+    timeoutId: v.optional(v.id("_scheduled_functions")),
   })
     .index("collection", ["collection"])
     .index("document", ["collection", "document"])

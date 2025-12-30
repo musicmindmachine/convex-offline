@@ -1,5 +1,5 @@
-export { replicate } from "$/server/builder";
-export type { ReplicateConfig } from "$/server/builder";
+export { collection } from "$/server/builder";
+export type { CollectionOptions } from "$/server/builder";
 
 import { table, prose } from "$/server/schema";
 
