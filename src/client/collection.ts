@@ -17,15 +17,15 @@ import { ProseError, NonRetriableError } from "$/client/errors";
 import { CursorService, createCursorLayer, type Cursor } from "$/client/services/cursor";
 import { createReplicateOps, type BoundReplicateOps } from "$/client/replicate";
 import {
-  transactWithDelta,
-  applyUpdate,
-  extractItems,
-  extractItem,
   isDoc,
   fragmentFromJSON,
-  serializeYMapValue,
-  getFragmentFromYMap,
 } from "$/client/merge";
+import {
+  createSubdocManager,
+  extractDocumentFromSubdoc,
+  extractAllDocuments,
+  type SubdocManager,
+} from "$/client/subdocs";
 import * as prose from "$/client/prose";
 import { extractProseFields } from "$/client/prose-schema";
 import { z } from "zod";
@@ -161,8 +161,8 @@ interface ConvexCollectionUtils<T extends object> {
   prose(documentId: string, field: ProseFields<T>): Promise<EditorBinding>;
 }
 
-// Module-level storage for Y.Doc and Y.Map instances
-const collectionDocs = new Map<string, { ydoc: Y.Doc; ymap: Y.Map<unknown> }>();
+// Module-level storage for SubdocManagers per collection
+const collectionSubdocManagers = new Map<string, SubdocManager>();
 
 // Module-level storage for undo configuration per collection
 const collectionUndoConfig = new Map<
@@ -281,12 +281,10 @@ export function convexCollectionOptions(
   // Create a Set for O(1) lookup of prose fields
   const proseFieldSet = new Set<string>(proseFields);
 
-  // Create utils object - prose() waits for Y.Doc to be ready via collectionDocs
   const utils: ConvexCollectionUtils<DataType> = {
     async prose(documentId: string, field: ProseFields<DataType>): Promise<EditorBinding> {
       const fieldStr = field;
 
-      // Validate field is in prose config
       if (!proseFieldSet.has(fieldStr)) {
         throw new ProseError({
           documentId,
@@ -295,16 +293,14 @@ export function convexCollectionOptions(
         });
       }
 
-      // Wait for collection to be ready (Y.Doc initialized from persistence)
-      let docs = collectionDocs.get(collection);
+      let subdocManager = collectionSubdocManagers.get(collection);
 
-      if (!docs) {
-        // Poll until ready - Y.Doc initialization is async
+      if (!subdocManager) {
         await new Promise<void>((resolve, reject) => {
-          const maxWait = 10000; // 10 second timeout
+          const maxWait = 10000;
           const startTime = Date.now();
           const check = setInterval(() => {
-            if (collectionDocs.has(collection)) {
+            if (collectionSubdocManagers.has(collection)) {
               clearInterval(check);
               resolve();
             }
@@ -320,10 +316,10 @@ export function convexCollectionOptions(
             }
           }, 10);
         });
-        docs = collectionDocs.get(collection);
+        subdocManager = collectionSubdocManagers.get(collection);
       }
 
-      if (!docs) {
+      if (!subdocManager) {
         throw new ProseError({
           documentId,
           field: fieldStr,
@@ -331,7 +327,7 @@ export function convexCollectionOptions(
         });
       }
 
-      const fragment = getFragmentFromYMap(docs.ymap, documentId, fieldStr);
+      const fragment = subdocManager.getFragment(documentId, fieldStr);
       if (!fragment) {
         throw new ProseError({
           documentId,
@@ -340,16 +336,16 @@ export function convexCollectionOptions(
         });
       }
 
-      // Setup fragment observer via prose module (handles debounced sync)
+      const subdoc = subdocManager.get(documentId);
       const collectionRef = collectionRefs.get(collection);
-      if (collectionRef) {
+      if (collectionRef && subdoc) {
         prose.observeFragment({
           collection,
           documentId,
           field: fieldStr,
           fragment,
-          ydoc: docs.ydoc,
-          ymap: docs.ymap,
+          ydoc: subdoc,
+          ymap: subdocManager.getFields(documentId)!,
           collectionRef,
           debounceMs: debounceConfig.get(collection) ?? DEFAULT_DEBOUNCE_MS,
         });
@@ -362,7 +358,6 @@ export function convexCollectionOptions(
         fragment,
       );
 
-      // Return EditorBinding with reactive pending state from prose module
       return {
         fragment,
         provider: { awareness: null },
@@ -394,14 +389,10 @@ export function convexCollectionOptions(
     },
   };
 
-  // Create ydoc/ymap synchronously for immediate local-first operations
-  // Persistence sync will load state into this doc later
-  const ydoc: Y.Doc = new Y.Doc({ guid: collection } as any);
-  const ymap: Y.Map<unknown> = ydoc.getMap(collection);
+  const subdocManager = createSubdocManager(collection);
   let docPersistence: PersistenceProvider = null as any;
 
-  // Register ydoc immediately so utils.prose() can access it
-  collectionDocs.set(collection, { ydoc, ymap });
+  collectionSubdocManagers.set(collection, subdocManager);
 
   // Bound replicate operations - set during sync initialization
   // Used by onDelete and other handlers that need to sync with TanStack DB
@@ -427,7 +418,7 @@ export function convexCollectionOptions(
     }
 
     try {
-      const localStateVector = Y.encodeStateVector(ydoc);
+      const localStateVector = Y.encodeStateVector(subdocManager.rootDoc);
       logger.debug("Starting recovery", {
         collection,
         localVectorSize: localStateVector.byteLength,
@@ -436,14 +427,6 @@ export function convexCollectionOptions(
       const response = await convexClient.query(api.recovery, {
         clientStateVector: localStateVector.buffer as ArrayBuffer,
       });
-
-      if (response.diff) {
-        const mux = getOrCreateMutex(collection);
-        mux(() => {
-          applyUpdate(ydoc, new Uint8Array(response.diff), YjsOrigin.Server);
-        });
-        logger.info("Recovery applied diff", { collection, diffSize: response.diff.byteLength });
-      }
 
       if (response.serverStateVector) {
         serverStateVectors.set(collection, new Uint8Array(response.serverStateVector));
@@ -460,92 +443,88 @@ export function convexCollectionOptions(
     }
   };
 
-  const applyYjsInsert = (mutations: CollectionMutation<DataType>[]): Uint8Array => {
-    const { delta } = transactWithDelta(
-      ydoc,
-      () => {
-        mutations.forEach((mut) => {
-          const itemYMap = new Y.Map();
-          // First, set the itemYMap in ymap so fragments are bound to the document
-          ymap.set(String(mut.key), itemYMap);
+  const applyYjsInsert = (mutations: CollectionMutation<DataType>[]): Uint8Array[] => {
+    const deltas: Uint8Array[] = [];
+
+    for (const mut of mutations) {
+      const documentId = String(mut.key);
+      const delta = subdocManager.transactWithDelta(
+        documentId,
+        (fieldsMap) => {
           Object.entries(mut.modified as Record<string, unknown>).forEach(([k, v]) => {
-            // Check if this is a prose field (auto-detect from config)
             if (proseFieldSet.has(k) && isDoc(v)) {
               const fragment = new Y.XmlFragment();
-              // Add fragment to map FIRST (binds it to the Y.Doc)
-              itemYMap.set(k, fragment);
-              // THEN populate content (now it's part of the document)
+              fieldsMap.set(k, fragment);
               fragmentFromJSON(fragment, v);
             }
             else {
-              itemYMap.set(k, v);
+              fieldsMap.set(k, v);
             }
           });
-        });
-      },
-      YjsOrigin.Local,
-    );
-    return delta;
+        },
+        YjsOrigin.Local,
+      );
+      deltas.push(delta);
+    }
+
+    return deltas;
   };
 
-  const applyYjsUpdate = (mutations: CollectionMutation<DataType>[]): Uint8Array => {
-    const { delta } = transactWithDelta(
-      ydoc,
-      () => {
-        mutations.forEach((mut) => {
-          const itemYMap = ymap.get(String(mut.key)) as Y.Map<unknown> | undefined;
-          if (itemYMap) {
-            const modifiedFields = mut.modified as Record<string, unknown>;
-            if (!modifiedFields) {
-              logger.warn("mut.modified is null/undefined", { collection, key: String(mut.key) });
+  const applyYjsUpdate = (mutations: CollectionMutation<DataType>[]): Uint8Array[] => {
+    const deltas: Uint8Array[] = [];
+
+    for (const mut of mutations) {
+      const documentId = String(mut.key);
+      const fieldsMap = subdocManager.getFields(documentId);
+
+      if (!fieldsMap) {
+        logger.error("Update attempted on non-existent document", { collection, documentId });
+        continue;
+      }
+
+      const modifiedFields = mut.modified as Record<string, unknown>;
+      if (!modifiedFields) {
+        logger.warn("mut.modified is null/undefined", { collection, documentId });
+        continue;
+      }
+
+      const delta = subdocManager.transactWithDelta(
+        documentId,
+        (fields) => {
+          Object.entries(modifiedFields).forEach(([k, v]) => {
+            if (proseFieldSet.has(k)) {
+              logger.debug("Skipping prose field in applyYjsUpdate", { field: k });
               return;
             }
-            Object.entries(modifiedFields).forEach(([k, v]) => {
-              const existingValue = itemYMap.get(k);
 
-              // ALWAYS skip prose fields - they are managed by Y.XmlFragment directly
-              // User edits go: BlockNote → Y.XmlFragment → observer → debounce → server
-              // Server sync goes: subscription → applyUpdate(ydoc) → CRDT merge
-              // Writing serialized JSON back would corrupt the CRDT state
-              if (proseFieldSet.has(k)) {
-                logger.debug("Skipping prose field in applyYjsUpdate", { field: k });
-                return;
-              }
+            const existingValue = fields.get(k);
+            if (existingValue instanceof Y.XmlFragment) {
+              logger.debug("Preserving live fragment field", { field: k });
+              return;
+            }
 
-              // Also skip if existing value is a Y.XmlFragment (defensive check)
-              if (existingValue instanceof Y.XmlFragment) {
-                logger.debug("Preserving live fragment field", { field: k });
-                return;
-              }
+            fields.set(k, v);
+          });
+        },
+        YjsOrigin.Local,
+      );
+      deltas.push(delta);
+    }
 
-              // Regular field update
-              itemYMap.set(k, v);
-            });
-          }
-          else {
-            logger.error("Update attempted on non-existent item", {
-              collection,
-              key: String(mut.key),
-            });
-          }
-        });
-      },
-      YjsOrigin.Local,
-    );
-    return delta;
+    return deltas;
   };
 
-  const applyYjsDelete = (mutations: CollectionMutation<DataType>[]): Uint8Array => {
-    const { delta } = transactWithDelta(
-      ydoc,
-      () => {
-        mutations.forEach((mut) => {
-          ymap.delete(String(mut.key));
-        });
-      },
-      YjsOrigin.Local,
-    );
-    return delta;
+  const applyYjsDelete = (mutations: CollectionMutation<DataType>[]): Uint8Array[] => {
+    const deltas: Uint8Array[] = [];
+
+    for (const mut of mutations) {
+      const documentId = String(mut.key);
+      const delta = subdocManager.encodeState(documentId);
+      subdocManager.delete(documentId);
+      deltas.push(delta);
+    }
+
+    return deltas;
   };
 
   return {
@@ -555,18 +534,22 @@ export function convexCollectionOptions(
     utils,
 
     onInsert: async ({ transaction }: CollectionTransaction<DataType>) => {
-      const delta = applyYjsInsert(transaction.mutations);
+      const deltas = applyYjsInsert(transaction.mutations);
 
       try {
         await Promise.all([persistenceReadyPromise, optimisticReadyPromise]);
-        if (delta.length > 0) {
-          const documentKey = String(transaction.mutations[0].key);
-          const itemYMap = ymap.get(documentKey) as Y.Map<unknown>;
-          const materializedDoc = itemYMap
-            ? serializeYMapValue(itemYMap)
-            : transaction.mutations[0].modified;
+
+        for (let i = 0; i < transaction.mutations.length; i++) {
+          const mut = transaction.mutations[i];
+          const delta = deltas[i];
+          if (!delta || delta.length === 0) continue;
+
+          const documentId = String(mut.key);
+          const materializedDoc = extractDocumentFromSubdoc(subdocManager, documentId)
+            ?? mut.modified;
+
           await convexClient.mutation(api.insert, {
-            documentId: documentKey,
+            documentId,
             crdtBytes: delta.slice().buffer,
             materializedDoc,
           });
@@ -589,9 +572,7 @@ export function convexCollectionOptions(
       const metadata = mutation.metadata as { contentSync?: ContentSyncMetadata } | undefined;
       const isContentSync = !!metadata?.contentSync;
 
-      // Apply regular updates to Yjs immediately (local-first)
-      // ContentSync updates already have Yjs changes applied via fragment observer
-      const delta = isContentSync ? null : applyYjsUpdate(transaction.mutations);
+      const deltas = isContentSync ? null : applyYjsUpdate(transaction.mutations);
 
       try {
         await Promise.all([persistenceReadyPromise, optimisticReadyPromise]);
@@ -606,14 +587,21 @@ export function convexCollectionOptions(
           return;
         }
 
-        if (delta && delta.length > 0) {
-          const itemYMap = ymap.get(documentKey) as Y.Map<unknown>;
-          const fullDoc = itemYMap ? serializeYMapValue(itemYMap) : mutation.modified;
-          await convexClient.mutation(api.update, {
-            documentId: documentKey,
-            crdtBytes: delta.slice().buffer,
-            materializedDoc: fullDoc,
-          });
+        if (deltas) {
+          for (let i = 0; i < transaction.mutations.length; i++) {
+            const mut = transaction.mutations[i];
+            const delta = deltas[i];
+            if (!delta || delta.length === 0) continue;
+
+            const docId = String(mut.key);
+            const fullDoc = extractDocumentFromSubdoc(subdocManager, docId) ?? mut.modified;
+
+            await convexClient.mutation(api.update, {
+              documentId: docId,
+              crdtBytes: delta.slice().buffer,
+              materializedDoc: fullDoc,
+            });
+          }
         }
       }
       catch (error) {
@@ -622,7 +610,7 @@ export function convexCollectionOptions(
     },
 
     onDelete: async ({ transaction }: CollectionTransaction<DataType>) => {
-      const delta = applyYjsDelete(transaction.mutations);
+      const deltas = applyYjsDelete(transaction.mutations);
 
       try {
         await Promise.all([persistenceReadyPromise, optimisticReadyPromise]);
@@ -630,10 +618,14 @@ export function convexCollectionOptions(
           .map(mut => mut.original)
           .filter((item): item is DataType => item !== undefined && Object.keys(item).length > 0);
         ops.delete(itemsToDelete);
-        if (delta.length > 0) {
-          const documentKey = String(transaction.mutations[0].key);
+
+        for (let i = 0; i < transaction.mutations.length; i++) {
+          const mut = transaction.mutations[i];
+          const delta = deltas[i];
+          if (!delta || delta.length === 0) continue;
+
           await convexClient.mutation(api.remove, {
-            documentId: documentKey,
+            documentId: String(mut.key),
             crdtBytes: delta.slice().buffer,
           });
         }
@@ -665,38 +657,39 @@ export function convexCollectionOptions(
 
         (async () => {
           try {
-            // ydoc/ymap already created synchronously - just set up undo config
             const trackedOrigins = new Set([YjsOrigin.Local]);
             collectionUndoConfig.set(collection, {
               captureTimeout: undoCaptureTimeout,
               trackedOrigins,
             });
 
-            // Load persisted state into existing ydoc
-            docPersistence = persistence.createDocPersistence(collection, ydoc);
+            docPersistence = persistence.createDocPersistence(collection, subdocManager.rootDoc);
+
+            subdocManager.enablePersistence((documentId, subdoc) => {
+              return persistence.createDocPersistence(`${collection}:${documentId}`, subdoc);
+            });
+
             docPersistence.whenSynced.then(() => {
               logger.debug("Persistence synced", { collection });
               resolvePersistenceReady?.();
             });
             await persistenceReadyPromise;
-            logger.info("Persistence ready", { collection, ymapSize: ymap.size });
+            const docCount = subdocManager.documentIds().length;
+            logger.info("Persistence ready", { collection, subdocCount: docCount });
 
-            // Create bound replicate operations for this collection
-            // These are tied to this collection's TanStack DB params
             ops = createReplicateOps<DataType>(params);
             resolveOptimisticReady?.();
 
-            // Note: Fragment sync is handled by utils.prose() debounce handler
-            // calling collection.update() with contentSync metadata
-
             if (ssrCRDTBytes) {
-              applyUpdate(ydoc, new Uint8Array(ssrCRDTBytes), YjsOrigin.Server);
+              const update = new Uint8Array(ssrCRDTBytes);
+              Y.applyUpdateV2(subdocManager.rootDoc, update, YjsOrigin.Server);
             }
 
             const recoveryCursor = await recover();
 
-            if (ymap.size > 0) {
-              const items = extractItems<DataType>(ymap);
+            const docIds = subdocManager.documentIds();
+            if (docIds.length > 0) {
+              const items = extractAllDocuments(subdocManager) as DataType[];
               ops.replace(items);
               logger.info("Data loaded to TanStack DB", {
                 collection,
@@ -709,7 +702,7 @@ export function convexCollectionOptions(
             }
 
             markReady();
-            logger.info("Collection ready", { collection, ymapSize: ymap.size });
+            logger.info("Collection ready", { collection, subdocCount: docIds.length });
 
             const peerId = await Effect.runPromise(
               Effect.gen(function* () {
@@ -729,35 +722,40 @@ export function convexCollectionOptions(
             // Get mutex for thread-safe updates
             const mux = getOrCreateMutex(collection);
 
-            const handleSnapshotChange = (crdtBytes: ArrayBuffer) => {
-              // Cancel all pending syncs - snapshot replaces everything
+            const handleSnapshotChange = (crdtBytes: ArrayBuffer, documentId: string) => {
               prose.cancelAllPending(collection);
 
               mux(() => {
                 try {
                   logger.debug("Applying snapshot", {
                     collection,
+                    documentId,
                     bytesLength: crdtBytes.byteLength,
                   });
-                  applyUpdate(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Server);
-                  const items = extractItems<DataType>(ymap);
-                  logger.debug("Snapshot applied", { collection, itemCount: items.length });
-                  ops.replace(items);
+                  const update = new Uint8Array(crdtBytes);
+                  subdocManager.applyUpdate(documentId, update, YjsOrigin.Server);
+                  const item = extractDocumentFromSubdoc(subdocManager, documentId);
+                  if (item) {
+                    ops.upsert([item as DataType]);
+                  }
+                  logger.debug("Snapshot applied", { collection, documentId });
                 }
                 catch (error) {
-                  logger.error("Error applying snapshot", { collection, error: String(error) });
+                  const msg = String(error);
+                  logger.error("Error applying snapshot", { collection, documentId, error: msg });
                   throw new Error(`Snapshot application failed: ${error}`);
                 }
               });
             };
 
             const handleDeltaChange = (crdtBytes: ArrayBuffer, documentId: string | undefined) => {
-              // Cancel any pending sync for this document to avoid conflicts
-              if (documentId) {
-                prose.cancelPending(collection, documentId);
-                // Mark that we're applying server data to prevent echo loops (DOCUMENT-level)
-                prose.setApplyingFromServer(collection, documentId, true);
+              if (!documentId) {
+                logger.debug("Delta skipped (no documentId)", { collection });
+                return;
               }
+
+              prose.cancelPending(collection, documentId);
+              prose.setApplyingFromServer(collection, documentId, true);
 
               mux(() => {
                 try {
@@ -767,22 +765,18 @@ export function convexCollectionOptions(
                     bytesLength: crdtBytes.byteLength,
                   });
 
-                  const itemBefore = documentId ? extractItem<DataType>(ymap, documentId) : null;
-                  applyUpdate(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Server);
+                  const itemBefore = extractDocumentFromSubdoc(subdocManager, documentId);
+                  const update = new Uint8Array(crdtBytes);
+                  subdocManager.applyUpdate(documentId, update, YjsOrigin.Server);
 
-                  if (!documentId) {
-                    logger.debug("Delta applied (no documentId)", { collection });
-                    return;
-                  }
-
-                  const itemAfter = extractItem<DataType>(ymap, documentId);
+                  const itemAfter = extractDocumentFromSubdoc(subdocManager, documentId);
                   if (itemAfter) {
                     logger.debug("Upserting item after delta", { collection, documentId });
-                    ops.upsert([itemAfter]);
+                    ops.upsert([itemAfter as DataType]);
                   }
                   else if (itemBefore) {
                     logger.debug("Deleting item after delta", { collection, documentId });
-                    ops.delete([itemBefore]);
+                    ops.delete([itemBefore as DataType]);
                   }
                   else {
                     logger.debug("No change detected after delta", { collection, documentId });
@@ -797,10 +791,7 @@ export function convexCollectionOptions(
                   throw new Error(`Delta application failed for ${documentId}: ${error}`);
                 }
                 finally {
-                  // Clear document-level flag after delta processing
-                  if (documentId) {
-                    prose.setApplyingFromServer(collection, documentId, false);
-                  }
+                  prose.setApplyingFromServer(collection, documentId, false);
                 }
               });
             };
@@ -813,17 +804,20 @@ export function convexCollectionOptions(
                 }
 
                 const { changes, cursor: newCursor, compact: compactHint } = response;
+                const syncedDocuments = new Set<string>();
 
                 for (const change of changes) {
                   const { operationType, crdtBytes, documentId } = change;
-                  if (!crdtBytes) {
-                    logger.warn("Skipping change with missing crdtBytes", { change });
+                  if (!crdtBytes || !documentId) {
+                    logger.warn("Skipping change with missing crdtBytes or documentId", { change });
                     continue;
                   }
 
+                  syncedDocuments.add(documentId);
+
                   try {
                     if (operationType === "snapshot") {
-                      handleSnapshotChange(crdtBytes);
+                      handleSnapshotChange(crdtBytes, documentId);
                     }
                     else {
                       handleDeltaChange(crdtBytes, documentId);
@@ -844,11 +838,19 @@ export function convexCollectionOptions(
                     await persistence.kv.set(key, newCursor);
                     logger.debug("Cursor saved", { collection, cursor: newCursor });
 
-                    await convexClient.mutation(api.mark, {
-                      peerId,
-                      syncedSeq: newCursor,
+                    for (const documentId of syncedDocuments) {
+                      await convexClient.mutation(api.mark, {
+                        document: documentId,
+                        client: peerId,
+                        seq: newCursor,
+                      });
+                    }
+                    logger.debug("Ack sent", {
+                      collection,
+                      client: peerId,
+                      seq: newCursor,
+                      documents: syncedDocuments.size,
                     });
-                    logger.debug("Ack sent", { collection, peerId, syncedSeq: newCursor });
                   }
                   catch (ackError) {
                     logger.error("Failed to save cursor or ack", {
@@ -860,14 +862,17 @@ export function convexCollectionOptions(
 
                 if (compactHint) {
                   try {
-                    const snapshot = Y.encodeStateAsUpdate(ydoc);
-                    const stateVector = Y.encodeStateVector(ydoc);
-                    await convexClient.mutation(api.compact, {
-                      documentId: compactHint,
-                      snapshotBytes: snapshot.buffer,
-                      stateVector: stateVector.buffer,
-                    });
-                    logger.info("Compaction triggered", { collection, documentId: compactHint });
+                    const subdoc = subdocManager.get(compactHint);
+                    if (subdoc) {
+                      const snapshot = Y.encodeStateAsUpdate(subdoc);
+                      const stateVector = Y.encodeStateVector(subdoc);
+                      await convexClient.mutation(api.compact, {
+                        documentId: compactHint,
+                        snapshotBytes: snapshot.buffer,
+                        stateVector: stateVector.buffer,
+                      });
+                      logger.info("Compaction triggered", { collection, documentId: compactHint });
+                    }
                   }
                   catch (compactError) {
                     logger.error("Compaction failed", {
@@ -943,9 +948,9 @@ export function convexCollectionOptions(
             collectionRefs.delete(collection);
 
             collectionUndoConfig.delete(collection);
-            collectionDocs.delete(collection);
+            collectionSubdocManagers.delete(collection);
             docPersistence?.destroy();
-            ydoc?.destroy();
+            subdocManager?.destroy();
             cleanupFunctions.delete(collection);
           },
         };

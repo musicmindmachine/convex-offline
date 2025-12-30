@@ -220,19 +220,10 @@ export function observeFragment(config: ProseObserverConfig): () => void {
     // Mark as pending
     setPendingInternal(key, true);
 
-    // Schedule sync
     const timer = setTimeout(async () => {
       debounceTimers.delete(key);
 
-      const itemYMap = ymap.get(documentId) as Y.Map<unknown> | undefined;
-      if (!itemYMap) {
-        logger.error("Document not found", { collection, documentId });
-        setPendingInternal(key, false);
-        return;
-      }
-
       try {
-        // Compute delta since last sync
         const lastVector = lastSyncedVectors.get(key);
         const delta = lastVector
           ? Y.encodeStateAsUpdateV2(ydoc, lastVector)
@@ -253,9 +244,8 @@ export function observeFragment(config: ProseObserverConfig): () => void {
           deltaSize: delta.byteLength,
         });
 
-        const materializedDoc = serializeYMapValue(itemYMap);
+        const materializedDoc = serializeYMapValue(ymap);
 
-        // Send via collection.update with contentSync metadata
         const result = collectionRef.update(
           documentId,
           { metadata: { contentSync: { crdtBytes, materializedDoc } } },
@@ -265,7 +255,6 @@ export function observeFragment(config: ProseObserverConfig): () => void {
         );
         await result.isPersisted.promise;
 
-        // Update last synced vector
         lastSyncedVectors.set(key, currentVector);
         failedSyncQueue.delete(key);
         setPendingInternal(key, false);
@@ -278,7 +267,6 @@ export function observeFragment(config: ProseObserverConfig): () => void {
           error: String(err),
         });
         failedSyncQueue.set(key, true);
-        // Keep pending=true for retry indication
       }
     }, debounceMs);
 

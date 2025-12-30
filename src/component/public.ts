@@ -93,30 +93,35 @@ export const deleteDocument = mutation({
 export const mark = mutation({
   args: {
     collection: v.string(),
-    peerId: v.string(),
-    syncedSeq: v.number(),
+    document: v.string(),
+    client: v.string(),
+    seq: v.number(),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const now = Date.now();
     const existing = await ctx.db
-      .query("peers")
-      .withIndex("by_collection_peer", (q: any) =>
-        q.eq("collection", args.collection).eq("peerId", args.peerId),
+      .query("sessions")
+      .withIndex("client", (q: any) =>
+        q.eq("collection", args.collection)
+          .eq("document", args.document)
+          .eq("client", args.client),
       )
       .first();
 
     if (existing) {
       await ctx.db.patch(existing._id, {
-        lastSyncedSeq: Math.max(existing.lastSyncedSeq, args.syncedSeq),
-        lastSeenAt: Date.now(),
+        seq: Math.max(existing.seq, args.seq),
+        seen: now,
       });
     }
     else {
-      await ctx.db.insert("peers", {
+      await ctx.db.insert("sessions", {
         collection: args.collection,
-        peerId: args.peerId,
-        lastSyncedSeq: args.syncedSeq,
-        lastSeenAt: Date.now(),
+        document: args.document,
+        client: args.client,
+        seq: args.seq,
+        seen: now,
       });
     }
 
@@ -150,14 +155,17 @@ export const compact = mutation({
       )
       .collect();
 
-    const activePeers = await ctx.db
-      .query("peers")
-      .withIndex("by_collection", (q: any) => q.eq("collection", args.collection))
-      .filter((q: any) => q.gt(q.field("lastSeenAt"), peerCutoff))
+    const activeClients = await ctx.db
+      .query("sessions")
+      .withIndex("document", (q: any) =>
+        q.eq("collection", args.collection)
+          .eq("document", args.documentId),
+      )
+      .filter((q: any) => q.gt(q.field("seen"), peerCutoff))
       .collect();
 
-    const minSyncedSeq = activePeers.length > 0
-      ? Math.min(...activePeers.map((p: any) => p.lastSyncedSeq))
+    const minSyncedSeq = activeClients.length > 0
+      ? Math.min(...activeClients.map((p: any) => p.seq))
       : Infinity;
 
     const existingSnapshot = await ctx.db
@@ -197,7 +205,7 @@ export const compact = mutation({
       documentId: args.documentId,
       removed,
       retained: deltas.length - removed,
-      activePeers: activePeers.length,
+      activeClients: activeClients.length,
       minSyncedSeq,
     });
 

@@ -21,12 +21,14 @@ export default defineSchema({
     createdAt: v.number(),
   }).index("by_document", ["collection", "documentId"]),
 
-  peers: defineTable({
+  sessions: defineTable({
     collection: v.string(),
-    peerId: v.string(),
-    lastSyncedSeq: v.number(),
-    lastSeenAt: v.number(),
+    document: v.string(),
+    client: v.string(),
+    seq: v.number(),
+    seen: v.number(),
   })
-    .index("by_collection", ["collection"])
-    .index("by_collection_peer", ["collection", "peerId"]),
+    .index("collection", ["collection"])
+    .index("document", ["collection", "document"])
+    .index("client", ["collection", "document", "client"]),
 });

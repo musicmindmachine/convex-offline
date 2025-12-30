@@ -12,7 +12,7 @@ export interface ReplicateConfig<T extends object> {
     evalRead?: (ctx: GenericQueryCtx<GenericDataModel>, collection: string) => void | Promise<void>;
     evalWrite?: (ctx: GenericMutationCtx<GenericDataModel>, doc: T) => void | Promise<void>;
     evalRemove?: (ctx: GenericMutationCtx<GenericDataModel>, docId: string) => void | Promise<void>;
-    evalMark?: (ctx: GenericMutationCtx<GenericDataModel>, peerId: string) => void | Promise<void>;
+    evalMark?: (ctx: GenericMutationCtx<GenericDataModel>, client: string) => void | Promise<void>;
     evalCompact?: (
       ctx: GenericMutationCtx<GenericDataModel>,
       documentId: string,

@@ -273,26 +273,28 @@ export class Replicate<T extends object> {
   }
 
   createMarkMutation(opts?: {
-    evalWrite?: (ctx: GenericMutationCtx<GenericDataModel>, peerId: string) => void | Promise<void>;
+    evalWrite?: (ctx: GenericMutationCtx<GenericDataModel>, client: string) => void | Promise<void>;
   }) {
     const component = this.component;
     const collection = this.collectionName;
 
     return mutationGeneric({
       args: {
-        peerId: v.string(),
-        syncedSeq: v.number(),
+        document: v.string(),
+        client: v.string(),
+        seq: v.number(),
       },
       returns: v.null(),
       handler: async (ctx, args) => {
         if (opts?.evalWrite) {
-          await opts.evalWrite(ctx, args.peerId);
+          await opts.evalWrite(ctx, args.client);
         }
 
         await ctx.runMutation(component.public.mark, {
           collection,
-          peerId: args.peerId,
-          syncedSeq: args.syncedSeq,
+          document: args.document,
+          client: args.client,
+          seq: args.seq,
         });
 
         return null;
