@@ -29,7 +29,7 @@ interface IntervalEditorProps {
   intervalId: string;
   collection: {
     utils: {
-      prose(documentId: string, field: "description"): Promise<EditorBinding>;
+      prose(document: string, field: "description"): Promise<EditorBinding>;
     };
     update(id: string, updater: (draft: Interval) => void): void;
   };

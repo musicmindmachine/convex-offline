@@ -12,7 +12,7 @@ interface CommentEditorProps {
   commentId: string;
   collection: {
     utils: {
-      prose(documentId: string, field: "body"): Promise<EditorBinding>;
+      prose(document: string, field: "body"): Promise<EditorBinding>;
     };
   };
 }

@@ -26,7 +26,7 @@ export class ReconciliationError extends Data.TaggedError("ReconciliationError")
 }> {}
 
 export class ProseError extends Data.TaggedError("ProseError")<{
-  readonly documentId: string;
+  readonly document: string;
   readonly field: string;
   readonly collection: string;
 }> {}

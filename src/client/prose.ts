@@ -3,12 +3,16 @@
  *
  * Manages Y.XmlFragment observation, debounced sync, and pending state.
  * Uses document-level tracking to prevent race conditions.
+ *
+ * Also includes the Zod schema helpers for prose fields.
  */
 
 import * as Y from "yjs";
+import { z } from "zod";
 import type { Collection } from "@tanstack/db";
 import { getLogger } from "$/client/logger";
 import { serializeYMapValue } from "$/client/merge";
+import type { ProseValue } from "$/shared/types";
 
 /** Server origin - changes from server should not trigger local sync */
 const SERVER_ORIGIN = "server";
@@ -19,7 +23,7 @@ const logger = getLogger(["replicate", "prose"]);
 const DEFAULT_DEBOUNCE_MS = 1000;
 
 // ============================================================================
-// Document-Level State (keyed by "collection:documentId")
+// Document-Level State (keyed by "collection:document")
 // ============================================================================
 
 // Track when applying server data to prevent echo loops - DOCUMENT-LEVEL
@@ -51,8 +55,8 @@ const failedSyncQueue = new Map<string, boolean>();
  * Check if a document is currently applying server data.
  * Used to prevent echo loops in onUpdate handlers.
  */
-export function isApplyingFromServer(collection: string, documentId: string): boolean {
-  const key = `${collection}:${documentId}`;
+export function isApplyingFromServer(collection: string, document: string): boolean {
+  const key = `${collection}:${document}`;
   return applyingFromServer.get(key) ?? false;
 }
 
@@ -61,10 +65,10 @@ export function isApplyingFromServer(collection: string, documentId: string): bo
  */
 export function setApplyingFromServer(
   collection: string,
-  documentId: string,
+  document: string,
   value: boolean,
 ): void {
-  const key = `${collection}:${documentId}`;
+  const key = `${collection}:${document}`;
   if (value) {
     applyingFromServer.set(key, true);
   }
@@ -102,8 +106,8 @@ function setPendingInternal(key: string, value: boolean): void {
 /**
  * Get current pending state for a document.
  */
-export function isPending(collection: string, documentId: string): boolean {
-  return pendingState.get(`${collection}:${documentId}`) ?? false;
+export function isPending(collection: string, document: string): boolean {
+  return pendingState.get(`${collection}:${document}`) ?? false;
 }
 
 /**
@@ -111,10 +115,10 @@ export function isPending(collection: string, documentId: string): boolean {
  */
 export function subscribePending(
   collection: string,
-  documentId: string,
+  document: string,
   callback: (pending: boolean) => void,
 ): () => void {
-  const key = `${collection}:${documentId}`;
+  const key = `${collection}:${document}`;
 
   let listeners = pendingListeners.get(key);
   if (!listeners) {
@@ -139,15 +143,15 @@ export function subscribePending(
  * Cancel any pending debounced sync for a document.
  * Called when receiving remote updates to avoid conflicts.
  */
-export function cancelPending(collection: string, documentId: string): void {
-  const key = `${collection}:${documentId}`;
+export function cancelPending(collection: string, document: string): void {
+  const key = `${collection}:${document}`;
   const timer = debounceTimers.get(key);
 
   if (timer) {
     clearTimeout(timer);
     debounceTimers.delete(key);
     setPendingInternal(key, false);
-    logger.debug("Cancelled pending sync due to remote update", { collection, documentId });
+    logger.debug("Cancelled pending sync due to remote update", { collection, document });
   }
 }
 
@@ -174,7 +178,7 @@ export function cancelAllPending(collection: string): void {
 /** Configuration for fragment observation */
 export interface ProseObserverConfig {
   collection: string;
-  documentId: string;
+  document: string;
   field: string;
   fragment: Y.XmlFragment;
   ydoc: Y.Doc;
@@ -190,7 +194,7 @@ export interface ProseObserverConfig {
 export function observeFragment(config: ProseObserverConfig): () => void {
   const {
     collection,
-    documentId,
+    document,
     field,
     fragment,
     ydoc,
@@ -198,12 +202,12 @@ export function observeFragment(config: ProseObserverConfig): () => void {
     collectionRef,
     debounceMs = DEFAULT_DEBOUNCE_MS,
   } = config;
-  const key = `${collection}:${documentId}`;
+  const key = `${collection}:${document}`;
 
   // Skip if already observing this document
   const existingCleanup = fragmentObservers.get(key);
   if (existingCleanup) {
-    logger.debug("Fragment already being observed", { collection, documentId, field });
+    logger.debug("Fragment already being observed", { collection, document, field });
     return existingCleanup;
   }
 
@@ -230,25 +234,25 @@ export function observeFragment(config: ProseObserverConfig): () => void {
           : Y.encodeStateAsUpdateV2(ydoc);
 
         if (delta.length <= 2) {
-          logger.debug("No changes to sync", { collection, documentId });
+          logger.debug("No changes to sync", { collection, document });
           setPendingInternal(key, false);
           return;
         }
 
-        const crdtBytes = delta.buffer as ArrayBuffer;
+        const bytes = delta.buffer as ArrayBuffer;
         const currentVector = Y.encodeStateVector(ydoc);
 
         logger.debug("Syncing prose delta", {
           collection,
-          documentId,
+          document,
           deltaSize: delta.byteLength,
         });
 
-        const materializedDoc = serializeYMapValue(ymap);
+        const material = serializeYMapValue(ymap);
 
         const result = collectionRef.update(
-          documentId,
-          { metadata: { contentSync: { crdtBytes, materializedDoc } } },
+          document,
+          { metadata: { contentSync: { bytes, material } } },
           (draft: any) => {
             draft.updatedAt = Date.now();
           },
@@ -258,12 +262,12 @@ export function observeFragment(config: ProseObserverConfig): () => void {
         lastSyncedVectors.set(key, currentVector);
         failedSyncQueue.delete(key);
         setPendingInternal(key, false);
-        logger.debug("Prose sync completed", { collection, documentId });
+        logger.debug("Prose sync completed", { collection, document });
       }
       catch (err) {
         logger.error("Prose sync failed, queued for retry", {
           collection,
-          documentId,
+          document,
           error: String(err),
         });
         failedSyncQueue.set(key, true);
@@ -275,7 +279,7 @@ export function observeFragment(config: ProseObserverConfig): () => void {
     // Also retry any failed syncs for this document
     if (failedSyncQueue.has(key)) {
       failedSyncQueue.delete(key);
-      logger.debug("Retrying failed sync", { collection, documentId });
+      logger.debug("Retrying failed sync", { collection, document });
     }
   };
 
@@ -284,14 +288,14 @@ export function observeFragment(config: ProseObserverConfig): () => void {
 
   const cleanup = () => {
     fragment.unobserveDeep(observerHandler);
-    cancelPending(collection, documentId);
+    cancelPending(collection, document);
     fragmentObservers.delete(key);
     lastSyncedVectors.delete(key);
-    logger.debug("Fragment observer cleaned up", { collection, documentId, field });
+    logger.debug("Fragment observer cleaned up", { collection, document, field });
   };
 
   fragmentObservers.set(key, cleanup);
-  logger.debug("Fragment observer registered", { collection, documentId, field });
+  logger.debug("Fragment observer registered", { collection, document, field });
 
   return cleanup;
 }
@@ -357,4 +361,57 @@ export function cleanup(collection: string): void {
   }
 
   logger.debug("Prose cleanup complete", { collection });
+}
+
+const PROSE_MARKER = Symbol.for("replicate:prose");
+
+function createProseSchema(): z.ZodType<ProseValue> {
+  const schema = z.custom<ProseValue>(
+    (val) => {
+      if (val == null) return true;
+      if (typeof val !== "object") return false;
+      return (val as { type?: string }).type === "doc";
+    },
+    { message: "Expected prose document with type \"doc\"" },
+  );
+
+  Object.defineProperty(schema, PROSE_MARKER, { value: true, writable: false });
+
+  return schema;
+}
+
+function emptyProse(): ProseValue {
+  return { type: "doc", content: [] } as unknown as ProseValue;
+}
+
+export function prose(): z.ZodType<ProseValue> {
+  return createProseSchema();
+}
+
+prose.empty = emptyProse;
+
+export function isProseSchema(schema: unknown): boolean {
+  return (
+    schema != null
+    && typeof schema === "object"
+    && PROSE_MARKER in schema
+    && (schema as Record<symbol, unknown>)[PROSE_MARKER] === true
+  );
+}
+
+export function extractProseFields(schema: z.ZodObject<z.ZodRawShape>): string[] {
+  const fields: string[] = [];
+
+  for (const [key, fieldSchema] of Object.entries(schema.shape)) {
+    let unwrapped = fieldSchema;
+    while (unwrapped instanceof z.ZodOptional || unwrapped instanceof z.ZodNullable) {
+      unwrapped = unwrapped.unwrap();
+    }
+
+    if (isProseSchema(unwrapped)) {
+      fields.push(key);
+    }
+  }
+
+  return fields;
 }

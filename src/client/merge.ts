@@ -360,10 +360,10 @@ export function serializeYMapValue(value: unknown): unknown {
  */
 export function getFragmentFromYMap(
   ymap: Y.Map<unknown>,
-  documentId: string,
+  document: string,
   field: string,
 ): Y.XmlFragment | null {
-  const doc = ymap.get(documentId);
+  const doc = ymap.get(document);
   if (!isYMap(doc)) {
     return null;
   }

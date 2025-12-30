@@ -4,27 +4,29 @@ import { v } from "convex/values";
 export default defineSchema({
   documents: defineTable({
     collection: v.string(),
-    documentId: v.string(),
-    crdtBytes: v.bytes(),
+    document: v.string(),
+    bytes: v.bytes(),
     seq: v.number(),
   })
     .index("by_collection", ["collection"])
-    .index("by_collection_document", ["collection", "documentId"])
+    .index("by_document", ["collection", "document"])
     .index("by_seq", ["collection", "seq"]),
 
   snapshots: defineTable({
     collection: v.string(),
-    documentId: v.string(),
-    snapshotBytes: v.bytes(),
-    stateVector: v.bytes(),
-    snapshotSeq: v.number(),
-    createdAt: v.number(),
-  }).index("by_document", ["collection", "documentId"]),
+    document: v.string(),
+    bytes: v.bytes(),
+    vector: v.bytes(),
+    seq: v.number(),
+    created: v.number(),
+  }).index("by_document", ["collection", "document"]),
 
   sessions: defineTable({
     collection: v.string(),
     document: v.string(),
     client: v.string(),
+    vector: v.optional(v.bytes()),
+    connected: v.boolean(),
     seq: v.number(),
     seen: v.number(),
     user: v.optional(v.string()),
@@ -39,9 +41,10 @@ export default defineSchema({
       field: v.optional(v.string()),
     })),
     active: v.optional(v.number()),
-    timeoutId: v.optional(v.id("_scheduled_functions")),
+    timeout: v.optional(v.id("_scheduled_functions")),
   })
-    .index("collection", ["collection"])
-    .index("document", ["collection", "document"])
-    .index("client", ["collection", "document", "client"]),
+    .index("by_collection", ["collection"])
+    .index("by_document", ["collection", "document"])
+    .index("by_client", ["collection", "document", "client"])
+    .index("by_connected", ["collection", "document", "connected"]),
 });

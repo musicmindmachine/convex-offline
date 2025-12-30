@@ -5,29 +5,29 @@ import { fragmentToJSON } from "$/client/merge";
 
 const logger = getLogger(["replicate", "subdocs"]);
 
-export type SubdocPersistenceFactory = (documentId: string, subdoc: Y.Doc) => PersistenceProvider;
+export type SubdocPersistenceFactory = (document: string, subdoc: Y.Doc) => PersistenceProvider;
 
 export interface SubdocManager {
   readonly rootDoc: Y.Doc;
   readonly subdocsMap: Y.Map<Y.Doc>;
   readonly collection: string;
 
-  getOrCreate(documentId: string): Y.Doc;
-  get(documentId: string): Y.Doc | undefined;
-  has(documentId: string): boolean;
-  getFields(documentId: string): Y.Map<unknown> | null;
-  getFragment(documentId: string, field: string): Y.XmlFragment | null;
-  applyUpdate(documentId: string, update: Uint8Array, origin?: string): void;
+  getOrCreate(document: string): Y.Doc;
+  get(document: string): Y.Doc | undefined;
+  has(document: string): boolean;
+  getFields(document: string): Y.Map<unknown> | null;
+  getFragment(document: string, field: string): Y.XmlFragment | null;
+  applyUpdate(document: string, update: Uint8Array, origin?: string): void;
   transactWithDelta(
-    documentId: string,
+    document: string,
     fn: (fieldsMap: Y.Map<unknown>) => void,
     origin: string,
   ): Uint8Array;
-  encodeStateVector(documentId: string): Uint8Array;
-  encodeState(documentId: string): Uint8Array;
-  delete(documentId: string): void;
-  unload(documentId: string): void;
-  documentIds(): string[];
+  encodeStateVector(document: string): Uint8Array;
+  encodeState(document: string): Uint8Array;
+  delete(document: string): void;
+  unload(document: string): void;
+  documents(): string[];
   enablePersistence(factory: SubdocPersistenceFactory): void;
   destroy(): void;
 }
@@ -39,7 +39,7 @@ export function createSubdocManager(collection: string): SubdocManager {
   const subdocPersistence = new Map<string, PersistenceProvider>();
   let persistenceFactory: SubdocPersistenceFactory | null = null;
 
-  const makeGuid = (documentId: string): string => `${collection}:${documentId}`;
+  const makeGuid = (document: string): string => `${collection}:${document}`;
 
   const getDocumentIdFromGuid = (guid: string): string | null => {
     const prefix = `${collection}:`;
@@ -54,11 +54,11 @@ export function createSubdocManager(collection: string): SubdocManager {
     for (const subdoc of added) {
       logger.debug("Subdoc added", { collection, guid: subdoc.guid });
       if (persistenceFactory) {
-        const documentId = getDocumentIdFromGuid(subdoc.guid);
-        if (documentId && !subdocPersistence.has(documentId)) {
-          const provider = persistenceFactory(documentId, subdoc);
-          subdocPersistence.set(documentId, provider);
-          logger.debug("Created persistence for subdoc", { collection, documentId });
+        const document = getDocumentIdFromGuid(subdoc.guid);
+        if (document && !subdocPersistence.has(document)) {
+          const provider = persistenceFactory(document, subdoc);
+          subdocPersistence.set(document, provider);
+          logger.debug("Created persistence for subdoc", { collection, document });
         }
       }
     }
@@ -68,13 +68,13 @@ export function createSubdocManager(collection: string): SubdocManager {
     }
     for (const subdoc of removed) {
       loadedSubdocs.delete(subdoc.guid);
-      const documentId = getDocumentIdFromGuid(subdoc.guid);
-      if (documentId) {
-        const provider = subdocPersistence.get(documentId);
+      const document = getDocumentIdFromGuid(subdoc.guid);
+      if (document) {
+        const provider = subdocPersistence.get(document);
         if (provider) {
           provider.destroy();
-          subdocPersistence.delete(documentId);
-          logger.debug("Destroyed persistence for removed subdoc", { collection, documentId });
+          subdocPersistence.delete(document);
+          logger.debug("Destroyed persistence for removed subdoc", { collection, document });
         }
       }
       logger.debug("Subdoc removed", { collection, guid: subdoc.guid });
@@ -86,14 +86,14 @@ export function createSubdocManager(collection: string): SubdocManager {
     subdocsMap,
     collection,
 
-    getOrCreate(documentId: string): Y.Doc {
-      const guid = makeGuid(documentId);
-      let subdoc = subdocsMap.get(documentId);
+    getOrCreate(document: string): Y.Doc {
+      const guid = makeGuid(document);
+      let subdoc = subdocsMap.get(document);
 
       if (!subdoc) {
         subdoc = new Y.Doc({ guid });
-        subdocsMap.set(documentId, subdoc);
-        logger.debug("Created subdoc", { collection, documentId, guid });
+        subdocsMap.set(document, subdoc);
+        logger.debug("Created subdoc", { collection, document, guid });
       }
 
       if (!subdoc.isLoaded) {
@@ -103,22 +103,22 @@ export function createSubdocManager(collection: string): SubdocManager {
       return subdoc;
     },
 
-    get(documentId: string): Y.Doc | undefined {
-      return subdocsMap.get(documentId);
+    get(document: string): Y.Doc | undefined {
+      return subdocsMap.get(document);
     },
 
-    has(documentId: string): boolean {
-      return subdocsMap.has(documentId);
+    has(document: string): boolean {
+      return subdocsMap.has(document);
     },
 
-    getFields(documentId: string): Y.Map<unknown> | null {
-      const subdoc = subdocsMap.get(documentId);
+    getFields(document: string): Y.Map<unknown> | null {
+      const subdoc = subdocsMap.get(document);
       if (!subdoc) return null;
       return subdoc.getMap("fields");
     },
 
-    getFragment(documentId: string, field: string): Y.XmlFragment | null {
-      const fields = this.getFields(documentId);
+    getFragment(document: string, field: string): Y.XmlFragment | null {
+      const fields = this.getFields(document);
       if (!fields) return null;
 
       const fragment = fields.get(field);
@@ -129,23 +129,23 @@ export function createSubdocManager(collection: string): SubdocManager {
       return null;
     },
 
-    applyUpdate(documentId: string, update: Uint8Array, origin?: string): void {
-      const subdoc = this.getOrCreate(documentId);
+    applyUpdate(document: string, update: Uint8Array, origin?: string): void {
+      const subdoc = this.getOrCreate(document);
       Y.applyUpdateV2(subdoc, update, origin);
       logger.debug("Applied update to subdoc", {
         collection,
-        documentId,
+        document,
         updateSize: update.byteLength,
         origin,
       });
     },
 
     transactWithDelta(
-      documentId: string,
+      document: string,
       fn: (fieldsMap: Y.Map<unknown>) => void,
       origin: string,
     ): Uint8Array {
-      const subdoc = this.getOrCreate(documentId);
+      const subdoc = this.getOrCreate(document);
       const fieldsMap = subdoc.getMap<unknown>("fields");
       const beforeVector = Y.encodeStateVector(subdoc);
 
@@ -157,7 +157,7 @@ export function createSubdocManager(collection: string): SubdocManager {
 
       logger.debug("Transaction completed", {
         collection,
-        documentId,
+        document,
         deltaSize: delta.byteLength,
         origin,
       });
@@ -165,8 +165,8 @@ export function createSubdocManager(collection: string): SubdocManager {
       return delta;
     },
 
-    encodeStateVector(documentId: string): Uint8Array {
-      const subdoc = subdocsMap.get(documentId);
+    encodeStateVector(document: string): Uint8Array {
+      const subdoc = subdocsMap.get(document);
       if (!subdoc) {
         const emptyDoc = new Y.Doc();
         const vector = Y.encodeStateVector(emptyDoc);
@@ -176,43 +176,43 @@ export function createSubdocManager(collection: string): SubdocManager {
       return Y.encodeStateVector(subdoc);
     },
 
-    encodeState(documentId: string): Uint8Array {
-      const subdoc = subdocsMap.get(documentId);
+    encodeState(document: string): Uint8Array {
+      const subdoc = subdocsMap.get(document);
       if (!subdoc) {
         return new Uint8Array();
       }
       return Y.encodeStateAsUpdateV2(subdoc);
     },
 
-    delete(documentId: string): void {
-      const subdoc = subdocsMap.get(documentId);
+    delete(document: string): void {
+      const subdoc = subdocsMap.get(document);
       if (subdoc) {
-        subdocsMap.delete(documentId);
+        subdocsMap.delete(document);
         subdoc.destroy();
-        loadedSubdocs.delete(makeGuid(documentId));
-        logger.debug("Deleted subdoc", { collection, documentId });
+        loadedSubdocs.delete(makeGuid(document));
+        logger.debug("Deleted subdoc", { collection, document });
       }
     },
 
-    unload(documentId: string): void {
-      const subdoc = subdocsMap.get(documentId);
+    unload(document: string): void {
+      const subdoc = subdocsMap.get(document);
       if (subdoc) {
         subdoc.destroy();
-        loadedSubdocs.delete(makeGuid(documentId));
-        logger.debug("Unloaded subdoc", { collection, documentId });
+        loadedSubdocs.delete(makeGuid(document));
+        logger.debug("Unloaded subdoc", { collection, document });
       }
     },
 
-    documentIds(): string[] {
+    documents(): string[] {
       return Array.from(subdocsMap.keys());
     },
 
     enablePersistence(factory: SubdocPersistenceFactory): void {
-      for (const [documentId, subdoc] of subdocsMap.entries()) {
-        if (!subdocPersistence.has(documentId)) {
-          const provider = factory(documentId, subdoc);
-          subdocPersistence.set(documentId, provider);
-          logger.debug("Enabled persistence for existing subdoc", { collection, documentId });
+      for (const [document, subdoc] of subdocsMap.entries()) {
+        if (!subdocPersistence.has(document)) {
+          const provider = factory(document, subdoc);
+          subdocPersistence.set(document, provider);
+          logger.debug("Enabled persistence for existing subdoc", { collection, document });
         }
       }
 
@@ -221,9 +221,9 @@ export function createSubdocManager(collection: string): SubdocManager {
     },
 
     destroy(): void {
-      for (const [documentId, provider] of subdocPersistence) {
+      for (const [document, provider] of subdocPersistence) {
         provider.destroy();
-        logger.debug("Destroyed subdoc persistence", { collection, documentId });
+        logger.debug("Destroyed subdoc persistence", { collection, document });
       }
       subdocPersistence.clear();
 
@@ -266,13 +266,13 @@ export function serializeSubdocFields(fieldsMap: Y.Map<unknown>): Record<string,
 
 export function extractDocumentFromSubdoc(
   subdocManager: SubdocManager,
-  documentId: string,
+  document: string,
 ): Record<string, unknown> | null {
-  const fieldsMap = subdocManager.getFields(documentId);
+  const fieldsMap = subdocManager.getFields(document);
   if (!fieldsMap) return null;
 
   const doc = serializeSubdocFields(fieldsMap);
-  doc.id = documentId;
+  doc.id = document;
 
   return doc;
 }
@@ -282,8 +282,8 @@ export function extractAllDocuments(
 ): Record<string, unknown>[] {
   const documents: Record<string, unknown>[] = [];
 
-  for (const documentId of subdocManager.documentIds()) {
-    const doc = extractDocumentFromSubdoc(subdocManager, documentId);
+  for (const document of subdocManager.documents()) {
+    const doc = extractDocumentFromSubdoc(subdocManager, document);
     if (doc) {
       documents.push(doc);
     }

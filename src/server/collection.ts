@@ -1,5 +1,5 @@
 import type { GenericMutationCtx, GenericQueryCtx, GenericDataModel } from "convex/server";
-import { Replicate } from "$/server/storage";
+import { Replicate } from "$/server/replicate";
 import type { CompactionConfig } from "$/shared/types";
 
 export interface CollectionOptions<T extends object> {

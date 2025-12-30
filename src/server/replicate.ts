@@ -36,30 +36,30 @@ export class Replicate<T extends object> {
       args: {
         cursor: v.number(),
         limit: v.optional(v.number()),
-        sizeThreshold: v.optional(v.number()),
+        threshold: v.optional(v.number()),
       },
       returns: v.object({
         changes: v.array(
           v.object({
-            documentId: v.string(),
-            crdtBytes: v.bytes(),
+            document: v.string(),
+            bytes: v.bytes(),
             seq: v.number(),
-            operationType: v.string(),
+            type: v.string(),
           }),
         ),
         cursor: v.number(),
-        hasMore: v.boolean(),
+        more: v.boolean(),
         compact: v.optional(v.string()),
       }),
       handler: async (ctx, args) => {
         if (opts?.evalRead) {
           await opts.evalRead(ctx, collection);
         }
-        const result = await ctx.runQuery(component.public.stream, {
+        const result = await ctx.runQuery(component.mutations.stream, {
           collection,
           cursor: args.cursor,
           limit: args.limit,
-          sizeThreshold: args.sizeThreshold,
+          threshold: args.threshold,
         });
 
         if (opts?.onStream) {
@@ -85,7 +85,7 @@ export class Replicate<T extends object> {
         documents: v.any(),
         cursor: v.optional(v.number()),
         count: v.number(),
-        crdtBytes: v.optional(v.bytes()),
+        bytes: v.optional(v.bytes()),
       }),
       handler: async (ctx) => {
         if (opts?.evalRead) {
@@ -100,20 +100,20 @@ export class Replicate<T extends object> {
           documents: T[];
           cursor?: number;
           count: number;
-          crdtBytes?: ArrayBuffer;
+          bytes?: ArrayBuffer;
         } = {
           documents: docs,
           count: docs.length,
         };
 
         if (opts?.includeCRDTState) {
-          const crdtState = await ctx.runQuery(component.public.getInitialState, {
+          const state = await ctx.runQuery(component.mutations.getInitialState, {
             collection,
           });
 
-          if (crdtState) {
-            response.crdtBytes = crdtState.crdtBytes;
-            response.cursor = crdtState.cursor;
+          if (state) {
+            response.bytes = state.bytes;
+            response.cursor = state.cursor;
           }
         }
         return response;
@@ -130,30 +130,30 @@ export class Replicate<T extends object> {
 
     return mutationGeneric({
       args: {
-        documentId: v.string(),
-        crdtBytes: v.bytes(),
-        materializedDoc: v.any(),
+        document: v.string(),
+        bytes: v.bytes(),
+        material: v.any(),
       },
       returns: v.object({
         success: v.boolean(),
         seq: v.number(),
       }),
       handler: async (ctx, args) => {
-        const doc = args.materializedDoc as T;
+        const doc = args.material as T;
 
         if (opts?.evalWrite) {
           await opts.evalWrite(ctx, doc);
         }
 
-        const result = await ctx.runMutation(component.public.insertDocument, {
+        const result = await ctx.runMutation(component.mutations.insertDocument, {
           collection,
-          documentId: args.documentId,
-          crdtBytes: args.crdtBytes,
+          document: args.document,
+          bytes: args.bytes,
         });
 
         await ctx.db.insert(collection, {
-          id: args.documentId,
-          ...(args.materializedDoc as object),
+          id: args.document,
+          ...(args.material as object),
           timestamp: Date.now(),
         });
 
@@ -178,35 +178,35 @@ export class Replicate<T extends object> {
 
     return mutationGeneric({
       args: {
-        documentId: v.string(),
-        crdtBytes: v.bytes(),
-        materializedDoc: v.any(),
+        document: v.string(),
+        bytes: v.bytes(),
+        material: v.any(),
       },
       returns: v.object({
         success: v.boolean(),
         seq: v.number(),
       }),
       handler: async (ctx, args) => {
-        const doc = args.materializedDoc as T;
+        const doc = args.material as T;
 
         if (opts?.evalWrite) {
           await opts.evalWrite(ctx, doc);
         }
 
-        const result = await ctx.runMutation(component.public.updateDocument, {
+        const result = await ctx.runMutation(component.mutations.updateDocument, {
           collection,
-          documentId: args.documentId,
-          crdtBytes: args.crdtBytes,
+          document: args.document,
+          bytes: args.bytes,
         });
 
         const existing = await ctx.db
           .query(collection)
-          .withIndex("by_doc_id", q => q.eq("id", args.documentId))
+          .withIndex("by_doc_id", q => q.eq("id", args.document))
           .first();
 
         if (existing) {
           await ctx.db.patch(existing._id, {
-            ...(args.materializedDoc as object),
+            ...(args.material as object),
             timestamp: Date.now(),
           });
         }
@@ -232,28 +232,27 @@ export class Replicate<T extends object> {
 
     return mutationGeneric({
       args: {
-        documentId: v.string(),
-        crdtBytes: v.bytes(),
+        document: v.string(),
+        bytes: v.bytes(),
       },
       returns: v.object({
         success: v.boolean(),
         seq: v.number(),
       }),
       handler: async (ctx, args) => {
-        const documentId = args.documentId;
         if (opts?.evalRemove) {
-          await opts.evalRemove(ctx, documentId);
+          await opts.evalRemove(ctx, args.document);
         }
 
-        const result = await ctx.runMutation(component.public.deleteDocument, {
+        const result = await ctx.runMutation(component.mutations.deleteDocument, {
           collection,
-          documentId: documentId,
-          crdtBytes: args.crdtBytes,
+          document: args.document,
+          bytes: args.bytes,
         });
 
         const existing = await ctx.db
           .query(collection)
-          .withIndex("by_doc_id", q => q.eq("id", documentId))
+          .withIndex("by_doc_id", q => q.eq("id", args.document))
           .first();
 
         if (existing) {
@@ -261,7 +260,7 @@ export class Replicate<T extends object> {
         }
 
         if (opts?.onRemove) {
-          await opts.onRemove(ctx, documentId);
+          await opts.onRemove(ctx, args.document);
         }
 
         return {
@@ -283,6 +282,7 @@ export class Replicate<T extends object> {
         document: v.string(),
         client: v.string(),
         seq: v.optional(v.number()),
+        vector: v.optional(v.bytes()),
         user: v.optional(v.string()),
         profile: v.optional(v.object({
           name: v.optional(v.string()),
@@ -302,11 +302,12 @@ export class Replicate<T extends object> {
           await opts.evalWrite(ctx, args.client);
         }
 
-        await ctx.runMutation(component.public.mark, {
+        await ctx.runMutation(component.mutations.mark, {
           collection,
           document: args.document,
           client: args.client,
           seq: args.seq,
+          vector: args.vector,
           user: args.user,
           profile: args.profile,
           cursor: args.cursor,
@@ -341,7 +342,7 @@ export class Replicate<T extends object> {
           await opts.evalRead(ctx, collection);
         }
 
-        return await ctx.runQuery(component.public.sessions, {
+        return await ctx.runQuery(component.mutations.sessions, {
           collection,
           document: args.document,
           group: args.group,
@@ -376,7 +377,7 @@ export class Replicate<T extends object> {
           await opts.evalRead(ctx, collection);
         }
 
-        return await ctx.runQuery(component.public.cursors, {
+        return await ctx.runQuery(component.mutations.cursors, {
           collection,
           document: args.document,
           exclude: args.exclude,
@@ -402,7 +403,7 @@ export class Replicate<T extends object> {
           await opts.evalWrite(ctx, args.client);
         }
 
-        await ctx.runMutation(component.public.leave, {
+        await ctx.runMutation(component.mutations.leave, {
           collection,
           document: args.document,
           client: args.client,
@@ -416,7 +417,7 @@ export class Replicate<T extends object> {
   createCompactMutation(opts?: {
     evalWrite?: (
       ctx: GenericMutationCtx<GenericDataModel>,
-      documentId: string,
+      document: string,
     ) => void | Promise<void>;
   }) {
     const component = this.component;
@@ -424,27 +425,22 @@ export class Replicate<T extends object> {
 
     return mutationGeneric({
       args: {
-        documentId: v.string(),
-        snapshotBytes: v.bytes(),
-        stateVector: v.bytes(),
-        peerTimeout: v.optional(v.number()),
+        document: v.string(),
       },
       returns: v.object({
         success: v.boolean(),
         removed: v.number(),
         retained: v.number(),
+        size: v.number(),
       }),
       handler: async (ctx, args) => {
         if (opts?.evalWrite) {
-          await opts.evalWrite(ctx, args.documentId);
+          await opts.evalWrite(ctx, args.document);
         }
 
-        return await ctx.runMutation(component.public.compact, {
+        return await ctx.runMutation(component.mutations.compact, {
           collection,
-          documentId: args.documentId,
-          snapshotBytes: args.snapshotBytes,
-          stateVector: args.stateVector,
-          peerTimeout: args.peerTimeout,
+          document: args.document,
         });
       },
     });
@@ -458,11 +454,11 @@ export class Replicate<T extends object> {
 
     return queryGeneric({
       args: {
-        clientStateVector: v.bytes(),
+        vector: v.bytes(),
       },
       returns: v.object({
         diff: v.optional(v.bytes()),
-        serverStateVector: v.bytes(),
+        vector: v.bytes(),
         cursor: v.number(),
       }),
       handler: async (ctx, args) => {
@@ -470,9 +466,9 @@ export class Replicate<T extends object> {
           await opts.evalRead(ctx, collection);
         }
 
-        return await ctx.runQuery(component.public.recovery, {
+        return await ctx.runQuery(component.mutations.recovery, {
           collection,
-          clientStateVector: args.clientStateVector,
+          vector: args.vector,
         });
       },
     });

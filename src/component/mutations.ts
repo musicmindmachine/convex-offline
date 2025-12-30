@@ -8,7 +8,6 @@ import { OperationType } from "$/shared/types";
 export { OperationType };
 
 const DEFAULT_SIZE_THRESHOLD = 5_000_000;
-const DEFAULT_PEER_TIMEOUT = 5 * 60 * 1000;
 
 async function getNextSeq(ctx: any, collection: string): Promise<number> {
   const latest = await ctx.db
@@ -22,8 +21,8 @@ async function getNextSeq(ctx: any, collection: string): Promise<number> {
 export const insertDocument = mutation({
   args: {
     collection: v.string(),
-    documentId: v.string(),
-    crdtBytes: v.bytes(),
+    document: v.string(),
+    bytes: v.bytes(),
   },
   returns: v.object({
     success: v.boolean(),
@@ -34,8 +33,8 @@ export const insertDocument = mutation({
 
     await ctx.db.insert("documents", {
       collection: args.collection,
-      documentId: args.documentId,
-      crdtBytes: args.crdtBytes,
+      document: args.document,
+      bytes: args.bytes,
       seq,
     });
 
@@ -46,8 +45,8 @@ export const insertDocument = mutation({
 export const updateDocument = mutation({
   args: {
     collection: v.string(),
-    documentId: v.string(),
-    crdtBytes: v.bytes(),
+    document: v.string(),
+    bytes: v.bytes(),
   },
   returns: v.object({
     success: v.boolean(),
@@ -58,8 +57,8 @@ export const updateDocument = mutation({
 
     await ctx.db.insert("documents", {
       collection: args.collection,
-      documentId: args.documentId,
-      crdtBytes: args.crdtBytes,
+      document: args.document,
+      bytes: args.bytes,
       seq,
     });
 
@@ -70,8 +69,8 @@ export const updateDocument = mutation({
 export const deleteDocument = mutation({
   args: {
     collection: v.string(),
-    documentId: v.string(),
-    crdtBytes: v.bytes(),
+    document: v.string(),
+    bytes: v.bytes(),
   },
   returns: v.object({
     success: v.boolean(),
@@ -82,8 +81,8 @@ export const deleteDocument = mutation({
 
     await ctx.db.insert("documents", {
       collection: args.collection,
-      documentId: args.documentId,
-      crdtBytes: args.crdtBytes,
+      document: args.document,
+      bytes: args.bytes,
       seq,
     });
 
@@ -98,6 +97,7 @@ export const mark = mutation({
     collection: v.string(),
     document: v.string(),
     client: v.string(),
+    vector: v.optional(v.bytes()),
     seq: v.optional(v.number()),
     user: v.optional(v.string()),
     profile: v.optional(v.object({
@@ -119,20 +119,20 @@ export const mark = mutation({
 
     const existing = await ctx.db
       .query("sessions")
-      .withIndex("client", (q: any) =>
+      .withIndex("by_client", (q: any) =>
         q.eq("collection", args.collection)
           .eq("document", args.document)
           .eq("client", args.client),
       )
       .first();
 
-    if (existing?.timeoutId) {
-      await ctx.scheduler.cancel(existing.timeoutId);
+    if (existing?.timeout) {
+      await ctx.scheduler.cancel(existing.timeout);
     }
 
-    const timeoutId = await ctx.scheduler.runAfter(
+    const timeout = await ctx.scheduler.runAfter(
       interval * 2.5,
-      api.public.leave,
+      api.mutations.disconnect,
       {
         collection: args.collection,
         document: args.document,
@@ -140,8 +140,13 @@ export const mark = mutation({
       },
     );
 
-    const updates: Record<string, unknown> = { seen: now, timeoutId };
+    const updates: Record<string, unknown> = {
+      seen: now,
+      timeout,
+      connected: true,
+    };
 
+    if (args.vector !== undefined) updates.vector = args.vector;
     if (args.seq !== undefined) {
       updates.seq = existing ? Math.max(existing.seq, args.seq) : args.seq;
     }
@@ -160,13 +165,15 @@ export const mark = mutation({
         collection: args.collection,
         document: args.document,
         client: args.client,
+        vector: args.vector,
+        connected: true,
         seq: args.seq ?? 0,
         seen: now,
         user: args.user,
         profile: args.profile,
         cursor: args.cursor,
         active: args.cursor ? now : undefined,
-        timeoutId,
+        timeout,
       });
     }
 
@@ -177,84 +184,157 @@ export const mark = mutation({
 export const compact = mutation({
   args: {
     collection: v.string(),
-    documentId: v.string(),
-    snapshotBytes: v.bytes(),
-    stateVector: v.bytes(),
-    peerTimeout: v.optional(v.number()),
+    document: v.string(),
   },
   returns: v.object({
     success: v.boolean(),
     removed: v.number(),
     retained: v.number(),
+    size: v.number(),
   }),
   handler: async (ctx, args) => {
     const logger = getLogger(["compaction"]);
     const now = Date.now();
-    const peerTimeout = args.peerTimeout ?? DEFAULT_PEER_TIMEOUT;
-    const peerCutoff = now - peerTimeout;
 
     const deltas = await ctx.db
       .query("documents")
-      .withIndex("by_collection_document", (q: any) =>
-        q.eq("collection", args.collection).eq("documentId", args.documentId),
+      .withIndex("by_document", (q: any) =>
+        q.eq("collection", args.collection).eq("document", args.document),
       )
       .collect();
 
-    const activeClients = await ctx.db
-      .query("sessions")
-      .withIndex("document", (q: any) =>
-        q.eq("collection", args.collection)
-          .eq("document", args.documentId),
-      )
-      .filter((q: any) => q.gt(q.field("seen"), peerCutoff))
-      .collect();
+    if (deltas.length === 0) {
+      return { success: true, removed: 0, retained: 0, size: 0 };
+    }
 
-    const minSyncedSeq = activeClients.length > 0
-      ? Math.min(...activeClients.map((p: any) => p.seq))
-      : Infinity;
-
-    const existingSnapshot = await ctx.db
+    const existing = await ctx.db
       .query("snapshots")
       .withIndex("by_document", (q: any) =>
-        q.eq("collection", args.collection).eq("documentId", args.documentId),
+        q.eq("collection", args.collection).eq("document", args.document),
       )
       .first();
 
-    if (existingSnapshot) {
-      await ctx.db.delete(existingSnapshot._id);
+    const updates: Uint8Array[] = [];
+    if (existing) {
+      updates.push(new Uint8Array(existing.bytes));
     }
+    updates.push(...deltas.map((d: any) => new Uint8Array(d.bytes)));
 
-    const snapshotSeq = deltas.length > 0
-      ? Math.max(...deltas.map((d: any) => d.seq))
-      : 0;
+    const merged = Y.mergeUpdatesV2(updates);
+    const vector = Y.encodeStateVectorFromUpdateV2(merged);
 
-    await ctx.db.insert("snapshots", {
-      collection: args.collection,
-      documentId: args.documentId,
-      snapshotBytes: args.snapshotBytes,
-      stateVector: args.stateVector,
-      snapshotSeq,
-      createdAt: now,
-    });
+    const active = await ctx.db
+      .query("sessions")
+      .withIndex("by_document", (q: any) =>
+        q.eq("collection", args.collection)
+          .eq("document", args.document),
+      )
+      .filter((q: any) => q.eq(q.field("connected"), true))
+      .collect();
 
-    let removed = 0;
-    for (const delta of deltas) {
-      if (delta.seq < minSyncedSeq) {
-        await ctx.db.delete(delta._id);
-        removed++;
+    let canDeleteAll = true;
+    for (const session of active) {
+      if (!session.vector) {
+        canDeleteAll = false;
+        logger.warn("Session without vector, skipping full compaction", {
+          client: session.client,
+        });
+        break;
+      }
+
+      const sessionVector = new Uint8Array(session.vector);
+      const missing = Y.diffUpdateV2(merged, sessionVector);
+
+      if (missing.byteLength > 2) {
+        canDeleteAll = false;
+        logger.debug("Session still needs data", {
+          client: session.client,
+          missingSize: missing.byteLength,
+        });
+        break;
       }
     }
 
-    logger.info("Compaction completed", {
-      collection: args.collection,
-      documentId: args.documentId,
+    const seq = Math.max(...deltas.map((d: any) => d.seq));
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        bytes: merged.buffer as ArrayBuffer,
+        vector: vector.buffer as ArrayBuffer,
+        seq,
+        created: now,
+      });
+    }
+    else {
+      await ctx.db.insert("snapshots", {
+        collection: args.collection,
+        document: args.document,
+        bytes: merged.buffer as ArrayBuffer,
+        vector: vector.buffer as ArrayBuffer,
+        seq,
+        created: now,
+      });
+    }
+
+    let removed = 0;
+    if (canDeleteAll) {
+      for (const delta of deltas) {
+        await ctx.db.delete(delta._id);
+        removed++;
+      }
+      logger.info("Full compaction completed", {
+        document: args.document,
+        removed,
+        size: merged.byteLength,
+      });
+    }
+    else {
+      logger.info("Snapshot created, deltas retained (clients still syncing)", {
+        document: args.document,
+        deltaCount: deltas.length,
+        activeCount: active.length,
+      });
+    }
+
+    const disconnected = await ctx.db
+      .query("sessions")
+      .withIndex("by_document", (q: any) =>
+        q.eq("collection", args.collection)
+          .eq("document", args.document),
+      )
+      .filter((q: any) => q.eq(q.field("connected"), false))
+      .collect();
+
+    let cleaned = 0;
+    for (const session of disconnected) {
+      if (!session.vector) {
+        await ctx.db.delete(session._id);
+        cleaned++;
+        continue;
+      }
+
+      const sessionVector = new Uint8Array(session.vector);
+      const missing = Y.diffUpdateV2(merged, sessionVector);
+
+      if (missing.byteLength <= 2) {
+        await ctx.db.delete(session._id);
+        cleaned++;
+      }
+    }
+
+    if (cleaned > 0) {
+      logger.info("Cleaned up disconnected sessions", {
+        document: args.document,
+        cleaned,
+      });
+    }
+
+    return {
+      success: true,
       removed,
       retained: deltas.length - removed,
-      activeClients: activeClients.length,
-      minSyncedSeq,
-    });
-
-    return { success: true, removed, retained: deltas.length - removed };
+      size: merged.byteLength,
+    };
   },
 });
 
@@ -263,24 +343,24 @@ export const stream = query({
     collection: v.string(),
     cursor: v.number(),
     limit: v.optional(v.number()),
-    sizeThreshold: v.optional(v.number()),
+    threshold: v.optional(v.number()),
   },
   returns: v.object({
     changes: v.array(
       v.object({
-        documentId: v.string(),
-        crdtBytes: v.bytes(),
+        document: v.string(),
+        bytes: v.bytes(),
         seq: v.number(),
-        operationType: v.string(),
+        type: v.string(),
       }),
     ),
     cursor: v.number(),
-    hasMore: v.boolean(),
+    more: v.boolean(),
     compact: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
     const limit = args.limit ?? 100;
-    const sizeThreshold = args.sizeThreshold ?? DEFAULT_SIZE_THRESHOLD;
+    const threshold = args.threshold ?? DEFAULT_SIZE_THRESHOLD;
 
     const documents = await ctx.db
       .query("documents")
@@ -292,10 +372,10 @@ export const stream = query({
 
     if (documents.length > 0) {
       const changes = documents.map((doc: any) => ({
-        documentId: doc.documentId,
-        crdtBytes: doc.crdtBytes,
+        document: doc.document,
+        bytes: doc.bytes,
         seq: doc.seq,
-        operationType: OperationType.Delta,
+        type: OperationType.Delta,
       }));
 
       const newCursor = documents[documents.length - 1]?.seq ?? args.cursor;
@@ -306,14 +386,14 @@ export const stream = query({
         .withIndex("by_collection", (q: any) => q.eq("collection", args.collection))
         .collect();
 
-      const sizeByDocument = new Map<string, number>();
+      const sizeByDoc = new Map<string, number>();
       for (const doc of allDocs) {
-        const current = sizeByDocument.get(doc.documentId) ?? 0;
-        sizeByDocument.set(doc.documentId, current + doc.crdtBytes.byteLength);
+        const current = sizeByDoc.get(doc.document) ?? 0;
+        sizeByDoc.set(doc.document, current + doc.bytes.byteLength);
       }
 
-      for (const [docId, size] of sizeByDocument) {
-        if (size > sizeThreshold) {
+      for (const [docId, size] of sizeByDoc) {
+        if (size > threshold) {
           compactHint = docId;
           break;
         }
@@ -322,18 +402,18 @@ export const stream = query({
       return {
         changes,
         cursor: newCursor,
-        hasMore: documents.length === limit,
+        more: documents.length === limit,
         compact: compactHint,
       };
     }
 
-    const oldestDelta = await ctx.db
+    const oldest = await ctx.db
       .query("documents")
       .withIndex("by_seq", (q: any) => q.eq("collection", args.collection))
       .order("asc")
       .first();
 
-    if (oldestDelta && args.cursor < oldestDelta.seq) {
+    if (oldest && args.cursor < oldest.seq) {
       const snapshots = await ctx.db
         .query("snapshots")
         .withIndex("by_document", (q: any) => q.eq("collection", args.collection))
@@ -342,23 +422,23 @@ export const stream = query({
       if (snapshots.length === 0) {
         throw new Error(
           `Disparity detected but no snapshots available for collection: ${args.collection}. `
-          + `Client cursor: ${args.cursor}, Oldest delta seq: ${oldestDelta.seq}`,
+          + `Client cursor: ${args.cursor}, Oldest delta seq: ${oldest.seq}`,
         );
       }
 
-      const changes = snapshots.map((snapshot: any) => ({
-        documentId: snapshot.documentId,
-        crdtBytes: snapshot.snapshotBytes,
-        seq: snapshot.snapshotSeq,
-        operationType: OperationType.Snapshot,
+      const changes = snapshots.map((s: any) => ({
+        document: s.document,
+        bytes: s.bytes,
+        seq: s.seq,
+        type: OperationType.Snapshot,
       }));
 
-      const latestSeq = Math.max(...snapshots.map((s: any) => s.snapshotSeq));
+      const latestSeq = Math.max(...snapshots.map((s: any) => s.seq));
 
       return {
         changes,
         cursor: latestSeq,
-        hasMore: false,
+        more: false,
         compact: undefined,
       };
     }
@@ -366,7 +446,7 @@ export const stream = query({
     return {
       changes: [],
       cursor: args.cursor,
-      hasMore: false,
+      more: false,
       compact: undefined,
     };
   },
@@ -378,7 +458,7 @@ export const getInitialState = query({
   },
   returns: v.union(
     v.object({
-      crdtBytes: v.bytes(),
+      bytes: v.bytes(),
       cursor: v.number(),
     }),
     v.null(),
@@ -407,13 +487,13 @@ export const getInitialState = query({
     let latestSeq = 0;
 
     for (const snapshot of snapshots) {
-      updates.push(new Uint8Array(snapshot.snapshotBytes));
-      latestSeq = Math.max(latestSeq, snapshot.snapshotSeq);
+      updates.push(new Uint8Array(snapshot.bytes));
+      latestSeq = Math.max(latestSeq, snapshot.seq);
     }
 
     const sorted = deltas.sort((a: any, b: any) => a.seq - b.seq);
     for (const delta of sorted) {
-      updates.push(new Uint8Array(delta.crdtBytes));
+      updates.push(new Uint8Array(delta.bytes));
       latestSeq = Math.max(latestSeq, delta.seq);
     }
 
@@ -432,7 +512,7 @@ export const getInitialState = query({
     });
 
     return {
-      crdtBytes: merged.buffer as ArrayBuffer,
+      bytes: merged.buffer as ArrayBuffer,
       cursor: latestSeq,
     };
   },
@@ -441,11 +521,11 @@ export const getInitialState = query({
 export const recovery = query({
   args: {
     collection: v.string(),
-    clientStateVector: v.bytes(),
+    vector: v.bytes(),
   },
   returns: v.object({
     diff: v.optional(v.bytes()),
-    serverStateVector: v.bytes(),
+    vector: v.bytes(),
     cursor: v.number(),
   }),
   handler: async (ctx, args) => {
@@ -466,7 +546,7 @@ export const recovery = query({
       const emptyVector = Y.encodeStateVector(emptyDoc);
       emptyDoc.destroy();
       return {
-        serverStateVector: emptyVector.buffer as ArrayBuffer,
+        vector: emptyVector.buffer as ArrayBuffer,
         cursor: 0,
       };
     }
@@ -475,19 +555,19 @@ export const recovery = query({
     let latestSeq = 0;
 
     for (const snapshot of snapshots) {
-      updates.push(new Uint8Array(snapshot.snapshotBytes));
-      latestSeq = Math.max(latestSeq, snapshot.snapshotSeq);
+      updates.push(new Uint8Array(snapshot.bytes));
+      latestSeq = Math.max(latestSeq, snapshot.seq);
     }
 
     for (const delta of deltas) {
-      updates.push(new Uint8Array(delta.crdtBytes));
+      updates.push(new Uint8Array(delta.bytes));
       latestSeq = Math.max(latestSeq, delta.seq);
     }
 
-    const mergedState = Y.mergeUpdatesV2(updates);
-    const clientVector = new Uint8Array(args.clientStateVector);
-    const diff = Y.diffUpdateV2(mergedState, clientVector);
-    const serverVector = Y.encodeStateVectorFromUpdateV2(mergedState);
+    const merged = Y.mergeUpdatesV2(updates);
+    const clientVector = new Uint8Array(args.vector);
+    const diff = Y.diffUpdateV2(merged, clientVector);
+    const serverVector = Y.encodeStateVectorFromUpdateV2(merged);
 
     logger.info("Recovery sync computed", {
       collection: args.collection,
@@ -499,7 +579,7 @@ export const recovery = query({
 
     return {
       diff: diff.byteLength > 0 ? (diff.buffer as ArrayBuffer) : undefined,
-      serverStateVector: serverVector.buffer as ArrayBuffer,
+      vector: serverVector.buffer as ArrayBuffer,
       cursor: latestSeq,
     };
   },
@@ -521,7 +601,7 @@ export const sessions = query({
   handler: async (ctx, args) => {
     const records = await ctx.db
       .query("sessions")
-      .withIndex("document", (q: any) =>
+      .withIndex("by_document", (q: any) =>
         q.eq("collection", args.collection)
           .eq("document", args.document),
       )
@@ -570,7 +650,7 @@ export const cursors = query({
   handler: async (ctx, args) => {
     const records = await ctx.db
       .query("sessions")
-      .withIndex("document", (q: any) =>
+      .withIndex("by_document", (q: any) =>
         q.eq("collection", args.collection)
           .eq("document", args.document),
       )
@@ -598,7 +678,7 @@ export const leave = mutation({
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query("sessions")
-      .withIndex("client", (q: any) =>
+      .withIndex("by_client", (q: any) =>
         q.eq("collection", args.collection)
           .eq("document", args.document)
           .eq("client", args.client),
@@ -606,14 +686,43 @@ export const leave = mutation({
       .first();
 
     if (existing) {
-      // Cancel existing scheduled timeout if present
-      if (existing.timeoutId) {
-        await ctx.scheduler.cancel(existing.timeoutId);
+      if (existing.timeout) {
+        await ctx.scheduler.cancel(existing.timeout);
       }
       await ctx.db.patch(existing._id, {
+        connected: false,
         cursor: undefined,
         active: undefined,
-        timeoutId: undefined,
+        timeout: undefined,
+      });
+    }
+
+    return null;
+  },
+});
+
+export const disconnect = mutation({
+  args: {
+    collection: v.string(),
+    document: v.string(),
+    client: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("sessions")
+      .withIndex("by_client", (q: any) =>
+        q.eq("collection", args.collection)
+          .eq("document", args.document)
+          .eq("client", args.client),
+      )
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        connected: false,
+        cursor: undefined,
+        timeout: undefined,
       });
     }
 

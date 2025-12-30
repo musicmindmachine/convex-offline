@@ -50,18 +50,12 @@ export declare const internal: FilterApi<
 
 export declare const components: {
   replicate: {
-    public: {
+    mutations: {
       compact: FunctionReference<
         "mutation",
         "internal",
-        {
-          collection: string;
-          documentId: string;
-          peerTimeout?: number;
-          snapshotBytes: ArrayBuffer;
-          stateVector: ArrayBuffer;
-        },
-        { removed: number; retained: number; success: boolean }
+        { collection: string; document: string },
+        { removed: number; retained: number; size: number; success: boolean }
       >;
       cursors: FunctionReference<
         "query",
@@ -77,19 +71,25 @@ export declare const components: {
       deleteDocument: FunctionReference<
         "mutation",
         "internal",
-        { collection: string; crdtBytes: ArrayBuffer; documentId: string },
+        { bytes: ArrayBuffer; collection: string; document: string },
         { seq: number; success: boolean }
+      >;
+      disconnect: FunctionReference<
+        "mutation",
+        "internal",
+        { client: string; collection: string; document: string },
+        null
       >;
       getInitialState: FunctionReference<
         "query",
         "internal",
         { collection: string },
-        { crdtBytes: ArrayBuffer; cursor: number } | null
+        { bytes: ArrayBuffer; cursor: number } | null
       >;
       insertDocument: FunctionReference<
         "mutation",
         "internal",
-        { collection: string; crdtBytes: ArrayBuffer; documentId: string },
+        { bytes: ArrayBuffer; collection: string; document: string },
         { seq: number; success: boolean }
       >;
       leave: FunctionReference<
@@ -110,14 +110,15 @@ export declare const components: {
           profile?: { avatar?: string; color?: string; name?: string };
           seq?: number;
           user?: string;
+          vector?: ArrayBuffer;
         },
         null
       >;
       recovery: FunctionReference<
         "query",
         "internal",
-        { clientStateVector: ArrayBuffer; collection: string },
-        { cursor: number; diff?: ArrayBuffer; serverStateVector: ArrayBuffer }
+        { collection: string; vector: ArrayBuffer },
+        { cursor: number; diff?: ArrayBuffer; vector: ArrayBuffer }
       >;
       sessions: FunctionReference<
         "query",
@@ -138,24 +139,24 @@ export declare const components: {
           collection: string;
           cursor: number;
           limit?: number;
-          sizeThreshold?: number;
+          threshold?: number;
         },
         {
           changes: Array<{
-            crdtBytes: ArrayBuffer;
-            documentId: string;
-            operationType: string;
+            bytes: ArrayBuffer;
+            document: string;
             seq: number;
+            type: string;
           }>;
           compact?: string;
           cursor: number;
-          hasMore: boolean;
+          more: boolean;
         }
       >;
       updateDocument: FunctionReference<
         "mutation",
         "internal",
-        { collection: string; crdtBytes: ArrayBuffer; documentId: string },
+        { bytes: ArrayBuffer; collection: string; document: string },
         { seq: number; success: boolean }
       >;
     };

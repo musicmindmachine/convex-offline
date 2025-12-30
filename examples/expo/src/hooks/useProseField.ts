@@ -175,7 +175,7 @@ function textToProse(text: string): XmlFragmentJSON {
 
 const DEBOUNCE_MS = 1000;
 
-export function useProseField(documentId: string | null) {
+export function useProseField(document: string | null) {
   const [text, setText] = useState("");
   const [isReady, setIsReady] = useState(false);
   const fragmentRef = useRef<YXmlFragment | null>(null);
@@ -212,14 +212,14 @@ export function useProseField(documentId: string | null) {
   }, [saveToFragment]);
 
   useEffect(() => {
-    if (!documentId) return;
+    if (!document) return;
 
     let cleanup: (() => void) | undefined;
     let mounted = true;
 
     intervals
       .get()
-      .utils.prose(documentId, "description")
+      .utils.prose(document, "description")
       .then((binding) => {
         if (!mounted) return;
 
@@ -260,7 +260,7 @@ export function useProseField(documentId: string | null) {
       }
       cleanup?.();
     };
-  }, [documentId]);
+  }, [document]);
 
   const handleChangeText = useCallback((newText: string) => {
     setText(newText);

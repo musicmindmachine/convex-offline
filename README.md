@@ -500,7 +500,7 @@ export const {
       const userId = await ctx.auth.getUserIdentity();
       if (!userId) throw new Error('Unauthorized');
     },
-    evalRemove: async (ctx, documentId) => {
+    evalRemove: async (ctx, document) => {
       const userId = await ctx.auth.getUserIdentity();
       if (!userId) throw new Error('Unauthorized');
     },
@@ -509,7 +509,7 @@ export const {
       const userId = await ctx.auth.getUserIdentity();
       if (!userId) throw new Error('Unauthorized');
     },
-    evalCompact: async (ctx, documentId) => {
+    evalCompact: async (ctx, document) => {
       // Restrict compaction to admin users
       const userId = await ctx.auth.getUserIdentity();
       if (!userId) throw new Error('Unauthorized');
@@ -519,7 +519,7 @@ export const {
     onStream: async (ctx, result) => { /* after stream query */ },
     onInsert: async (ctx, doc) => { /* after insert */ },
     onUpdate: async (ctx, doc) => { /* after update */ },
-    onRemove: async (ctx, documentId) => { /* after remove */ },
+    onRemove: async (ctx, document) => { /* after remove */ },
 
     // Transform hook (modify documents before returning)
     transform: async (docs) => docs.filter(d => d.isPublic),
@@ -854,15 +854,15 @@ interface ReplicateConfig<T> {
     // Permission checks (throw to reject)
     evalRead?: (ctx, collection) => Promise<void>;
     evalWrite?: (ctx, doc) => Promise<void>;
-    evalRemove?: (ctx, documentId) => Promise<void>;
+    evalRemove?: (ctx, document) => Promise<void>;
     evalMark?: (ctx, peerId) => Promise<void>;
-    evalCompact?: (ctx, documentId) => Promise<void>;
+    evalCompact?: (ctx, document) => Promise<void>;
 
     // Lifecycle callbacks (run after operation)
     onStream?: (ctx, result) => Promise<void>;
     onInsert?: (ctx, doc) => Promise<void>;
     onUpdate?: (ctx, doc) => Promise<void>;
-    onRemove?: (ctx, documentId) => Promise<void>;
+    onRemove?: (ctx, document) => Promise<void>;
 
     // Transform hook (modify documents before returning)
     transform?: (docs) => Promise<T[]>;

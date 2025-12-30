@@ -6,11 +6,11 @@ export {
 } from "$/client/collection";
 
 export {
-  CursorTracker,
   type CursorPosition,
   type ClientCursor,
   type UserProfile,
-} from "$/client/cursor-tracker";
+  createPresence,
+} from "$/client/services/presence";
 
 import {
   NetworkError,
@@ -32,14 +32,9 @@ export const errors = {
   NonRetriable: NonRetriableError,
 } as const;
 
-import type { ProseValue } from "$/shared/types";
 import { extract } from "$/client/merge";
-import { prose as proseSchema } from "$/client/prose-schema";
+import { prose as proseSchema } from "$/client/prose";
 
-function empty(): ProseValue {
-  return { type: "doc", content: [] } as unknown as ProseValue;
-}
-
-export const prose = Object.assign(proseSchema, { extract, empty });
+export const prose = Object.assign(proseSchema, { extract });
 
 export { persistence, type StorageAdapter, type Persistence } from "$/client/persistence/index";
