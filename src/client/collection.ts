@@ -693,7 +693,7 @@ export function convexCollectionOptions(
                 return;
               }
 
-              const { changes, cursor: newCursor, compact } = response;
+              const { changes, seq: newSeq, compact } = response;
               const syncedDocuments = new Set<string>();
 
               for (const change of changes) {
@@ -712,15 +712,17 @@ export function convexCollectionOptions(
                 }
               }
 
-              if (newCursor !== undefined) {
+              if (newSeq !== undefined) {
                 const key = `cursor:${collection}`;
-                await persistence.kv.set(key, newCursor);
+                await persistence.kv.set(key, newSeq);
 
                 for (const document of syncedDocuments) {
+                  const vector = subdocManager.encodeStateVector(document);
                   convexClient.mutation(api.mark, {
                     document: document,
                     client: clientId,
-                    seq: newCursor,
+                    seq: newSeq,
+                    vector: vector.buffer as ArrayBuffer,
                   });
                 }
               }
@@ -734,7 +736,7 @@ export function convexCollectionOptions(
 
             subscription = convexClient.onUpdate(
               api.stream,
-              { cursor, limit: 1000 },
+              { seq: cursor, limit: 1000 },
               (response: any) => {
                 handleSubscriptionUpdate(response);
               },

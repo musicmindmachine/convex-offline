@@ -34,7 +34,7 @@ export class Replicate<T extends object> {
 
     return queryGeneric({
       args: {
-        cursor: v.number(),
+        seq: v.number(),
         limit: v.optional(v.number()),
         threshold: v.optional(v.number()),
       },
@@ -47,7 +47,7 @@ export class Replicate<T extends object> {
             type: v.string(),
           }),
         ),
-        cursor: v.number(),
+        seq: v.number(),
         more: v.boolean(),
         compact: v.optional(v.object({
           documents: v.array(v.string()),
@@ -59,7 +59,7 @@ export class Replicate<T extends object> {
         }
         const result = await ctx.runQuery(component.mutations.stream, {
           collection,
-          cursor: args.cursor,
+          seq: args.seq,
           limit: args.limit,
           threshold: args.threshold,
         });

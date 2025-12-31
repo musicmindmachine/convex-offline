@@ -222,7 +222,7 @@ export const compact = mutation({
     const merged = Y.mergeUpdatesV2(updates);
     const vector = Y.encodeStateVectorFromUpdateV2(merged);
 
-    const active = await ctx.db
+    const sessions = await ctx.db
       .query("sessions")
       .withIndex("by_document", (q: any) =>
         q.eq("collection", args.collection)
@@ -232,7 +232,7 @@ export const compact = mutation({
       .collect();
 
     let canDeleteAll = true;
-    for (const session of active) {
+    for (const session of sessions) {
       if (!session.vector) {
         canDeleteAll = false;
         logger.warn("Session without vector, skipping full compaction", {
@@ -291,7 +291,7 @@ export const compact = mutation({
       logger.info("Snapshot created, deltas retained (clients still syncing)", {
         document: args.document,
         deltaCount: deltas.length,
-        activeCount: active.length,
+        activeCount: sessions.length,
       });
     }
 
@@ -340,7 +340,7 @@ export const compact = mutation({
 export const stream = query({
   args: {
     collection: v.string(),
-    cursor: v.number(),
+    seq: v.number(),
     limit: v.optional(v.number()),
     threshold: v.optional(v.number()),
   },
@@ -353,7 +353,7 @@ export const stream = query({
         type: v.string(),
       }),
     ),
-    cursor: v.number(),
+    seq: v.number(),
     more: v.boolean(),
     compact: v.optional(v.object({
       documents: v.array(v.string()),
@@ -366,7 +366,7 @@ export const stream = query({
     const documents = await ctx.db
       .query("documents")
       .withIndex("by_seq", (q: any) =>
-        q.eq("collection", args.collection).gt("seq", args.cursor),
+        q.eq("collection", args.collection).gt("seq", args.seq),
       )
       .order("asc")
       .take(limit);
@@ -379,7 +379,7 @@ export const stream = query({
         type: OperationType.Delta,
       }));
 
-      const newCursor = documents[documents.length - 1]?.seq ?? args.cursor;
+      const newSeq = documents[documents.length - 1]?.seq ?? args.seq;
 
       const allDocs = await ctx.db
         .query("documents")
@@ -401,7 +401,7 @@ export const stream = query({
 
       return {
         changes,
-        cursor: newCursor,
+        seq: newSeq,
         more: documents.length === limit,
         compact: documentsNeedingCompaction.length > 0
           ? { documents: documentsNeedingCompaction }
@@ -415,7 +415,7 @@ export const stream = query({
       .order("asc")
       .first();
 
-    if (oldest && args.cursor < oldest.seq) {
+    if (oldest && args.seq < oldest.seq) {
       const snapshots = await ctx.db
         .query("snapshots")
         .withIndex("by_document", (q: any) => q.eq("collection", args.collection))
@@ -424,7 +424,7 @@ export const stream = query({
       if (snapshots.length === 0) {
         throw new Error(
           `Disparity detected but no snapshots available for collection: ${args.collection}. `
-          + `Client cursor: ${args.cursor}, Oldest delta seq: ${oldest.seq}`,
+          + `Client seq: ${args.seq}, Oldest delta seq: ${oldest.seq}`,
         );
       }
 
@@ -439,7 +439,7 @@ export const stream = query({
 
       return {
         changes,
-        cursor: latestSeq,
+        seq: latestSeq,
         more: false,
         compact: undefined,
       };
@@ -447,7 +447,7 @@ export const stream = query({
 
     return {
       changes: [],
-      cursor: args.cursor,
+      seq: args.seq,
       more: false,
       compact: undefined,
     };

@@ -125,12 +125,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       stream: FunctionReference<
         "query",
         "internal",
-        {
-          collection: string;
-          cursor: number;
-          limit?: number;
-          threshold?: number;
-        },
+        { collection: string; limit?: number; seq: number; threshold?: number },
         {
           changes: Array<{
             bytes: ArrayBuffer;
@@ -139,8 +134,8 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             type: string;
           }>;
           compact?: { documents: Array<string> };
-          cursor: number;
           more: boolean;
+          seq: number;
         },
         Name
       >;
