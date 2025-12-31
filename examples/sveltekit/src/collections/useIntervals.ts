@@ -5,7 +5,10 @@ import { api } from "$convex/_generated/api";
 import { intervalSchema } from "$lib/types";
 
 export const intervals = collection.create({
-  persistence: async () => persistence.indexeddb("intervals"),
+  persistence: async () => {
+    const module = await import("@sqlite.org/sqlite-wasm");
+    return persistence.sqlite.browser(module, "intervals");
+  },
   config: () => ({
     schema: intervalSchema,
     convexClient: new ConvexClient(PUBLIC_CONVEX_URL),
