@@ -11,7 +11,6 @@ import {
 } from "@tanstack/db";
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import { Effect } from "effect";
-import { getLogger } from "$/client/logger";
 import { ProseError, NonRetriableError } from "$/client/errors";
 import { Cursor, createCursorLayer, type Seq } from "$/client/services/cursor";
 import { createReplicateOps, type BoundReplicateOps } from "$/client/ops";
@@ -48,7 +47,6 @@ enum YjsOrigin {
 }
 import type { ProseFields } from "$/shared/types";
 
-const logger = getLogger(["replicate", "collection"]);
 
 interface HttpError extends Error {
   status?: number;
@@ -77,15 +75,8 @@ interface CollectionTransaction<T> {
 
 function handleMutationError(
   error: unknown,
-  operation: "Insert" | "Update" | "Delete",
-  collection: string,
 ): never {
   const httpError = error as HttpError;
-  logger.error(`${operation} failed`, {
-    collection,
-    error: httpError?.message,
-    status: httpError?.status,
-  });
 
   if (httpError?.status === 401 || httpError?.status === 403) {
     throw new NonRetriableError("Authentication failed");
@@ -311,6 +302,7 @@ export function convexCollectionOptions(
           document,
           client: storedPeerId,
           ydoc: subdoc,
+          syncReady: ctx.synced,
         });
       }
 
@@ -369,20 +361,14 @@ export function convexCollectionOptions(
 
   const recover = async (): Promise<void> => {
     if (!api.recovery) {
-      logger.debug("No recovery API configured", { collection });
       return;
     }
 
     const documents = subdocManager.documents();
     if (documents.length === 0) {
-      logger.debug("No documents to recover", { collection });
       return;
     }
 
-    logger.debug("Starting per-document recovery", {
-      collection,
-      documentCount: documents.length,
-    });
 
     for (const document of documents) {
       try {
@@ -396,26 +382,11 @@ export function convexCollectionOptions(
         if (response.diff) {
           const diff = new Uint8Array(response.diff);
           subdocManager.applyUpdate(document, diff, YjsOrigin.Server);
-          logger.debug("Applied recovery diff", {
-            collection,
-            document,
-            diffSize: diff.byteLength,
-          });
         }
       }
       catch (error) {
-        logger.warn("Recovery failed for document", {
-          collection,
-          document,
-          error: String(error),
-        });
       }
     }
-
-    logger.info("Per-document recovery complete", {
-      collection,
-      documentCount: documents.length,
-    });
   };
 
   const applyYjsInsert = (mutations: CollectionMutation<DataType>[]): Uint8Array[] => {
@@ -453,13 +424,11 @@ export function convexCollectionOptions(
       const fieldsMap = subdocManager.getFields(document);
 
       if (!fieldsMap) {
-        logger.error("Update attempted on non-existent document", { collection, document });
         continue;
       }
 
       const modifiedFields = mut.modified as Record<string, unknown>;
       if (!modifiedFields) {
-        logger.warn("mut.modified is null/undefined", { collection, document });
         continue;
       }
 
@@ -468,13 +437,11 @@ export function convexCollectionOptions(
         (fields) => {
           Object.entries(modifiedFields).forEach(([k, v]) => {
             if (proseFieldSet.has(k)) {
-              logger.debug("Skipping prose field in applyYjsUpdate", { field: k });
               return;
             }
 
             const existingValue = fields.get(k);
             if (existingValue instanceof Y.XmlFragment) {
-              logger.debug("Preserving live fragment field", { field: k });
               return;
             }
 
@@ -531,7 +498,7 @@ export function convexCollectionOptions(
         }
       }
       catch (error) {
-        handleMutationError(error, "Insert", collection);
+        handleMutationError(error);
       }
     },
 
@@ -540,7 +507,6 @@ export function convexCollectionOptions(
       const documentKey = String(mutation.key);
 
       if (prose.isApplyingFromServer(collection, documentKey)) {
-        logger.debug("Skipping onUpdate - data from server", { collection, documentKey });
         return;
       }
 
@@ -580,7 +546,7 @@ export function convexCollectionOptions(
         }
       }
       catch (error) {
-        handleMutationError(error, "Update", collection);
+        handleMutationError(error);
       }
     },
 
@@ -606,7 +572,7 @@ export function convexCollectionOptions(
         }
       }
       catch (error) {
-        handleMutationError(error, "Delete", collection);
+        handleMutationError(error);
       }
     },
 
@@ -638,12 +604,9 @@ export function convexCollectionOptions(
             });
 
             docPersistence.whenSynced.then(() => {
-              logger.debug("Persistence synced", { collection });
               resolvePersistenceReady?.();
             });
             await persistenceReadyPromise;
-            const docCount = subdocManager.documents().length;
-            logger.info("Persistence ready", { collection, subdocCount: docCount });
 
             const peerId = await Effect.runPromise(
               Effect.gen(function* () {
@@ -661,10 +624,6 @@ export function convexCollectionOptions(
                 const update = new Uint8Array(state.bytes);
                 subdocManager.applyUpdate(docId, update, YjsOrigin.Server);
               }
-              logger.info("Applied SSR CRDT state", {
-                collection,
-                documentCount: Object.keys(ssrCrdt).length,
-              });
             }
 
             await recover();
@@ -673,18 +632,13 @@ export function convexCollectionOptions(
             if (docIds.length > 0) {
               const items = extractAllDocuments(subdocManager) as DataType[];
               ops.replace(items);
-              logger.info("Data loaded to TanStack DB", {
-                collection,
-                itemCount: items.length,
-              });
             }
             else {
               ops.replace([]);
-              logger.info("No data, cleared TanStack DB", { collection });
             }
 
             markReady();
-            logger.info("Collection ready", { collection, subdocCount: docIds.length });
+            getContext(collection).resolve?.();
 
             const persistedCursor = await Effect.runPromise(
               Effect.gen(function* () {
@@ -693,14 +647,6 @@ export function convexCollectionOptions(
               }).pipe(Effect.provide(cursorLayer)),
             );
             const cursor = ssrCursor ?? persistedCursor;
-
-            logger.info("Starting subscription", {
-              collection,
-              cursor,
-              peerId,
-              source: ssrCursor !== undefined ? "SSR" : persistedCursor > 0 ? "persisted" : "fresh",
-            });
-
             const mux = getContext(collection).mutex;
 
             const handleSnapshotChange = (bytes: ArrayBuffer, document: string) => {
@@ -708,22 +654,14 @@ export function convexCollectionOptions(
 
               mux(() => {
                 try {
-                  logger.debug("Applying snapshot", {
-                    collection,
-                    document,
-                    bytesLength: bytes.byteLength,
-                  });
                   const update = new Uint8Array(bytes);
                   subdocManager.applyUpdate(document, update, YjsOrigin.Server);
                   const item = extractDocumentFromSubdoc(subdocManager, document);
                   if (item) {
                     ops.upsert([item as DataType]);
                   }
-                  logger.debug("Snapshot applied", { collection, document });
                 }
                 catch (error) {
-                  const msg = String(error);
-                  logger.error("Error applying snapshot", { collection, document, error: msg });
                   throw new Error(`Snapshot application failed: ${error}`);
                 }
               });
@@ -731,7 +669,6 @@ export function convexCollectionOptions(
 
             const handleDeltaChange = (bytes: ArrayBuffer, document: string | undefined) => {
               if (!document) {
-                logger.debug("Delta skipped (no document)", { collection });
                 return;
               }
 
@@ -740,35 +677,21 @@ export function convexCollectionOptions(
 
               mux(() => {
                 try {
-                  logger.debug("Applying delta", {
-                    collection,
-                    document,
-                    bytesLength: bytes.byteLength,
-                  });
-
                   const itemBefore = extractDocumentFromSubdoc(subdocManager, document);
                   const update = new Uint8Array(bytes);
                   subdocManager.applyUpdate(document, update, YjsOrigin.Server);
 
                   const itemAfter = extractDocumentFromSubdoc(subdocManager, document);
                   if (itemAfter) {
-                    logger.debug("Upserting item after delta", { collection, document });
                     ops.upsert([itemAfter as DataType]);
                   }
                   else if (itemBefore) {
-                    logger.debug("Deleting item after delta", { collection, document });
                     ops.delete([itemBefore as DataType]);
                   }
                   else {
-                    logger.debug("No change detected after delta", { collection, document });
                   }
                 }
                 catch (error) {
-                  logger.error("Error applying delta", {
-                    collection,
-                    document,
-                    error: String(error),
-                  });
                   throw new Error(`Delta application failed for ${document}: ${error}`);
                 }
                 finally {
@@ -780,7 +703,6 @@ export function convexCollectionOptions(
             const handleSubscriptionUpdate = async (response: any) => {
               try {
                 if (!response || !Array.isArray(response.changes)) {
-                  logger.error("Invalid subscription response", { response });
                   return;
                 }
 
@@ -790,7 +712,6 @@ export function convexCollectionOptions(
                 for (const change of changes) {
                   const { type, bytes, document } = change;
                   if (!bytes || !document) {
-                    logger.warn("Skipping change with missing bytes or document", { change });
                     continue;
                   }
 
@@ -805,11 +726,6 @@ export function convexCollectionOptions(
                     }
                   }
                   catch (changeError) {
-                    logger.error("Failed to apply change", {
-                      type,
-                      document,
-                      error: String(changeError),
-                    });
                   }
                 }
 
@@ -817,7 +733,6 @@ export function convexCollectionOptions(
                   try {
                     const key = `cursor:${collection}`;
                     await persistence.kv.set(key, newCursor);
-                    logger.debug("Cursor saved", { collection, cursor: newCursor });
 
                     for (const document of syncedDocuments) {
                       await convexClient.mutation(api.mark, {
@@ -826,18 +741,8 @@ export function convexCollectionOptions(
                         seq: newCursor,
                       });
                     }
-                    logger.debug("Mark sent", {
-                      collection,
-                      client: peerId,
-                      seq: newCursor,
-                      documents: syncedDocuments.size,
-                    });
                   }
                   catch (markError) {
-                    logger.error("Failed to save cursor or mark", {
-                      collection,
-                      error: String(markError),
-                    });
                   }
                 }
 
@@ -846,50 +751,27 @@ export function convexCollectionOptions(
                     await convexClient.mutation(api.compact, {
                       document: compactHint,
                     });
-                    logger.info("Compaction triggered", { collection, document: compactHint });
                   }
                   catch (compactError) {
-                    logger.error("Compaction failed", {
-                      collection,
-                      document: compactHint,
-                      error: String(compactError),
-                    });
                   }
                 }
               }
               catch (error) {
-                logger.error("Subscription handler error", { collection, error: String(error) });
               }
             };
-
-            logger.info("Establishing subscription", {
-              collection,
-              cursor,
-              limit: 1000,
-            });
 
             subscription = convexClient.onUpdate(
               api.stream,
               { cursor, limit: 1000 },
               (response: any) => {
-                logger.debug("Subscription received update", {
-                  collection,
-                  changesCount: response.changes?.length ?? 0,
-                  cursor: response.cursor,
-                  hasMore: response.hasMore,
-                });
-
                 handleSubscriptionUpdate(response);
               },
             );
 
             // Note: markReady() was already called above (local-first)
             // Subscription is background replication, not blocking
-            logger.info("Subscription established", { collection });
           }
           catch (error) {
-            logger.error("Failed to set up collection", { error, collection });
-            // Still mark ready on error so UI isn't stuck loading
             markReady();
           }
         })();

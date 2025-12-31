@@ -43,6 +43,8 @@ export interface CollectionContext {
   peer?: string;
   ref?: Collection<any>;
   vector?: Uint8Array;
+  synced?: Promise<void>;
+  resolve?: () => void;
 }
 
 const contexts = new Map<string, CollectionContext>();
@@ -80,10 +82,17 @@ function createProseState(): ProseState {
 }
 
 export function initContext(config: InitContextConfig): CollectionContext {
+  let resolver: () => void;
+  const synced = new Promise<void>((r) => {
+    resolver = r;
+  });
+
   const ctx: CollectionContext = {
     ...config,
     mutex: createMutex(),
     prose: createProseState(),
+    synced,
+    resolve: resolver!,
   };
   contexts.set(config.collection, ctx);
   return ctx;

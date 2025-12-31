@@ -2,9 +2,7 @@ import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 import type { ConvexClient } from "convex/browser";
 import type { FunctionReference } from "convex/server";
-import { getLogger } from "$/client/logger";
 
-const logger = getLogger(["replicate", "awareness"]);
 
 const DEFAULT_HEARTBEAT_INTERVAL = 10000;
 const DEFAULT_THROTTLE_MS = 50;
@@ -23,6 +21,7 @@ export interface ConvexAwarenessConfig {
   client: string;
   ydoc: Y.Doc;
   interval?: number;
+  syncReady?: Promise<void>;
 }
 
 export interface ConvexAwarenessProvider {
@@ -48,12 +47,8 @@ export function createAwarenessProvider(
     client,
     ydoc,
     interval = DEFAULT_HEARTBEAT_INTERVAL,
+    syncReady,
   } = config;
-
-  // Guard against SSR - awareness should only be created on client
-  if (typeof globalThis.window === "undefined") {
-    logger.warn("Awareness provider created in non-browser environment");
-  }
 
   const awareness = new Awareness(ydoc);
   let destroyed = false;
@@ -62,6 +57,7 @@ export function createAwarenessProvider(
   let pendingUpdate: ReturnType<typeof setTimeout> | null = null;
   let unsubscribeCursors: (() => void) | undefined;
   let unsubscribeVisibility: (() => void) | undefined;
+  let unsubscribePageHide: (() => void) | undefined;
 
   // Track remote client IDs we know about
   const remoteClientIds = new Map<string, number>();
@@ -95,14 +91,9 @@ export function createAwarenessProvider(
         anchor: JSON.parse(JSON.stringify(cursor.anchor)),
         head: JSON.parse(JSON.stringify(cursor.head)),
       };
-      logger.debug("Cursor extracted", {
-        hasAnchor: !!serialized.anchor,
-        hasHead: !!serialized.head,
-      });
       return serialized;
     }
     catch (e) {
-      logger.warn("Failed to serialize cursor", { error: String(e) });
       return undefined;
     }
   };
@@ -140,15 +131,6 @@ export function createAwarenessProvider(
     const { user, profile } = extractUserFromState(localState);
     const vector = getVector();
 
-    logger.debug("Sending awareness to server", {
-      document,
-      client,
-      hasCursor: !!cursor,
-      cursor,
-      hasProfile: !!profile,
-      localStateKeys: localState ? Object.keys(localState) : [],
-    });
-
     convexClient.mutation(api.mark, {
       document,
       client,
@@ -157,8 +139,7 @@ export function createAwarenessProvider(
       profile,
       interval,
       vector,
-    }).catch((error) => {
-      logger.warn("Failed to send awareness to server", { error: String(error) });
+    }).catch((_) => {
     });
   };
 
@@ -210,14 +191,8 @@ export function createAwarenessProvider(
         const validRemotes = remotes.filter(r => r.document === document);
 
         if (validRemotes.length !== remotes.length) {
-          logger.warn("Filtered sessions for wrong document", {
-            expected: document,
-            received: remotes.length,
-            valid: validRemotes.length,
-          });
         }
 
-        logger.debug("Presence received", { document, count: validRemotes.length });
 
         const currentRemotes = new Set<string>();
 
@@ -261,9 +236,6 @@ export function createAwarenessProvider(
     );
   };
 
-  /**
-   * Handle visibility changes - clear cursor when tab is hidden.
-   */
   const setupVisibilityHandler = () => {
     if (typeof globalThis.document === "undefined") return;
 
@@ -278,12 +250,9 @@ export function createAwarenessProvider(
           cursor: undefined,
           interval,
           vector: getVector(),
-        }).catch((error) => {
-          logger.warn("Failed to clear cursor on visibility change", { error: String(error) });
-        });
+        }).catch(() => {});
       }
       else if (!wasVisible && visible) {
-        // Tab visible again - resend current state
         sendToServer();
       }
     };
@@ -291,6 +260,22 @@ export function createAwarenessProvider(
     globalThis.document.addEventListener("visibilitychange", handler);
     unsubscribeVisibility = () => {
       globalThis.document.removeEventListener("visibilitychange", handler);
+    };
+  };
+
+  const setupPageHideHandler = () => {
+    if (typeof globalThis.window === "undefined") return;
+
+    const handler = (e: PageTransitionEvent) => {
+      if (e.persisted) return;
+      if (destroyed) return;
+
+      convexClient.mutation(api.leave, { document, client }).catch(() => {});
+    };
+
+    globalThis.window.addEventListener("pagehide", handler);
+    unsubscribePageHide = () => {
+      globalThis.window.removeEventListener("pagehide", handler);
     };
   };
 
@@ -312,19 +297,26 @@ export function createAwarenessProvider(
     }
   };
 
-  // Set up listeners
   awareness.on("update", onLocalAwarenessUpdate);
   subscribeToPresence();
   setupVisibilityHandler();
+  setupPageHideHandler();
 
-  // Start heartbeat after a tick to allow user to set initial state
-  const startTimeout = setTimeout(() => {
+  let startTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  const initHeartbeat = async () => {
+    if (syncReady) {
+      await syncReady;
+    }
     if (!destroyed) {
       startHeartbeat();
     }
+  };
+
+  startTimeout = setTimeout(() => {
+    initHeartbeat();
   }, 0);
 
-  logger.info("Awareness provider created", { document, client });
 
   return {
     awareness,
@@ -334,9 +326,10 @@ export function createAwarenessProvider(
       if (destroyed) return;
       destroyed = true;
 
-      logger.debug("Awareness provider destroying", { document, client });
-
-      clearTimeout(startTimeout);
+      if (startTimeout) {
+        clearTimeout(startTimeout);
+        startTimeout = null;
+      }
       if (pendingUpdate) {
         clearTimeout(pendingUpdate);
         pendingUpdate = null;
@@ -345,6 +338,7 @@ export function createAwarenessProvider(
       awareness.off("update", onLocalAwarenessUpdate);
       unsubscribeCursors?.();
       unsubscribeVisibility?.();
+      unsubscribePageHide?.();
 
       for (const clientId of remoteClientIds.values()) {
         awareness.states.delete(clientId);
@@ -352,9 +346,7 @@ export function createAwarenessProvider(
       remoteClientIds.clear();
       awareness.emit("update", [{ added: [], updated: [], removed: [] }, "remote"]);
 
-      convexClient.mutation(api.leave, { document, client }).catch((error) => {
-        logger.warn("Leave mutation failed", { error: String(error) });
-      });
+      convexClient.mutation(api.leave, { document, client }).catch(() => {});
 
       awareness.destroy();
     },

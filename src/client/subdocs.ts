@@ -1,9 +1,7 @@
 import * as Y from "yjs";
-import { getLogger } from "$/client/logger";
 import type { PersistenceProvider } from "$/client/persistence/types";
 import { fragmentToJSON } from "$/client/merge";
 
-const logger = getLogger(["replicate", "subdocs"]);
 
 export type SubdocPersistenceFactory = (document: string, subdoc: Y.Doc) => PersistenceProvider;
 
@@ -52,19 +50,16 @@ export function createSubdocManager(collection: string): SubdocManager {
     loaded: Set<Y.Doc>;
   }) => {
     for (const subdoc of added) {
-      logger.debug("Subdoc added", { collection, guid: subdoc.guid });
       if (persistenceFactory) {
         const document = getDocumentIdFromGuid(subdoc.guid);
         if (document && !subdocPersistence.has(document)) {
           const provider = persistenceFactory(document, subdoc);
           subdocPersistence.set(document, provider);
-          logger.debug("Created persistence for subdoc", { collection, document });
         }
       }
     }
     for (const subdoc of loaded) {
       loadedSubdocs.set(subdoc.guid, subdoc);
-      logger.debug("Subdoc loaded", { collection, guid: subdoc.guid });
     }
     for (const subdoc of removed) {
       loadedSubdocs.delete(subdoc.guid);
@@ -74,10 +69,8 @@ export function createSubdocManager(collection: string): SubdocManager {
         if (provider) {
           provider.destroy();
           subdocPersistence.delete(document);
-          logger.debug("Destroyed persistence for removed subdoc", { collection, document });
         }
       }
-      logger.debug("Subdoc removed", { collection, guid: subdoc.guid });
     }
   });
 
@@ -93,7 +86,6 @@ export function createSubdocManager(collection: string): SubdocManager {
       if (!subdoc) {
         subdoc = new Y.Doc({ guid });
         subdocsMap.set(document, subdoc);
-        logger.debug("Created subdoc", { collection, document, guid });
       }
 
       if (!subdoc.isLoaded) {
@@ -132,12 +124,6 @@ export function createSubdocManager(collection: string): SubdocManager {
     applyUpdate(document: string, update: Uint8Array, origin?: string): void {
       const subdoc = this.getOrCreate(document);
       Y.applyUpdateV2(subdoc, update, origin);
-      logger.debug("Applied update to subdoc", {
-        collection,
-        document,
-        updateSize: update.byteLength,
-        origin,
-      });
     },
 
     transactWithDelta(
@@ -155,12 +141,6 @@ export function createSubdocManager(collection: string): SubdocManager {
 
       const delta = Y.encodeStateAsUpdateV2(subdoc, beforeVector);
 
-      logger.debug("Transaction completed", {
-        collection,
-        document,
-        deltaSize: delta.byteLength,
-        origin,
-      });
 
       return delta;
     },
@@ -190,7 +170,6 @@ export function createSubdocManager(collection: string): SubdocManager {
         subdocsMap.delete(document);
         subdoc.destroy();
         loadedSubdocs.delete(makeGuid(document));
-        logger.debug("Deleted subdoc", { collection, document });
       }
     },
 
@@ -199,7 +178,6 @@ export function createSubdocManager(collection: string): SubdocManager {
       if (subdoc) {
         subdoc.destroy();
         loadedSubdocs.delete(makeGuid(document));
-        logger.debug("Unloaded subdoc", { collection, document });
       }
     },
 
@@ -212,32 +190,26 @@ export function createSubdocManager(collection: string): SubdocManager {
         if (!subdocPersistence.has(document)) {
           const provider = factory(document, subdoc);
           subdocPersistence.set(document, provider);
-          logger.debug("Enabled persistence for existing subdoc", { collection, document });
         }
       }
 
       persistenceFactory = factory;
-      logger.info("Subdoc persistence enabled", { collection });
     },
 
     destroy(): void {
-      for (const [document, provider] of subdocPersistence) {
+      for (const [_, provider] of subdocPersistence) {
         provider.destroy();
-        logger.debug("Destroyed subdoc persistence", { collection, document });
       }
       subdocPersistence.clear();
 
-      for (const [docId, subdoc] of loadedSubdocs) {
+      for (const [_, subdoc] of loadedSubdocs) {
         subdoc.destroy();
-        logger.debug("Destroyed subdoc", { collection, guid: docId });
       }
       loadedSubdocs.clear();
       rootDoc.destroy();
-      logger.info("SubdocManager destroyed", { collection });
     },
   };
 
-  logger.info("SubdocManager created", { collection });
   return manager;
 }
 
