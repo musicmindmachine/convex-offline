@@ -107,7 +107,7 @@
 		variant="ghost"
 		size="icon-xs"
 		onclick={handleDeleteClick}
-		class="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0"
+		class="text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0"
 		title="Delete interval"
 	>
 		<Trash2 class="w-3.5 h-3.5" />

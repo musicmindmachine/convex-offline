@@ -89,6 +89,7 @@
 	<Dialog.Content
 		class="w-[85vw] max-w-[85vw] sm:max-w-[400px] h-auto max-h-[80vh] sm:max-h-[85vh] p-0 gap-0 rounded-none"
 		onkeydown={handleKeyDown}
+		showCloseButton={false}
 	>
 		<Dialog.Header class="sr-only">
 			<Dialog.Title>Filter intervals</Dialog.Title>
