@@ -144,7 +144,9 @@ function DeleteCell({ interval }: { interval: Interval }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete interval?</AlertDialogTitle>
             <AlertDialogDescription>
-              &ldquo;{interval.title || "Untitled"}&rdquo; will be permanently deleted.
+              &ldquo;
+              {interval.title || "Untitled"}
+              &rdquo; will be permanently deleted.
               This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
