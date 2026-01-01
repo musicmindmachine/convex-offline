@@ -54,7 +54,6 @@ export function createReplicateOps<T>(params: ReplicateParams): BoundReplicateOp
       params.commit();
     },
 
-    // Upsert uses 'update' type - TanStack DB only recognizes insert/update/delete
     upsert(items: T[]): void {
       params.begin();
       for (const item of items) {

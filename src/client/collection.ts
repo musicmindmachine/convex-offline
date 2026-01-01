@@ -639,16 +639,30 @@ export function convexCollectionOptions(
             const cursor = ssrCursor ?? persistedCursor;
             const mux = getContext(collection).mutex;
 
-            const handleSnapshotChange = (bytes: ArrayBuffer, document: string) => {
+            const handleSnapshotChange = (
+              bytes: ArrayBuffer,
+              document: string,
+              exists: boolean,
+            ) => {
+              if (!exists && !subdocManager.has(document)) {
+                return;
+              }
+
               prose.cancelAllPending(collection);
 
               mux(() => {
                 try {
+                  const itemBefore = extractDocumentFromSubdoc(subdocManager, document);
                   const update = new Uint8Array(bytes);
                   subdocManager.applyUpdate(document, update, YjsOrigin.Server);
-                  const item = extractDocumentFromSubdoc(subdocManager, document);
-                  if (item) {
-                    ops.upsert([item as DataType]);
+                  const itemAfter = extractDocumentFromSubdoc(subdocManager, document);
+                  if (itemAfter) {
+                    if (itemBefore) {
+                      ops.upsert([itemAfter as DataType]);
+                    }
+                    else {
+                      ops.insert([itemAfter as DataType]);
+                    }
                   }
                 }
                 catch (error) {
@@ -657,8 +671,16 @@ export function convexCollectionOptions(
               });
             };
 
-            const handleDeltaChange = (bytes: ArrayBuffer, document: string | undefined) => {
+            const handleDeltaChange = (
+              bytes: ArrayBuffer,
+              document: string | undefined,
+              exists: boolean,
+            ) => {
               if (!document) {
+                return;
+              }
+
+              if (!exists && !subdocManager.has(document)) {
                 return;
               }
 
@@ -673,7 +695,12 @@ export function convexCollectionOptions(
 
                   const itemAfter = extractDocumentFromSubdoc(subdocManager, document);
                   if (itemAfter) {
-                    ops.upsert([itemAfter as DataType]);
+                    if (itemBefore) {
+                      ops.upsert([itemAfter as DataType]);
+                    }
+                    else {
+                      ops.insert([itemAfter as DataType]);
+                    }
                   }
                   else if (itemBefore) {
                     ops.delete([itemBefore as DataType]);
@@ -697,7 +724,7 @@ export function convexCollectionOptions(
               const syncedDocuments = new Set<string>();
 
               for (const change of changes) {
-                const { type, bytes, document } = change;
+                const { type, bytes, document, exists } = change;
                 if (!bytes || !document) {
                   continue;
                 }
@@ -705,10 +732,10 @@ export function convexCollectionOptions(
                 syncedDocuments.add(document);
 
                 if (type === "snapshot") {
-                  handleSnapshotChange(bytes, document);
+                  handleSnapshotChange(bytes, document, exists ?? true);
                 }
                 else {
-                  handleDeltaChange(bytes, document);
+                  handleDeltaChange(bytes, document, exists ?? true);
                 }
               }
 

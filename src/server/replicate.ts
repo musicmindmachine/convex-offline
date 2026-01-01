@@ -45,6 +45,7 @@ export class Replicate<T extends object> {
             bytes: v.bytes(),
             seq: v.number(),
             type: v.string(),
+            exists: v.boolean(),
           }),
         ),
         seq: v.number(),
@@ -64,11 +65,33 @@ export class Replicate<T extends object> {
           threshold: args.threshold,
         });
 
-        if (opts?.onStream) {
-          await opts.onStream(ctx, result);
+        const docIdSet = new Set<string>();
+        for (const change of result.changes) {
+          docIdSet.add((change as { document: string }).document);
         }
 
-        return result;
+        const existingDocs = new Set<string>();
+        for (const docId of docIdSet) {
+          const doc = await ctx.db
+            .query(collection)
+            .withIndex("by_doc_id", (q: any) => q.eq("id", docId))
+            .first();
+          if (doc) existingDocs.add(docId);
+        }
+
+        interface StreamChange { document: string; bytes: ArrayBuffer; seq: number; type: string }
+        const enrichedChanges = result.changes.map((c: StreamChange) => ({
+          ...c,
+          exists: existingDocs.has(c.document),
+        }));
+
+        const enrichedResult = { ...result, changes: enrichedChanges };
+
+        if (opts?.onStream) {
+          await opts.onStream(ctx, enrichedResult);
+        }
+
+        return enrichedResult;
       },
     });
   }

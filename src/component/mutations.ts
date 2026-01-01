@@ -465,8 +465,6 @@ export const recovery = query({
     vector: v.bytes(),
   }),
   handler: async (ctx, args) => {
-    const logger = getLogger(["recovery"]);
-
     const snapshot = await ctx.db
       .query("snapshots")
       .withIndex("by_document", (q: any) =>
@@ -504,15 +502,6 @@ export const recovery = query({
     const clientVector = new Uint8Array(args.vector);
     const diff = Y.diffUpdateV2(merged, clientVector);
     const serverVector = Y.encodeStateVectorFromUpdateV2(merged);
-
-    logger.debug("Recovery sync computed", {
-      collection: args.collection,
-      document: args.document,
-      hasSnapshot: !!snapshot,
-      deltaCount: deltas.length,
-      diffSize: diff.byteLength,
-      hasDiff: diff.byteLength > 0,
-    });
 
     return {
       diff: diff.byteLength > 0 ? (diff.buffer as ArrayBuffer) : undefined,
