@@ -1,40 +1,10 @@
 /**
  * Merge Helpers - Plain functions for Yjs CRDT operations
  *
- * Provides document creation, state encoding, and merge operations.
+ * Provides state encoding and merge operations.
  */
 
 import * as Y from "yjs";
-import { getLogger } from "$/client/logger";
-import type { KeyValueStore } from "$/client/persistence/types";
-
-const logger = getLogger(["replicate", "merge"]);
-
-/**
- * Create a Yjs document with a persistent clientId.
- * The clientId ensures consistent identity across sessions for CRDT merging.
- *
- * @param collection - The collection name
- * @param kv - Key-value store for persisting the clientId
- */
-export async function createYjsDocument(collection: string, kv: KeyValueStore): Promise<Y.Doc> {
-  const clientIdKey = `yjsClientId:${collection}`;
-  let clientId = await kv.get<number>(clientIdKey);
-
-  if (!clientId) {
-    clientId = Math.floor(Math.random() * 2147483647);
-    await kv.set(clientIdKey, clientId);
-    logger.info("Generated new Yjs clientID", { collection, clientId });
-  }
-
-  const ydoc = new Y.Doc({
-    guid: collection,
-    clientID: clientId,
-  } as any);
-
-  logger.info("Created Yjs document", { collection, clientId });
-  return ydoc;
-}
 
 /**
  * Apply a binary update to a Yjs document.

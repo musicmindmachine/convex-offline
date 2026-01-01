@@ -34,6 +34,11 @@ import {
   deleteContext,
 } from "$/client/services/context";
 import {
+  createRuntime,
+  runWithRuntime,
+  type ReplicateRuntime,
+} from "$/client/services/engine";
+import {
   createAwarenessProvider,
   type ConvexAwarenessProvider,
   type UserIdentity,
@@ -41,12 +46,14 @@ import {
 import { Awareness } from "y-protocols/awareness";
 import { z } from "zod";
 
-/** Origin markers for Yjs transactions */
 enum YjsOrigin {
   Local = "local",
   Fragment = "fragment",
   Server = "server",
 }
+
+const noop = (): void => undefined;
+
 import type { ProseFields } from "$/shared/types";
 
 interface HttpError extends Error {
@@ -503,10 +510,6 @@ export function convexCollectionOptions(
       const mutation = transaction.mutations[0];
       const documentKey = String(mutation.key);
 
-      if (prose.isApplyingFromServer(collection, documentKey)) {
-        return;
-      }
-
       const metadata = mutation.metadata as { contentSync?: ContentSyncMetadata } | undefined;
       const isContentSync = !!metadata?.contentSync;
 
@@ -605,7 +608,7 @@ export function convexCollectionOptions(
 
             resolvePersistenceReady?.();
 
-            const clientId = getClientId(collection);
+            const clientId = await getClientId(persistence.kv);
             updateContext(collection, { clientId });
 
             ops = createReplicateOps<DataType>(params);
@@ -639,9 +642,19 @@ export function convexCollectionOptions(
               }).pipe(Effect.provide(seqLayer)),
             );
             const cursor = ssrCursor ?? persistedCursor;
-            const mux = getContext(collection).mutex;
 
-            const handleSnapshotChange = (
+            const replicateRuntime: ReplicateRuntime = await Effect.runPromise(
+              Effect.scoped(
+                createRuntime({
+                  kv: persistence.kv,
+                  config: { debounceMs: DEFAULT_DEBOUNCE_MS },
+                }),
+              ),
+            );
+            const actorManager = replicateRuntime.actorManager;
+            updateContext(collection, { actorManager, runtime: replicateRuntime });
+
+            const handleSnapshotChange = async (
               bytes: ArrayBuffer,
               document: string,
               exists: boolean,
@@ -650,30 +663,24 @@ export function convexCollectionOptions(
                 return;
               }
 
-              prose.cancelAllPending(collection);
+              const itemBefore = extractDocumentFromSubdoc(subdocManager, document);
+              const update = new Uint8Array(bytes);
+              subdocManager.applyUpdate(document, update, YjsOrigin.Server);
+              const itemAfter = extractDocumentFromSubdoc(subdocManager, document);
 
-              mux(() => {
-                try {
-                  const itemBefore = extractDocumentFromSubdoc(subdocManager, document);
-                  const update = new Uint8Array(bytes);
-                  subdocManager.applyUpdate(document, update, YjsOrigin.Server);
-                  const itemAfter = extractDocumentFromSubdoc(subdocManager, document);
-                  if (itemAfter) {
-                    if (itemBefore) {
-                      ops.upsert([itemAfter as DataType]);
-                    }
-                    else {
-                      ops.insert([itemAfter as DataType]);
-                    }
-                  }
+              if (itemAfter) {
+                if (itemBefore) {
+                  ops.upsert([itemAfter as DataType]);
                 }
-                catch (error) {
-                  throw new Error(`Snapshot application failed: ${error}`);
+                else {
+                  ops.insert([itemAfter as DataType]);
                 }
-              });
+              }
+
+              await runWithRuntime(replicateRuntime, actorManager.onServerUpdate(document));
             };
 
-            const handleDeltaChange = (
+            const handleDeltaChange = async (
               bytes: ArrayBuffer,
               document: string | undefined,
               exists: boolean,
@@ -686,35 +693,24 @@ export function convexCollectionOptions(
                 return;
               }
 
-              prose.cancelPending(collection, document);
-              prose.setApplyingFromServer(collection, document, true);
+              const itemBefore = extractDocumentFromSubdoc(subdocManager, document);
+              const update = new Uint8Array(bytes);
+              subdocManager.applyUpdate(document, update, YjsOrigin.Server);
 
-              mux(() => {
-                try {
-                  const itemBefore = extractDocumentFromSubdoc(subdocManager, document);
-                  const update = new Uint8Array(bytes);
-                  subdocManager.applyUpdate(document, update, YjsOrigin.Server);
+              const itemAfter = extractDocumentFromSubdoc(subdocManager, document);
+              if (itemAfter) {
+                if (itemBefore) {
+                  ops.upsert([itemAfter as DataType]);
+                }
+                else {
+                  ops.insert([itemAfter as DataType]);
+                }
+              }
+              else if (itemBefore) {
+                ops.delete([itemBefore as DataType]);
+              }
 
-                  const itemAfter = extractDocumentFromSubdoc(subdocManager, document);
-                  if (itemAfter) {
-                    if (itemBefore) {
-                      ops.upsert([itemAfter as DataType]);
-                    }
-                    else {
-                      ops.insert([itemAfter as DataType]);
-                    }
-                  }
-                  else if (itemBefore) {
-                    ops.delete([itemBefore as DataType]);
-                  }
-                }
-                catch (error) {
-                  throw new Error(`Delta application failed for ${document}: ${error}`);
-                }
-                finally {
-                  prose.setApplyingFromServer(collection, document, false);
-                }
-              });
+              await runWithRuntime(replicateRuntime, actorManager.onServerUpdate(document));
             };
 
             const handleSubscriptionUpdate = async (response: any) => {
@@ -734,32 +730,33 @@ export function convexCollectionOptions(
                 syncedDocuments.add(document);
 
                 if (type === "snapshot") {
-                  handleSnapshotChange(bytes, document, exists ?? true);
+                  await handleSnapshotChange(bytes, document, exists ?? true);
                 }
                 else {
-                  handleDeltaChange(bytes, document, exists ?? true);
+                  await handleDeltaChange(bytes, document, exists ?? true);
                 }
               }
 
               if (newSeq !== undefined) {
-                const key = `cursor:${collection}`;
-                await persistence.kv.set(key, newSeq);
+                persistence.kv.set(`cursor:${collection}`, newSeq);
 
-                for (const document of syncedDocuments) {
+                const markPromises = Array.from(syncedDocuments).map((document) => {
                   const vector = subdocManager.encodeStateVector(document);
-                  convexClient.mutation(api.mark, {
-                    document: document,
+                  return convexClient.mutation(api.mark, {
+                    document,
                     client: clientId,
                     seq: newSeq,
                     vector: vector.buffer as ArrayBuffer,
-                  });
-                }
+                  }).catch(noop);
+                });
+                Promise.all(markPromises);
               }
 
               if (compact?.documents?.length) {
-                for (const doc of compact.documents) {
-                  convexClient.mutation(api.compact, { document: doc });
-                }
+                const compactPromises = compact.documents.map((doc: string) =>
+                  convexClient.mutation(api.compact, { document: doc }).catch(noop),
+                );
+                Promise.all(compactPromises);
               }
             };
 

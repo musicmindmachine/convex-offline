@@ -1,9 +1,9 @@
-import { createMutex } from "lib0/mutex";
 import type { ConvexClient } from "convex/browser";
 import type { FunctionReference } from "convex/server";
 import type { Collection } from "@tanstack/db";
 import type { Persistence } from "$/client/persistence/types";
 import type { SubdocManager } from "$/client/subdocs";
+import type { ActorManager, ReplicateRuntime } from "$/client/services/engine";
 
 interface ConvexCollectionApi {
   stream: FunctionReference<"query">;
@@ -19,16 +19,6 @@ interface ConvexCollectionApi {
   leave?: FunctionReference<"mutation">;
 }
 
-export interface ProseState {
-  applyingFromServer: Map<string, boolean>;
-  debounceTimers: Map<string, ReturnType<typeof setTimeout>>;
-  lastSyncedVectors: Map<string, Uint8Array>;
-  pendingState: Map<string, boolean>;
-  pendingListeners: Map<string, Set<(pending: boolean) => void>>;
-  fragmentObservers: Map<string, () => void>;
-  failedSyncQueue: Map<string, boolean>;
-}
-
 export interface CollectionContext {
   collection: string;
   subdocs: SubdocManager;
@@ -36,13 +26,13 @@ export interface CollectionContext {
   api: ConvexCollectionApi;
   persistence: Persistence;
   fields: Set<string>;
-  mutex: ReturnType<typeof createMutex>;
   debounce: number;
-  prose: ProseState;
+  fragmentObservers: Map<string, () => void>;
+  actorManager?: ActorManager;
+  runtime?: ReplicateRuntime;
   cleanup?: () => void;
   clientId?: string;
   ref?: Collection<any>;
-  vector?: Uint8Array;
   synced?: Promise<void>;
   resolve?: () => void;
 }
@@ -61,25 +51,13 @@ export function hasContext(collection: string): boolean {
 
 type InitContextConfig = Omit<
   CollectionContext,
-  | "mutex"
-  | "prose"
+  | "fragmentObservers"
   | "cleanup"
   | "clientId"
   | "ref"
-  | "vector"
+  | "actorManager"
+  | "runtime"
 >;
-
-function createProseState(): ProseState {
-  return {
-    applyingFromServer: new Map(),
-    debounceTimers: new Map(),
-    lastSyncedVectors: new Map(),
-    pendingState: new Map(),
-    pendingListeners: new Map(),
-    fragmentObservers: new Map(),
-    failedSyncQueue: new Map(),
-  };
-}
 
 export function initContext(config: InitContextConfig): CollectionContext {
   let resolver: () => void;
@@ -89,8 +67,7 @@ export function initContext(config: InitContextConfig): CollectionContext {
 
   const ctx: CollectionContext = {
     ...config,
-    mutex: createMutex(),
-    prose: createProseState(),
+    fragmentObservers: new Map(),
     synced,
     resolve: resolver!,
   };
@@ -102,7 +79,7 @@ export function deleteContext(collection: string): void {
   contexts.delete(collection);
 }
 
-type UpdateableFields = "clientId" | "ref" | "vector" | "cleanup";
+type UpdateableFields = "clientId" | "ref" | "cleanup" | "actorManager" | "runtime";
 
 export function updateContext(
   collection: string,

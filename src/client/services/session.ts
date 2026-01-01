@@ -1,20 +1,30 @@
-function generateClientId(): number {
-  return Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
+import type { KeyValueStore } from "$/client/persistence/types";
+
+const SESSION_CLIENT_ID_KEY = "replicate:sessionClientId";
+
+let cachedSessionClientId: string | null = null;
+
+function generateSessionClientId(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return String(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER));
 }
 
-export function getClientId(collection: string): string {
-  const key = `replicate:clientId:${collection}`;
-
-  if (typeof localStorage === "undefined") {
-    return String(generateClientId());
+export async function getClientId(kv: KeyValueStore): Promise<string> {
+  if (cachedSessionClientId) {
+    return cachedSessionClientId;
   }
 
-  const stored = localStorage.getItem(key);
+  const stored = await kv.get<string>(SESSION_CLIENT_ID_KEY);
   if (stored) {
+    cachedSessionClientId = stored;
     return stored;
   }
 
-  const clientId = String(generateClientId());
-  localStorage.setItem(key, clientId);
-  return clientId;
+  const newId = generateSessionClientId();
+  cachedSessionClientId = newId;
+  await kv.set(SESSION_CLIENT_ID_KEY, newId);
+
+  return newId;
 }

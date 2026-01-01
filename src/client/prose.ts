@@ -1,125 +1,17 @@
-/**
- * Prose Field Helpers - Document-level state management for rich text sync
- *
- * Manages Y.XmlFragment observation, debounced sync, and pending state.
- * Uses CollectionContext for state storage.
- */
-
 import * as Y from "yjs";
 import { z } from "zod";
 import type { Collection } from "@tanstack/db";
+import { Effect, SubscriptionRef, Stream, Fiber } from "effect";
 import { getLogger } from "$/client/logger";
 import { serializeYMapValue } from "$/client/merge";
-import { getContext, hasContext, type ProseState } from "$/client/services/context";
+import { getContext, hasContext } from "$/client/services/context";
+import { runWithRuntime } from "$/client/services/engine";
 import type { ProseValue } from "$/shared/types";
 
 const SERVER_ORIGIN = "server";
 const noop = (): void => undefined;
 
 const logger = getLogger(["replicate", "prose"]);
-
-const DEFAULT_DEBOUNCE_MS = 1000;
-
-function getProseState(collection: string): ProseState | null {
-  if (!hasContext(collection)) return null;
-  return getContext(collection).prose;
-}
-
-export function isApplyingFromServer(collection: string, document: string): boolean {
-  const state = getProseState(collection);
-  if (!state) return false;
-  return state.applyingFromServer.get(document) ?? false;
-}
-
-export function setApplyingFromServer(
-  collection: string,
-  document: string,
-  value: boolean,
-): void {
-  const state = getProseState(collection);
-  if (!state) return;
-  if (value) {
-    state.applyingFromServer.set(document, true);
-  }
-  else {
-    state.applyingFromServer.delete(document);
-  }
-}
-
-function setPendingInternal(collection: string, document: string, value: boolean): void {
-  const state = getProseState(collection);
-  if (!state) return;
-
-  const current = state.pendingState.get(document) ?? false;
-  if (current !== value) {
-    state.pendingState.set(document, value);
-    const listeners = state.pendingListeners.get(document);
-    if (listeners) {
-      for (const cb of listeners) {
-        try {
-          cb(value);
-        }
-        catch (err) {
-          logger.error("Pending listener error", { collection, document, error: String(err) });
-        }
-      }
-    }
-  }
-}
-
-export function isPending(collection: string, document: string): boolean {
-  const state = getProseState(collection);
-  if (!state) return false;
-  return state.pendingState.get(document) ?? false;
-}
-
-export function subscribePending(
-  collection: string,
-  document: string,
-  callback: (pending: boolean) => void,
-): () => void {
-  const state = getProseState(collection);
-  if (!state) return noop;
-
-  let listeners = state.pendingListeners.get(document);
-  if (!listeners) {
-    listeners = new Set();
-    state.pendingListeners.set(document, listeners);
-  }
-
-  listeners.add(callback);
-  return () => {
-    listeners?.delete(callback);
-    if (listeners?.size === 0) {
-      state.pendingListeners.delete(document);
-    }
-  };
-}
-
-export function cancelPending(collection: string, document: string): void {
-  const state = getProseState(collection);
-  if (!state) return;
-
-  const timer = state.debounceTimers.get(document);
-  if (timer) {
-    clearTimeout(timer);
-    state.debounceTimers.delete(document);
-    setPendingInternal(collection, document, false);
-    logger.debug("Cancelled pending sync due to remote update", { collection, document });
-  }
-}
-
-export function cancelAllPending(collection: string): void {
-  const state = getProseState(collection);
-  if (!state) return;
-
-  for (const [doc, timer] of state.debounceTimers) {
-    clearTimeout(timer);
-    state.debounceTimers.delete(doc);
-    setPendingInternal(collection, doc, false);
-  }
-  logger.debug("Cancelled all pending syncs", { collection });
-}
 
 export interface ProseObserverConfig {
   collection: string;
@@ -132,6 +24,28 @@ export interface ProseObserverConfig {
   debounceMs?: number;
 }
 
+function createSyncFn(
+  document: string,
+  ydoc: Y.Doc,
+  ymap: Y.Map<unknown>,
+  collectionRef: Collection<any>,
+): () => Promise<void> {
+  return async () => {
+    const material = serializeYMapValue(ymap);
+    const delta = Y.encodeStateAsUpdateV2(ydoc);
+    const bytes = delta.buffer as ArrayBuffer;
+
+    const result = collectionRef.update(
+      document,
+      { metadata: { contentSync: { bytes, material } } },
+      (draft: any) => {
+        draft.updatedAt = Date.now();
+      },
+    );
+    await result.isPersisted.promise;
+  };
+}
+
 export function observeFragment(config: ProseObserverConfig): () => void {
   const {
     collection,
@@ -141,123 +55,128 @@ export function observeFragment(config: ProseObserverConfig): () => void {
     ydoc,
     ymap,
     collectionRef,
-    debounceMs = DEFAULT_DEBOUNCE_MS,
   } = config;
 
-  const state = getProseState(collection);
-  if (!state) {
+  if (!hasContext(collection)) {
     logger.warn("Cannot observe fragment - collection not initialized", { collection, document });
     return noop;
   }
 
-  const existingCleanup = state.fragmentObservers.get(document);
+  const ctx = getContext(collection);
+  const actorManager = ctx.actorManager;
+  const runtime = ctx.runtime;
+
+  if (!actorManager || !runtime) {
+    logger.warn("Cannot observe fragment - actor system not initialized", { collection, document });
+    return noop;
+  }
+
+  const existingCleanup = ctx.fragmentObservers.get(document);
   if (existingCleanup) {
     logger.debug("Fragment already being observed", { collection, document, field });
     return existingCleanup;
   }
+
+  const syncFn = createSyncFn(document, ydoc, ymap, collectionRef);
+
+  runWithRuntime(runtime, actorManager.register(document, ydoc, syncFn));
 
   const observerHandler = (_events: Y.YEvent<any>[], transaction: Y.Transaction) => {
     if (transaction.origin === SERVER_ORIGIN) {
       return;
     }
 
-    const existing = state.debounceTimers.get(document);
-    if (existing) clearTimeout(existing);
-
-    setPendingInternal(collection, document, true);
-
-    const timer = setTimeout(async () => {
-      state.debounceTimers.delete(document);
-
-      try {
-        const lastVector = state.lastSyncedVectors.get(document);
-        const delta = lastVector
-          ? Y.encodeStateAsUpdateV2(ydoc, lastVector)
-          : Y.encodeStateAsUpdateV2(ydoc);
-
-        if (delta.length <= 2) {
-          logger.debug("No changes to sync", { collection, document });
-          setPendingInternal(collection, document, false);
-          return;
-        }
-
-        const bytes = delta.buffer as ArrayBuffer;
-        const currentVector = Y.encodeStateVector(ydoc);
-
-        logger.debug("Syncing prose delta", {
-          collection,
-          document,
-          deltaSize: delta.byteLength,
-        });
-
-        const material = serializeYMapValue(ymap);
-
-        const result = collectionRef.update(
-          document,
-          { metadata: { contentSync: { bytes, material } } },
-          (draft: any) => {
-            draft.updatedAt = Date.now();
-          },
-        );
-        await result.isPersisted.promise;
-
-        state.lastSyncedVectors.set(document, currentVector);
-        state.failedSyncQueue.delete(document);
-        setPendingInternal(collection, document, false);
-        logger.debug("Prose sync completed", { collection, document });
-      }
-      catch (err) {
-        logger.error("Prose sync failed, queued for retry", {
-          collection,
-          document,
-          error: String(err),
-        });
-        state.failedSyncQueue.set(document, true);
-      }
-    }, debounceMs);
-
-    state.debounceTimers.set(document, timer);
-
-    if (state.failedSyncQueue.has(document)) {
-      state.failedSyncQueue.delete(document);
-      logger.debug("Retrying failed sync", { collection, document });
-    }
+    runWithRuntime(runtime, actorManager.onLocalChange(document));
   };
 
   fragment.observeDeep(observerHandler);
 
   const cleanup = () => {
     fragment.unobserveDeep(observerHandler);
-    cancelPending(collection, document);
-    state.fragmentObservers.delete(document);
-    state.lastSyncedVectors.delete(document);
+    runWithRuntime(runtime, actorManager.unregister(document));
+    ctx.fragmentObservers.delete(document);
     logger.debug("Fragment observer cleaned up", { collection, document, field });
   };
 
-  state.fragmentObservers.set(document, cleanup);
+  ctx.fragmentObservers.set(document, cleanup);
   logger.debug("Fragment observer registered", { collection, document, field });
 
   return cleanup;
 }
 
-export function cleanup(collection: string): void {
-  const state = getProseState(collection);
-  if (!state) return;
+export function isPending(collection: string, document: string): boolean {
+  if (!hasContext(collection)) return false;
+  const ctx = getContext(collection);
+  if (!ctx.actorManager || !ctx.runtime) return false;
 
-  for (const [, timer] of state.debounceTimers) {
-    clearTimeout(timer);
+  let result = false;
+
+  const effect = Effect.gen(function* () {
+    const actor = yield* ctx.actorManager!.get(document);
+    if (!actor) return false;
+    return yield* SubscriptionRef.get(actor.pending);
+  });
+
+  try {
+    result = Effect.runSync(Effect.provide(effect, ctx.runtime.runtime));
   }
-  state.debounceTimers.clear();
-  state.pendingState.clear();
-  state.pendingListeners.clear();
-  state.applyingFromServer.clear();
-  state.lastSyncedVectors.clear();
+  catch {
+    result = false;
+  }
 
-  for (const [, cleanupFn] of state.fragmentObservers) {
+  return result;
+}
+
+export function subscribePending(
+  collection: string,
+  document: string,
+  callback: (pending: boolean) => void,
+): () => void {
+  if (!hasContext(collection)) return noop;
+  const ctx = getContext(collection);
+  if (!ctx.actorManager || !ctx.runtime) return noop;
+
+  let fiber: Fiber.RuntimeFiber<void, never> | null = null;
+
+  const setupEffect = Effect.gen(function* () {
+    const actor = yield* ctx.actorManager!.get(document);
+    if (!actor) return;
+
+    const stream = actor.pending.changes;
+
+    fiber = yield* Effect.fork(
+      Stream.runForEach(stream, (pending: boolean) =>
+        Effect.sync(() => callback(pending)),
+      ),
+    );
+  });
+
+  try {
+    Effect.runSync(Effect.provide(setupEffect, ctx.runtime.runtime));
+  }
+  catch {
+    return noop;
+  }
+
+  return () => {
+    if (fiber) {
+      Effect.runPromise(Fiber.interrupt(fiber));
+    }
+  };
+}
+
+export function cleanup(collection: string): void {
+  if (!hasContext(collection)) return;
+  const ctx = getContext(collection);
+
+  for (const [, cleanupFn] of ctx.fragmentObservers) {
     cleanupFn();
   }
-  state.fragmentObservers.clear();
-  state.failedSyncQueue.clear();
+  ctx.fragmentObservers.clear();
+
+  if (ctx.runtime) {
+    ctx.runtime.cleanup();
+  }
 
   logger.debug("Prose cleanup complete", { collection });
 }
