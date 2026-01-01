@@ -8,7 +8,6 @@
   import StarIcon from "./StarIcon.svelte";
   import { intervals as intervalsCollection } from "$collections/useIntervals";
   import { prose } from "@trestleinc/replicate/client";
-  import { createVirtualizer } from "$lib/components/ui/data-table";
   import type { Interval } from "$lib/types";
 
   interface Props {
@@ -33,30 +32,6 @@
   );
 
   const activeId = $derived(page.params.id);
-
-  const ROW_HEIGHT = 36;
-  const OVERSCAN = 10;
-
-  let containerRef: HTMLDivElement | undefined = $state();
-
-  // Create virtualizer once (stable instance) - don't use $derived
-  const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
-    count: 0,
-    getScrollElement: () => null,
-    estimateSize: () => ROW_HEIGHT,
-    overscan: OVERSCAN,
-  });
-
-  // Update options reactively when intervals or container change
-  $effect(() => {
-    $virtualizer.setOptions({
-      count: sortedIntervals.length,
-      getScrollElement: () => containerRef ?? null,
-    });
-  });
-
-  const virtualRows = $derived($virtualizer.getVirtualItems());
-  const totalSize = $derived($virtualizer.getTotalSize());
 
   function createInterval() {
     const id = crypto.randomUUID();
@@ -130,7 +105,7 @@
     </Button>
   </div>
 
-  <div bind:this={containerRef} class="flex-1 overflow-auto">
+  <div class="flex-1 overflow-auto">
     {#if intervalsQuery.isLoading}
       <div class="space-y-2 p-2">
         <div class="h-8 w-full bg-muted animate-pulse rounded"></div>
@@ -145,12 +120,9 @@
       </div>
     {:else}
       <nav class="p-1">
-        <ul class="list-none m-0 p-0" style="height: {totalSize}px; position: relative;">
-          {#each virtualRows as virtualRow (virtualRow.key)}
-            {@const interval = sortedIntervals[virtualRow.index]}
-            <li
-              style="position: absolute; top: 0; left: 0; width: 100%; height: {virtualRow.size}px; transform: translateY({virtualRow.start}px);"
-            >
+        <ul class="list-none m-0 p-0">
+          {#each sortedIntervals as interval (interval.id)}
+            <li>
               {#if editingId === interval.id}
                 <div class="flex items-center gap-2 px-3 py-2 bg-muted">
                   <StatusIcon status={interval.status} size={14} class="shrink-0" />
