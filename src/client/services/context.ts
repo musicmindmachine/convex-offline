@@ -35,6 +35,10 @@ export interface CollectionContext {
   ref?: Collection<any>;
   synced?: Promise<void>;
   resolve?: () => void;
+  /** Promise that resolves when actor system is initialized */
+  actorReady?: Promise<void>;
+  /** Resolver for actorReady promise */
+  resolveActorReady?: () => void;
 }
 
 const contexts = new Map<string, CollectionContext>();
@@ -65,11 +69,18 @@ export function initContext(config: InitContextConfig): CollectionContext {
     resolver = r;
   });
 
+  let actorResolver: () => void;
+  const actorReady = new Promise<void>((r) => {
+    actorResolver = r;
+  });
+
   const ctx: CollectionContext = {
     ...config,
     fragmentObservers: new Map(),
     synced,
     resolve: resolver!,
+    actorReady,
+    resolveActorReady: actorResolver!,
   };
   contexts.set(config.collection, ctx);
   return ctx;

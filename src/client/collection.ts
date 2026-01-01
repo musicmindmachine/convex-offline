@@ -279,6 +279,10 @@ export function convexCollectionOptions(
         });
       }
 
+      if (ctx.actorReady) {
+        await ctx.actorReady;
+      }
+
       const collectionRef = ctx.ref;
       if (collectionRef) {
         prose.observeFragment({
@@ -653,6 +657,7 @@ export function convexCollectionOptions(
             );
             const actorManager = replicateRuntime.actorManager;
             updateContext(collection, { actorManager, runtime: replicateRuntime });
+            getContext(collection).resolveActorReady?.();
 
             const handleSnapshotChange = async (
               bytes: ArrayBuffer,
