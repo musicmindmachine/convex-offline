@@ -100,23 +100,10 @@ export const mark = mutation({
     client: v.string(),
     vector: v.optional(v.bytes()),
     seq: v.optional(v.number()),
-    user: v.optional(v.string()),
-    profile: v.optional(v.object({
-      name: v.optional(v.string()),
-      color: v.optional(v.string()),
-      avatar: v.optional(v.string()),
-    })),
-    cursor: v.optional(v.object({
-      anchor: v.any(),
-      head: v.any(),
-      field: v.optional(v.string()),
-    })),
-    interval: v.optional(v.number()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
     const now = Date.now();
-    const interval = args.interval ?? DEFAULT_HEARTBEAT_INTERVAL;
 
     const existing = await ctx.db
       .query("sessions")
@@ -127,34 +114,13 @@ export const mark = mutation({
       )
       .first();
 
-    if (existing?.timeout) {
-      await ctx.scheduler.cancel(existing.timeout);
-    }
-
-    const timeout = await ctx.scheduler.runAfter(
-      interval * 2.5,
-      api.mutations.disconnect,
-      {
-        collection: args.collection,
-        document: args.document,
-        client: args.client,
-      },
-    );
-
     const updates: Record<string, unknown> = {
       seen: now,
-      timeout,
-      connected: true,
     };
 
     if (args.vector !== undefined) updates.vector = args.vector;
     if (args.seq !== undefined) {
       updates.seq = existing ? Math.max(existing.seq, args.seq) : args.seq;
-    }
-    if (args.user !== undefined) updates.user = args.user;
-    if (args.profile !== undefined) updates.profile = args.profile;
-    if (args.cursor !== undefined) {
-      updates.cursor = args.cursor;
     }
 
     if (existing) {
@@ -166,13 +132,9 @@ export const mark = mutation({
         document: args.document,
         client: args.client,
         vector: args.vector,
-        connected: true,
+        connected: false,
         seq: args.seq ?? 0,
         seen: now,
-        user: args.user,
-        profile: args.profile,
-        cursor: args.cursor,
-        timeout,
       });
     }
 
@@ -624,75 +586,6 @@ export const sessions = query({
   },
 });
 
-export const cursors = query({
-  args: {
-    collection: v.string(),
-    document: v.string(),
-    exclude: v.optional(v.string()),
-  },
-  returns: v.array(v.object({
-    client: v.string(),
-    user: v.optional(v.string()),
-    profile: v.optional(v.any()),
-    cursor: v.object({
-      anchor: v.any(),
-      head: v.any(),
-      field: v.optional(v.string()),
-    }),
-  })),
-  handler: async (ctx, args) => {
-    const records = await ctx.db
-      .query("sessions")
-      .withIndex("by_document", (q: any) =>
-        q.eq("collection", args.collection)
-          .eq("document", args.document),
-      )
-      .collect();
-
-    return records
-      .filter((p: any) => p.client !== args.exclude)
-      .filter((p: any) => p.cursor)
-      .map((p: any) => ({
-        client: p.client,
-        user: p.user,
-        profile: p.profile,
-        cursor: p.cursor,
-      }));
-  },
-});
-
-export const leave = mutation({
-  args: {
-    collection: v.string(),
-    document: v.string(),
-    client: v.string(),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query("sessions")
-      .withIndex("by_client", (q: any) =>
-        q.eq("collection", args.collection)
-          .eq("document", args.document)
-          .eq("client", args.client),
-      )
-      .first();
-
-    if (existing) {
-      if (existing.timeout) {
-        await ctx.scheduler.cancel(existing.timeout);
-      }
-      await ctx.db.patch(existing._id, {
-        connected: false,
-        cursor: undefined,
-        timeout: undefined,
-      });
-    }
-
-    return null;
-  },
-});
-
 export const disconnect = mutation({
   args: {
     collection: v.string(),
@@ -715,6 +608,102 @@ export const disconnect = mutation({
         connected: false,
         cursor: undefined,
         timeout: undefined,
+      });
+    }
+
+    return null;
+  },
+});
+
+export const presence = mutation({
+  args: {
+    collection: v.string(),
+    document: v.string(),
+    client: v.string(),
+    action: v.union(v.literal("join"), v.literal("leave")),
+    user: v.optional(v.string()),
+    profile: v.optional(v.object({
+      name: v.optional(v.string()),
+      color: v.optional(v.string()),
+      avatar: v.optional(v.string()),
+    })),
+    cursor: v.optional(v.object({
+      anchor: v.any(),
+      head: v.any(),
+      field: v.optional(v.string()),
+    })),
+    interval: v.optional(v.number()),
+    vector: v.optional(v.bytes()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("sessions")
+      .withIndex("by_client", (q: any) =>
+        q.eq("collection", args.collection)
+          .eq("document", args.document)
+          .eq("client", args.client),
+      )
+      .first();
+
+    if (args.action === "leave") {
+      if (existing?.timeout) {
+        await ctx.scheduler.cancel(existing.timeout);
+      }
+      if (existing) {
+        await ctx.db.patch(existing._id, {
+          connected: false,
+          cursor: undefined,
+          timeout: undefined,
+        });
+      }
+      return null;
+    }
+
+    const now = Date.now();
+    const interval = args.interval ?? DEFAULT_HEARTBEAT_INTERVAL;
+
+    if (existing?.timeout) {
+      await ctx.scheduler.cancel(existing.timeout);
+    }
+
+    const timeout = await ctx.scheduler.runAfter(
+      interval * 2.5,
+      api.mutations.disconnect,
+      {
+        collection: args.collection,
+        document: args.document,
+        client: args.client,
+      },
+    );
+
+    const updates: Record<string, unknown> = {
+      connected: true,
+      seen: now,
+      timeout,
+    };
+
+    if (args.user !== undefined) updates.user = args.user;
+    if (args.profile !== undefined) updates.profile = args.profile;
+    if (args.cursor !== undefined) updates.cursor = args.cursor;
+    if (args.vector !== undefined) updates.vector = args.vector;
+
+    if (existing) {
+      await ctx.db.patch(existing._id, updates);
+    }
+    else {
+      await ctx.db.insert("sessions", {
+        collection: args.collection,
+        document: args.document,
+        client: args.client,
+        connected: true,
+        seq: 0,
+        seen: now,
+        user: args.user,
+        profile: args.profile,
+        cursor: args.cursor,
+        vector: args.vector,
+        timeout,
       });
     }
 

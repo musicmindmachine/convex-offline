@@ -10,11 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Presence via Yjs Awareness** - Real-time presence tracking using the standard Yjs Awareness protocol
-- **Session tracking** - Per-document session management with `sessions` query
-- **Cursor tracking** - Collaborative cursor positions with `cursors` query  
-- **`leave` mutation** - Explicit disconnect for clean session cleanup
+- **Session tracking** - Per-document session management with `sessions` query (includes cursor data)
+- **Unified `presence` mutation** - Join/leave presence with action discriminator (`{ action: "join" | "leave" }`)
 - **Heartbeat cleanup** - Automatic removal of stale presence data
 - **`pagehide` handler** - Reliable cleanup on tab close/navigation
+- **Single-flight pattern** - Race-safe presence updates using convex-helpers pattern
 
 ### Changed
 
@@ -22,12 +22,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Per-document recovery** - Refactored SSR and recovery to per-document architecture
 - **Normalized schema** - Aligned naming conventions and Effect.ts service patterns
 - **Optimized SvelteKit example** - Added TanStack Table with virtual scrolling
+- **Separated sync from presence** - `mark` mutation now only handles sync tracking (vector, seq); presence uses dedicated `presence` mutation
+
+### Removed
+
+- **`cursors` query** - Cursor data now included in `sessions` query
+- **`leave` mutation** - Replaced by `presence({ action: "leave" })`
 
 ### Fixed
 
+- **Avatar/presence bug** - Fixed `mark` mutation incorrectly setting `connected: true` for all synced documents, which caused wrong avatars to appear on refresh
 - **Persistence race condition** - Documents no longer show as "Untitled" during init
 - **Stream response types** - Aligned `replicate.ts` types with component
-- **Sync coordination** - Proper presence cleanup on page unload
+- **Presence race conditions** - Rewrote awareness.ts with atomic state machine (`idle → joining → active → leaving → destroyed`) to handle visibility changes, destroy during throttle, and overlapping heartbeats
 
 ## [1.1.2] - 2025-12-28
 

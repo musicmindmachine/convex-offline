@@ -6,7 +6,7 @@ import type { Interval } from "../lib/types";
 
 export const {
   stream, material, insert, update, remove,
-  recovery, mark, compact, sessions, cursors, leave,
+  recovery, mark, compact, sessions, presence,
 } = collection.create<Interval>(components.replicate, "intervals");
 
 export const get = query({

@@ -145,8 +145,7 @@ export const {
   mark,
   compact,
   sessions,
-  cursors,
-  leave,
+  presence,
 } = collection.create<Task>(components.replicate, 'tasks');
 ```
 
@@ -160,9 +159,8 @@ export const {
 - `remove` - Dual-storage delete mutation (auto-compacts when threshold exceeded)
 - `mark` - Report sync progress to server (peer tracking for safe compaction)
 - `compact` - Manual compaction trigger (peer-aware, respects active peer sync state)
-- `sessions` - Get connected sessions (presence query)
-- `cursors` - Get cursor positions for collaborative editing
-- `leave` - Explicit disconnect mutation
+- `sessions` - Get connected sessions with cursor positions (presence query)
+- `presence` - Join/leave presence for collaborative editing (with cursor, user, profile)
 
 ### Step 4: Define Your Collection
 
@@ -483,8 +481,7 @@ export const {
   mark,
   compact,
   sessions,
-  cursors,
-  leave,
+  presence,
 } = collection.create<Task>(components.replicate, 'tasks', {
   // Optional hooks for authorization and lifecycle events
   hooks: {
@@ -925,7 +922,7 @@ import { collection } from '@trestleinc/replicate/server';
 import { components } from './_generated/api';
 
 export const {
-  stream, material, insert, update, remove, recovery, mark, compact, sessions, cursors, leave,
+  stream, material, insert, update, remove, recovery, mark, compact, sessions, presence,
 } = collection.create<Task>(components.replicate, 'tasks');
 ```
 
@@ -976,9 +973,8 @@ interface CollectionOptions<T> {
 - `remove` - Dual-storage delete mutation (auto-compacts when threshold exceeded)
 - `mark` - Peer sync tracking mutation (reports `syncedSeq` to server)
 - `compact` - Manual compaction mutation (peer-aware, safe for active clients)
-- `sessions` - Get connected sessions (presence query)
-- `cursors` - Get cursor positions for collaborative editing
-- `leave` - Explicit disconnect mutation
+- `sessions` - Get connected sessions with cursor positions (presence query)
+- `presence` - Join/leave presence mutation (with cursor, user, profile)
 
 #### `schema.table(userFields, applyIndexes?)`
 

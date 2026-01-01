@@ -6,7 +6,7 @@ import type { Comment } from "../src/types/interval";
 
 export const {
   stream, material, insert, update, remove,
-  recovery, mark, compact, sessions, cursors, leave,
+  recovery, mark, compact, sessions, presence,
 } = collection.create<Comment>(components.replicate, "comments");
 
 export const get = query({

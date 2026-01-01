@@ -9,7 +9,6 @@ export interface CollectionOptions<T extends object> {
     evalWrite?: (ctx: GenericMutationCtx<GenericDataModel>, doc: T) => void | Promise<void>;
     evalRemove?: (ctx: GenericMutationCtx<GenericDataModel>, docId: string) => void | Promise<void>;
     evalMark?: (ctx: GenericMutationCtx<GenericDataModel>, client: string) => void | Promise<void>;
-    evalLeave?: (ctx: GenericMutationCtx<GenericDataModel>, client: string) => void | Promise<void>;
     evalCompact?: (
       ctx: GenericMutationCtx<GenericDataModel>,
       document: string,
@@ -87,12 +86,8 @@ function createCollectionInternal<T extends object>(
       evalRead: hooks?.evalRead,
     }),
 
-    cursors: storage.createCursorsQuery({
-      evalRead: hooks?.evalRead,
-    }),
-
-    leave: storage.createLeaveMutation({
-      evalWrite: hooks?.evalLeave,
+    presence: storage.createPresenceMutation({
+      evalWrite: hooks?.evalMark,
     }),
   };
 }

@@ -15,8 +15,7 @@ interface ConvexCollectionApi {
   compact: FunctionReference<"mutation">;
   material?: FunctionReference<"query">;
   sessions?: FunctionReference<"query">;
-  cursors?: FunctionReference<"query">;
-  leave?: FunctionReference<"mutation">;
+  presence?: FunctionReference<"mutation">;
 }
 
 export interface CollectionContext {

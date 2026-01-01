@@ -114,8 +114,7 @@ interface ConvexCollectionApi {
   compact: FunctionReference<"mutation">;
   material?: FunctionReference<"query">;
   sessions?: FunctionReference<"query">;
-  cursors?: FunctionReference<"query">;
-  leave?: FunctionReference<"mutation">;
+  presence?: FunctionReference<"mutation">;
 }
 
 export interface ConvexCollectionConfig<
@@ -309,14 +308,13 @@ export function convexCollectionOptions(
       const storedClientId = ctx.clientId;
 
       let awarenessProvider: ConvexAwarenessProvider | null = null;
-      if (storedConvexClient && storedApi?.sessions && storedApi?.leave && storedClientId) {
+      const hasPresenceApi = storedApi?.sessions && storedApi?.presence;
+      if (storedConvexClient && hasPresenceApi && storedClientId) {
         awarenessProvider = createAwarenessProvider({
           convexClient: storedConvexClient,
           api: {
-            mark: storedApi.mark,
-            cursors: storedApi.cursors!,
-            sessions: storedApi.sessions,
-            leave: storedApi.leave,
+            presence: storedApi.presence!,
+            sessions: storedApi.sessions!,
           },
           document,
           client: storedClientId,

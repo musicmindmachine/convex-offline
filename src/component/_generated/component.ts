@@ -31,18 +31,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         { removed: number; retained: number; size: number; success: boolean },
         Name
       >;
-      cursors: FunctionReference<
-        "query",
-        "internal",
-        { collection: string; document: string; exclude?: string },
-        Array<{
-          client: string;
-          cursor: { anchor: any; field?: string; head: any };
-          profile?: any;
-          user?: string;
-        }>,
-        Name
-      >;
       deleteDocument: FunctionReference<
         "mutation",
         "internal",
@@ -71,24 +59,30 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         { seq: number; success: boolean },
         Name
       >;
-      leave: FunctionReference<
-        "mutation",
-        "internal",
-        { client: string; collection: string; document: string },
-        null,
-        Name
-      >;
       mark: FunctionReference<
         "mutation",
         "internal",
         {
           client: string;
           collection: string;
+          document: string;
+          seq?: number;
+          vector?: ArrayBuffer;
+        },
+        null,
+        Name
+      >;
+      presence: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          action: "join" | "leave";
+          client: string;
+          collection: string;
           cursor?: { anchor: any; field?: string; head: any };
           document: string;
           interval?: number;
           profile?: { avatar?: string; color?: string; name?: string };
-          seq?: number;
           user?: string;
           vector?: ArrayBuffer;
         },

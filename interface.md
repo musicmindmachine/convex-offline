@@ -8,7 +8,7 @@ This document captures the design constraints and tradeoffs for replicate's serv
 // convex/intervals.ts
 export const {
   stream, material, insert, update, remove,
-  recovery, mark, compact, sessions, cursors, leave,
+  recovery, mark, compact, sessions, presence,
 } = collection.create<Interval>(components.replicate, "intervals", {
   hooks: {
     evalRead: (ctx) => authorize(ctx),
@@ -71,10 +71,8 @@ export const stream = query({...});
 // This doesn't work - Convex can't see nested functions
 export const rp = {
   stream: query({...}),
-  sessions: {
-    query: query({...}),
-    leave: mutation({...}),
-  }
+  sessions: query({...}),
+  presence: mutation({...}),
 };
 ```
 
@@ -97,7 +95,7 @@ Flat exports with destructuring. Verbose but works.
 ```typescript
 export const {
   stream, material, insert, update, remove,
-  recovery, mark, compact, sessions, cursors, leave,
+  recovery, mark, compact, sessions, presence,
 } = collection.create<Interval>(components.replicate, "intervals");
 ```
 
@@ -124,9 +122,9 @@ Provide a helper to flatten nested structure for export:
 ```typescript
 const rp = collection.create<Interval>(...);
 
-// rp has nested structure: { sessions: { query, cursors, leave } }
-// flatten() converts to: { sessions, sessionsCursors, sessionsLeave }
-export const { stream, material, sessions, sessionsLeave, ... } = flatten(rp);
+// rp has nested structure for related functions
+// flatten() converts to flat exports
+export const { stream, material, sessions, presence, ... } = flatten(rp);
 ```
 
 **Tradeoff**: Still need destructuring, just with slightly better internal organization.

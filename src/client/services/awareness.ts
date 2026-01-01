@@ -7,10 +7,8 @@ const DEFAULT_HEARTBEAT_INTERVAL = 10000;
 const DEFAULT_THROTTLE_MS = 50;
 
 interface AwarenessApi {
-  mark: FunctionReference<"mutation">;
+  presence: FunctionReference<"mutation">;
   sessions: FunctionReference<"query">;
-  cursors: FunctionReference<"query">;
-  leave: FunctionReference<"mutation">;
 }
 
 export interface UserIdentity {
@@ -36,13 +34,21 @@ export interface ConvexAwarenessProvider {
   destroy: () => void;
 }
 
-/**
- * Creates a Yjs Awareness instance backed by Convex for transport.
- * This provider syncs awareness state (cursors, user info) via Convex
- * mutations and queries instead of WebSocket.
- *
- * Compatible with TipTap's CollaborationCursor and BlockNote's collaboration.
- */
+type PresenceState = "idle" | "joining" | "active" | "leaving" | "destroyed";
+
+interface FlightStatus {
+  inFlight: boolean;
+  pending: PresencePayload | null;
+}
+
+interface PresencePayload {
+  action: "join" | "leave";
+  cursor?: { anchor: unknown; head: unknown };
+  user?: string;
+  profile?: { name?: string; color?: string; avatar?: string };
+  vector?: ArrayBuffer;
+}
+
 export function createAwarenessProvider(
   config: ConvexAwarenessConfig,
 ): ConvexAwarenessProvider {
@@ -63,33 +69,33 @@ export function createAwarenessProvider(
     awareness.setLocalStateField("user", user);
   }
 
-  let destroyed = false;
+  let state: PresenceState = "idle";
   let visible = true;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  let pendingUpdate: ReturnType<typeof setTimeout> | null = null;
+  let throttleTimer: ReturnType<typeof setTimeout> | null = null;
+  let startTimeout: ReturnType<typeof setTimeout> | null = null;
   let unsubscribeCursors: (() => void) | undefined;
   let unsubscribeVisibility: (() => void) | undefined;
   let unsubscribePageHide: (() => void) | undefined;
 
-  // Track remote client IDs we know about
+  const flightStatus: FlightStatus = {
+    inFlight: false,
+    pending: null,
+  };
+
   const remoteClientIds = new Map<string, number>();
 
   const getVector = (): ArrayBuffer | undefined => {
     return Y.encodeStateVector(ydoc).buffer as ArrayBuffer;
   };
 
-  /**
-   * Extract cursor from awareness state for Convex storage.
-   * y-prosemirror stores cursor as RelativePosition class instances.
-   * We serialize to plain JSON objects for Convex storage.
-   */
-  const extractCursorFromState = (state: Record<string, unknown> | null): {
+  const extractCursorFromState = (awarenessState: Record<string, unknown> | null): {
     anchor: unknown;
     head: unknown;
   } | undefined => {
-    if (!state) return undefined;
+    if (!awarenessState) return undefined;
 
-    const cursor = state.cursor as {
+    const cursor = awarenessState.cursor as {
       anchor?: unknown;
       head?: unknown;
     } | undefined | null;
@@ -99,34 +105,31 @@ export function createAwarenessProvider(
     }
 
     try {
-      const serialized = {
+      return {
         anchor: JSON.parse(JSON.stringify(cursor.anchor)),
         head: JSON.parse(JSON.stringify(cursor.head)),
       };
-      return serialized;
     }
     catch {
       return undefined;
     }
   };
 
-  /**
-   * Extract user profile from awareness state.
-   */
-  const extractUserFromState = (state: Record<string, unknown> | null): {
+  const extractUserFromState = (awarenessState: Record<string, unknown> | null): {
     user?: string;
     profile?: { name?: string; color?: string; avatar?: string };
   } => {
-    if (!state) return {};
+    if (!awarenessState) return {};
 
-    const user = state.user as
-      | { name?: string; color?: string; [key: string]: unknown }
+    const userState = awarenessState.user as
+      | { name?: string; color?: string; avatar?: string; [key: string]: unknown }
       | undefined;
-    if (user) {
+
+    if (userState) {
       const profile: { name?: string; color?: string; avatar?: string } = {};
-      if (typeof user.name === "string") profile.name = user.name;
-      if (typeof user.color === "string") profile.color = user.color;
-      if (typeof user.avatar === "string") profile.avatar = user.avatar;
+      if (typeof userState.name === "string") profile.name = userState.name;
+      if (typeof userState.color === "string") profile.color = userState.color;
+      if (typeof userState.avatar === "string") profile.avatar = userState.avatar;
 
       if (Object.keys(profile).length > 0) {
         return { profile };
@@ -136,58 +139,138 @@ export function createAwarenessProvider(
     return {};
   };
 
-  const sendToServer = () => {
-    if (destroyed || !visible) return;
-
+  const buildJoinPayload = (): PresencePayload => {
     const localState = awareness.getLocalState();
     const cursor = extractCursorFromState(localState);
-    const { user, profile } = extractUserFromState(localState);
+    const { user: userId, profile } = extractUserFromState(localState);
     const vector = getVector();
 
-    convexClient.mutation(api.mark, {
+    return {
+      action: "join",
+      cursor,
+      user: userId,
+      profile,
+      vector,
+    };
+  };
+
+  const executePresence = async (payload: PresencePayload): Promise<void> => {
+    await convexClient.mutation(api.presence, {
       document,
       client,
-      cursor,
-      user,
-      profile,
-      interval,
-      vector,
+      action: payload.action,
+      cursor: payload.cursor,
+      user: payload.user,
+      profile: payload.profile,
+      interval: payload.action === "join" ? interval : undefined,
+      vector: payload.vector,
     });
   };
 
-  /**
-   * Throttled version of sendToServer for frequent updates.
-   */
-  const throttledSend = () => {
-    if (pendingUpdate) return;
+  const isDestroyed = (): boolean => state === "destroyed";
 
-    pendingUpdate = setTimeout(() => {
-      pendingUpdate = null;
-      sendToServer();
+  const sendWithSingleFlight = async (payload: PresencePayload): Promise<void> => {
+    if (isDestroyed()) return;
+
+    if (flightStatus.inFlight) {
+      flightStatus.pending = payload;
+      return;
+    }
+
+    flightStatus.inFlight = true;
+
+    try {
+      await executePresence(payload);
+    }
+    finally {
+      while (flightStatus.pending && !isDestroyed()) {
+        const next = flightStatus.pending;
+        flightStatus.pending = null;
+        try {
+          await executePresence(next);
+        }
+        catch {
+          break;
+        }
+      }
+      flightStatus.inFlight = false;
+    }
+  };
+
+  const transitionTo = (newState: PresenceState): boolean => {
+    const validTransitions: Record<PresenceState, PresenceState[]> = {
+      idle: ["joining", "destroyed"],
+      joining: ["active", "leaving", "destroyed"],
+      active: ["leaving", "destroyed"],
+      leaving: ["idle", "joining", "destroyed"],
+      destroyed: [],
+    };
+
+    if (!validTransitions[state].includes(newState)) {
+      return false;
+    }
+
+    state = newState;
+    return true;
+  };
+
+  const join = (): void => {
+    if (state === "destroyed" || !visible) return;
+
+    if (state === "idle" || state === "leaving") {
+      transitionTo("joining");
+    }
+
+    const payload = buildJoinPayload();
+    sendWithSingleFlight(payload).then(() => {
+      if (state === "joining") {
+        transitionTo("active");
+      }
+    });
+  };
+
+  const leave = (): void => {
+    if (state === "destroyed") return;
+    if (state === "idle") return;
+
+    transitionTo("leaving");
+
+    sendWithSingleFlight({ action: "leave" }).then(() => {
+      if (state === "leaving") {
+        transitionTo("idle");
+      }
+    });
+  };
+
+  const throttledJoin = (): void => {
+    if (throttleTimer) return;
+    if (state === "destroyed") return;
+
+    throttleTimer = setTimeout(() => {
+      throttleTimer = null;
+      if (visible) {
+        join();
+      }
     }, DEFAULT_THROTTLE_MS);
   };
 
-  /**
-   * Handle local awareness changes.
-   */
   const onLocalAwarenessUpdate = (
     changes: { added: number[]; updated: number[]; removed: number[] },
     origin: unknown,
-  ) => {
-    // Only send if the change is local (not from applying remote state)
+  ): void => {
     if (origin === "remote") return;
+    if (state === "destroyed") return;
 
-    // Check if our client was updated
     const localClientId = awareness.clientID;
     if (
       changes.added.includes(localClientId)
       || changes.updated.includes(localClientId)
     ) {
-      throttledSend();
+      throttledJoin();
     }
   };
 
-  const subscribeToPresence = () => {
+  const subscribeToPresence = (): void => {
     unsubscribeCursors = convexClient.onUpdate(
       api.sessions,
       { document, connected: true, exclude: client },
@@ -198,10 +281,9 @@ export function createAwarenessProvider(
         profile?: { name?: string; color?: string; avatar?: string };
         cursor?: { anchor: unknown; head: unknown; field?: string };
       }[]) => {
-        if (destroyed) return;
+        if (state === "destroyed") return;
 
         const validRemotes = remotes.filter(r => r.document === document);
-
         const currentRemotes = new Set<string>();
 
         for (const remote of validRemotes) {
@@ -244,24 +326,20 @@ export function createAwarenessProvider(
     );
   };
 
-  const setupVisibilityHandler = () => {
+  const setupVisibilityHandler = (): void => {
     if (typeof globalThis.document === "undefined") return;
 
-    const handler = () => {
+    const handler = (): void => {
+      if (state === "destroyed") return;
+
       const wasVisible = visible;
       visible = globalThis.document.visibilityState === "visible";
 
       if (wasVisible && !visible) {
-        convexClient.mutation(api.mark, {
-          document,
-          client,
-          cursor: undefined,
-          interval,
-          vector: getVector(),
-        });
+        leave();
       }
       else if (!wasVisible && visible) {
-        sendToServer();
+        join();
       }
     };
 
@@ -271,14 +349,18 @@ export function createAwarenessProvider(
     };
   };
 
-  const setupPageHideHandler = () => {
+  const setupPageHideHandler = (): void => {
     if (typeof globalThis.window === "undefined") return;
 
-    const handler = (e: PageTransitionEvent) => {
+    const handler = (e: PageTransitionEvent): void => {
       if (e.persisted) return;
-      if (destroyed) return;
+      if (state === "destroyed") return;
 
-      convexClient.mutation(api.leave, { document, client });
+      convexClient.mutation(api.presence, {
+        document,
+        client,
+        action: "leave" as const,
+      });
     };
 
     globalThis.window.addEventListener("pagehide", handler);
@@ -287,18 +369,18 @@ export function createAwarenessProvider(
     };
   };
 
-  /**
-   * Start periodic heartbeat to keep presence alive.
-   */
-  const startHeartbeat = () => {
-    sendToServer();
-    heartbeatTimer = setInterval(sendToServer, interval);
+  const startHeartbeat = (): void => {
+    if (state === "destroyed") return;
+
+    join();
+    heartbeatTimer = setInterval(() => {
+      if (state !== "destroyed" && visible) {
+        join();
+      }
+    }, interval);
   };
 
-  /**
-   * Stop heartbeat.
-   */
-  const stopHeartbeat = () => {
+  const stopHeartbeat = (): void => {
     if (heartbeatTimer) {
       clearInterval(heartbeatTimer);
       heartbeatTimer = null;
@@ -310,13 +392,11 @@ export function createAwarenessProvider(
   setupVisibilityHandler();
   setupPageHideHandler();
 
-  let startTimeout: ReturnType<typeof setTimeout> | null = null;
-
-  const initHeartbeat = async () => {
+  const initHeartbeat = async (): Promise<void> => {
     if (syncReady) {
       await syncReady;
     }
-    if (!destroyed) {
+    if (state !== "destroyed") {
       startHeartbeat();
     }
   };
@@ -329,18 +409,21 @@ export function createAwarenessProvider(
     awareness,
     document: ydoc,
 
-    destroy: () => {
-      if (destroyed) return;
-      destroyed = true;
+    destroy: (): void => {
+      if (state === "destroyed") return;
+      transitionTo("destroyed");
 
       if (startTimeout) {
         clearTimeout(startTimeout);
         startTimeout = null;
       }
-      if (pendingUpdate) {
-        clearTimeout(pendingUpdate);
-        pendingUpdate = null;
+      if (throttleTimer) {
+        clearTimeout(throttleTimer);
+        throttleTimer = null;
       }
+
+      flightStatus.pending = null;
+
       stopHeartbeat();
       awareness.off("update", onLocalAwarenessUpdate);
       unsubscribeCursors?.();
@@ -353,7 +436,11 @@ export function createAwarenessProvider(
       remoteClientIds.clear();
       awareness.emit("update", [{ added: [], updated: [], removed: [] }, "remote"]);
 
-      convexClient.mutation(api.leave, { document, client });
+      convexClient.mutation(api.presence, {
+        document,
+        client,
+        action: "leave" as const,
+      });
 
       awareness.destroy();
     },

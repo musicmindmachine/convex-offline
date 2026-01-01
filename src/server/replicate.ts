@@ -322,18 +322,6 @@ export class Replicate<T extends object> {
         client: v.string(),
         seq: v.optional(v.number()),
         vector: v.optional(v.bytes()),
-        user: v.optional(v.string()),
-        profile: v.optional(v.object({
-          name: v.optional(v.string()),
-          color: v.optional(v.string()),
-          avatar: v.optional(v.string()),
-        })),
-        cursor: v.optional(v.object({
-          anchor: v.any(),
-          head: v.any(),
-          field: v.optional(v.string()),
-        })),
-        interval: v.optional(v.number()),
       },
       returns: v.null(),
       handler: async (ctx, args) => {
@@ -347,10 +335,6 @@ export class Replicate<T extends object> {
           client: args.client,
           seq: args.seq,
           vector: args.vector,
-          user: args.user,
-          profile: args.profile,
-          cursor: args.cursor,
-          interval: args.interval,
         });
 
         return null;
@@ -399,42 +383,7 @@ export class Replicate<T extends object> {
     });
   }
 
-  createCursorsQuery(opts?: {
-    evalRead?: (ctx: GenericQueryCtx<GenericDataModel>, collection: string) => void | Promise<void>;
-  }) {
-    const component = this.component;
-    const collection = this.collectionName;
-
-    return queryGeneric({
-      args: {
-        document: v.string(),
-        exclude: v.optional(v.string()),
-      },
-      returns: v.array(v.object({
-        client: v.string(),
-        user: v.optional(v.string()),
-        profile: v.optional(v.any()),
-        cursor: v.object({
-          anchor: v.any(),
-          head: v.any(),
-          field: v.optional(v.string()),
-        }),
-      })),
-      handler: async (ctx, args) => {
-        if (opts?.evalRead) {
-          await opts.evalRead(ctx, collection);
-        }
-
-        return await ctx.runQuery(component.mutations.cursors, {
-          collection,
-          document: args.document,
-          exclude: args.exclude,
-        });
-      },
-    });
-  }
-
-  createLeaveMutation(opts?: {
+  createPresenceMutation(opts?: {
     evalWrite?: (ctx: GenericMutationCtx<GenericDataModel>, client: string) => void | Promise<void>;
   }) {
     const component = this.component;
@@ -444,6 +393,20 @@ export class Replicate<T extends object> {
       args: {
         document: v.string(),
         client: v.string(),
+        action: v.union(v.literal("join"), v.literal("leave")),
+        user: v.optional(v.string()),
+        profile: v.optional(v.object({
+          name: v.optional(v.string()),
+          color: v.optional(v.string()),
+          avatar: v.optional(v.string()),
+        })),
+        cursor: v.optional(v.object({
+          anchor: v.any(),
+          head: v.any(),
+          field: v.optional(v.string()),
+        })),
+        interval: v.optional(v.number()),
+        vector: v.optional(v.bytes()),
       },
       returns: v.null(),
       handler: async (ctx, args) => {
@@ -451,10 +414,16 @@ export class Replicate<T extends object> {
           await opts.evalWrite(ctx, args.client);
         }
 
-        await ctx.runMutation(component.mutations.leave, {
+        await ctx.runMutation(component.mutations.presence, {
           collection,
           document: args.document,
           client: args.client,
+          action: args.action,
+          user: args.user,
+          profile: args.profile,
+          cursor: args.cursor,
+          interval: args.interval,
+          vector: args.vector,
         });
 
         return null;

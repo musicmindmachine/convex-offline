@@ -5,7 +5,8 @@ import { v } from "convex/values";
 import type { Interval } from "../src/types/interval";
 
 export const {
-  stream, material, insert, update, remove, recovery, mark, compact,
+  stream, material, insert, update, remove,
+  recovery, mark, compact, sessions, presence,
 } = collection.create<Interval>(components.replicate, "intervals");
 
 export const get = query({

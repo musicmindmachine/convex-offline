@@ -57,17 +57,6 @@ export declare const components: {
         { collection: string; document: string },
         { removed: number; retained: number; size: number; success: boolean }
       >;
-      cursors: FunctionReference<
-        "query",
-        "internal",
-        { collection: string; document: string; exclude?: string },
-        Array<{
-          client: string;
-          cursor: { anchor: any; field?: string; head: any };
-          profile?: any;
-          user?: string;
-        }>
-      >;
       deleteDocument: FunctionReference<
         "mutation",
         "internal",
@@ -92,23 +81,29 @@ export declare const components: {
         { bytes: ArrayBuffer; collection: string; document: string },
         { seq: number; success: boolean }
       >;
-      leave: FunctionReference<
-        "mutation",
-        "internal",
-        { client: string; collection: string; document: string },
-        null
-      >;
       mark: FunctionReference<
         "mutation",
         "internal",
         {
           client: string;
           collection: string;
+          document: string;
+          seq?: number;
+          vector?: ArrayBuffer;
+        },
+        null
+      >;
+      presence: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          action: "join" | "leave";
+          client: string;
+          collection: string;
           cursor?: { anchor: any; field?: string; head: any };
           document: string;
           interval?: number;
           profile?: { avatar?: string; color?: string; name?: string };
-          seq?: number;
           user?: string;
           vector?: ArrayBuffer;
         },
