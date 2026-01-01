@@ -26,7 +26,6 @@ export interface CollectionContext {
   api: ConvexCollectionApi;
   persistence: Persistence;
   fields: Set<string>;
-  debounce: number;
   fragmentObservers: Map<string, () => void>;
   actorManager?: ActorManager;
   runtime?: ReplicateRuntime;

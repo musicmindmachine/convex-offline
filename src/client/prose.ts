@@ -55,6 +55,7 @@ export function observeFragment(config: ProseObserverConfig): () => void {
     ydoc,
     ymap,
     collectionRef,
+    debounceMs,
   } = config;
 
   if (!hasContext(collection)) {
@@ -79,7 +80,7 @@ export function observeFragment(config: ProseObserverConfig): () => void {
 
   const syncFn = createSyncFn(document, ydoc, ymap, collectionRef);
 
-  runWithRuntime(runtime, actorManager.register(document, ydoc, syncFn));
+  runWithRuntime(runtime, actorManager.register(document, ydoc, syncFn, debounceMs));
 
   const observerHandler = (_events: Y.YEvent<any>[], transaction: Y.Transaction) => {
     if (transaction.origin === SERVER_ORIGIN) {

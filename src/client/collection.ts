@@ -161,14 +161,21 @@ export interface EditorBinding {
 }
 
 export interface ProseOptions {
+  /** User identity for collaborative presence */
   user?: UserIdentity;
+  /**
+   * Debounce delay in milliseconds before syncing changes to server.
+   * Local changes are batched during this window for efficiency.
+   * @default 200
+   */
+  debounceMs?: number;
 }
 
 interface ConvexCollectionUtils<T extends object> {
   prose(document: string, field: ProseFields<T>, options?: ProseOptions): Promise<EditorBinding>;
 }
 
-const DEFAULT_DEBOUNCE_MS = 1000;
+const DEFAULT_DEBOUNCE_MS = 200;
 
 export function convexCollectionOptions<
   TSchema extends z.ZodObject<z.ZodRawShape>,
@@ -293,7 +300,7 @@ export function convexCollectionOptions(
           ydoc: subdoc,
           ymap: ctx.subdocs.getFields(document)!,
           collectionRef,
-          debounceMs: ctx.debounce,
+          debounceMs: options?.debounceMs,
         });
       }
 
@@ -352,7 +359,6 @@ export function convexCollectionOptions(
     api,
     persistence,
     fields: proseFieldSet,
-    debounce: DEFAULT_DEBOUNCE_MS,
   });
 
   // Bound replicate operations - set during sync initialization

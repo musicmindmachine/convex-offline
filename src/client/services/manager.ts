@@ -20,6 +20,7 @@ export interface ActorManager {
     documentId: string,
     ydoc: Y.Doc,
     syncFn: SyncFn,
+    debounceMs?: number,
   ) => Effect.Effect<DocumentActor>;
 
   readonly get: (documentId: string) => Effect.Effect<DocumentActor | null>;
@@ -45,7 +46,7 @@ export interface ActorManagerConfig {
   readonly maxRetries?: number;
 }
 
-const DEFAULT_DEBOUNCE_MS = 300;
+const DEFAULT_DEBOUNCE_MS = 200;
 const DEFAULT_MAX_RETRIES = 3;
 
 interface ManagedActor {
@@ -65,7 +66,7 @@ export const createActorManager = (
     const actorsRef = yield* Ref.make(HashMap.empty<string, ManagedActor>());
 
     const manager: ActorManager = {
-      register: (documentId, ydoc, syncFn) =>
+      register: (documentId, ydoc, syncFn, debounceMs) =>
         Effect.gen(function* () {
           const actors = yield* Ref.get(actorsRef);
           const existing = HashMap.get(actors, documentId);
@@ -76,11 +77,15 @@ export const createActorManager = (
 
           const scope = yield* Scope.make();
 
+          const config: ActorConfig = debounceMs !== undefined
+            ? { ...actorConfig, debounceMs }
+            : actorConfig;
+
           const actor = yield* createDocumentActor(
             documentId,
             ydoc,
             syncFn,
-            actorConfig,
+            config,
           ).pipe(Effect.provideService(Scope.Scope, scope));
 
           yield* Ref.update(actorsRef, HashMap.set(documentId, { actor, scope }));

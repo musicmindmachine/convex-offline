@@ -34,7 +34,7 @@ The sync system uses Effect.ts per-document actors:
 ### Actor Model
 
 ```
-LocalChange → Queue.offer → debounce (300ms) → Queue.takeAll (batch) → sync → update vector
+LocalChange → Queue.offer → debounce (200ms) → Queue.takeAll (batch) → sync → update vector
 ExternalUpdate → Queue.offer → update stored vector (Yjs already applied)
 Shutdown → interrupt debounce → signal done via Deferred
 ```

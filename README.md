@@ -549,6 +549,77 @@ const plainText = schema.prose.extract(notebook.content);
 const binding = await collection.utils.prose(notebookId, 'content');
 ```
 
+**Important:** `collection.utils.prose()` is async and internally waits for the actor system to initialize before observing the Yjs fragment. This ensures the sync infrastructure is ready before collaborative editing begins.
+
+```typescript
+// React: Use useEffect with cleanup
+useEffect(() => {
+  let binding: EditorBinding | null = null;
+  
+  collection.utils.prose(docId, 'content').then((b) => {
+    binding = b;
+    // Initialize your editor with binding.fragment and binding.provider
+  });
+  
+  return () => binding?.destroy();
+}, [docId]);
+
+// Svelte: Use onMount
+onMount(async () => {
+  binding = await collection.utils.prose(docId, 'content');
+  // Initialize TipTap with binding.fragment
+  
+  return () => binding?.destroy();
+});
+```
+
+**Prose Options:**
+
+```typescript
+interface ProseOptions {
+  user?: UserIdentity;  // Collaborative presence identity
+  debounceMs?: number;  // Sync debounce delay (default: 200ms)
+}
+
+interface UserIdentity {
+  name?: string;   // Display name for cursor labels
+  color?: string;  // Cursor/selection color (hex, e.g., "#6366f1")
+  avatar?: string; // Avatar URL for presence indicators
+}
+```
+
+**Configuration Examples:**
+
+```typescript
+// Minimal: Just get the binding with defaults
+const binding = await collection.utils.prose(docId, 'content');
+
+// With user presence for collaborative cursors
+const binding = await collection.utils.prose(docId, 'content', {
+  user: {
+    name: 'Alice',
+    color: '#6366f1',
+    avatar: 'https://example.com/alice.jpg',
+  },
+});
+
+// Custom debounce: 500ms for less frequent syncs
+const binding = await collection.utils.prose(docId, 'content', {
+  debounceMs: 500,
+});
+
+// Real-time: No debounce (sync on every keystroke)
+const binding = await collection.utils.prose(docId, 'content', {
+  debounceMs: 0,
+});
+
+// Full configuration
+const binding = await collection.utils.prose(docId, 'content', {
+  user: { name: 'Alice', color: '#6366f1' },
+  debounceMs: 200,
+});
+```
+
 ### Persistence Providers
 
 Choose the right storage backend for your platform. Persistence is configured in the `persistence` factory of `collection.create()`:
