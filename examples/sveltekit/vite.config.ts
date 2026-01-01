@@ -18,6 +18,6 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    exclude: ["@sqlite.org/sqlite-wasm"],
+    exclude: ["@electric-sql/pglite"],
   },
 });

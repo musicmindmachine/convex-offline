@@ -1,7 +1,7 @@
 import * as Y from "yjs";
 import type { Persistence, PersistenceProvider, KeyValueStore } from "./types.js";
 
-interface PGliteInterface {
+export interface PGliteInterface {
   query<T = Record<string, unknown>>(
     sql: string,
     params?: unknown[],
@@ -133,4 +133,36 @@ export async function createPGlitePersistence(
       new PGlitePersistenceProvider(pg, collection, ydoc),
     kv: new PGliteKeyValueStore(pg),
   };
+}
+
+/**
+ * Creates a singleton PGlite persistence factory.
+ * Use this to ensure the PGlite WASM module is only loaded once,
+ * even when shared across multiple collections.
+ *
+ * @example
+ * ```typescript
+ * // src/lib/pglite.ts
+ * import { persistence } from "@trestleinc/replicate/client";
+ *
+ * export const pglite = persistence.pglite.once(async () => {
+ *   const { PGlite } = await import("@electric-sql/pglite");
+ *   const { live } = await import("@electric-sql/pglite/live");
+ *   return PGlite.create({ dataDir: "idb://app", extensions: { live } });
+ * });
+ *
+ * // src/collections/useIntervals.ts
+ * import { pglite } from "$lib/pglite";
+ *
+ * export const intervals = collection.create({
+ *   persistence: pglite,
+ *   config: () => ({ ... }),
+ * });
+ * ```
+ */
+export function oncePGlitePersistence(
+  factory: () => Promise<PGliteInterface>,
+): () => Promise<Persistence> {
+  let instance: Promise<Persistence> | null = null;
+  return () => (instance ??= factory().then(createPGlitePersistence));
 }

@@ -59,7 +59,7 @@
 		"@trestleinc/replicate": "link:../..",
 		"convex": "^1.31.2",
 		"convex-svelte": "^0.0.12",
-		"@sqlite.org/sqlite-wasm": "^3.51.1-build2",
+		"@electric-sql/pglite": "^0.3.0",
 		"y-protocols": "^1.0.7",
 		"yjs": "^13.6.28",
 		"zod": "^4.2.1"
