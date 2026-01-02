@@ -43,6 +43,7 @@ export interface PersistenceProvider {
  */
 export interface Persistence {
   createDocPersistence(collection: string, ydoc: Y.Doc): PersistenceProvider;
+  listDocuments(prefix: string): Promise<string[]>;
   readonly kv: KeyValueStore;
 }
 

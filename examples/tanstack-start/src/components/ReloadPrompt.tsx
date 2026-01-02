@@ -38,7 +38,7 @@ export function ReloadPrompt() {
           }
         });
       })
-      .catch(() => {});
+      .catch(() => { /* SW registration failure is non-fatal */ });
 
     const handleControllerChange = () => {
       window.location.reload();

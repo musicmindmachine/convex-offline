@@ -79,6 +79,26 @@ export function createCustomPersistence(adapter: StorageAdapter): Persistence {
   return {
     createDocPersistence: (collection: string, ydoc: Y.Doc) =>
       new AdapterPersistenceProvider(adapter, collection, ydoc),
+    async listDocuments(prefix: string): Promise<string[]> {
+      const snapshotKeys = await adapter.keys(`${SNAPSHOT_PREFIX}${prefix}:`);
+      const updateKeys = await adapter.keys(`${UPDATE_PREFIX}${prefix}:`);
+
+      const docIds = new Set<string>();
+
+      for (const key of snapshotKeys) {
+        const withoutPrefix = key.slice(SNAPSHOT_PREFIX.length);
+        const parts = withoutPrefix.split(":");
+        docIds.add(parts.slice(1).join(":"));
+      }
+
+      for (const key of updateKeys) {
+        const withoutPrefix = key.slice(UPDATE_PREFIX.length);
+        const parts = withoutPrefix.split(":");
+        docIds.add(parts.slice(1, -1).join(":"));
+      }
+
+      return Array.from(docIds);
+    },
     kv: new AdapterKeyValueStore(adapter),
   };
 }

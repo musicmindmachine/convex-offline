@@ -56,6 +56,9 @@ export function memoryPersistence(): Persistence {
   const kv = new MemoryKeyValueStore();
   return {
     createDocPersistence: (_: string, __: Y.Doc) => new MemoryPersistenceProvider(),
+    async listDocuments(_prefix: string): Promise<string[]> {
+      return [];
+    },
     kv,
   };
 }

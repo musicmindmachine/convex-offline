@@ -13,7 +13,6 @@ export interface DocumentManager {
   delete(id: string): void;
 
   getFields(id: string): Y.Map<unknown> | null;
-  getMeta(id: string): Y.Map<unknown> | null;
   getFragment(id: string, field: string): Y.XmlFragment | null;
 
   applyUpdate(id: string, update: Uint8Array, origin?: string): void;
@@ -77,11 +76,6 @@ export function createDocumentManager(collection: string): DocumentManager {
       return doc ? doc.getMap("fields") : null;
     },
 
-    getMeta(id: string): Y.Map<unknown> | null {
-      const doc = docs.get(id);
-      return doc ? doc.getMap("_meta") : null;
-    },
-
     getFragment(id: string, field: string): Y.XmlFragment | null {
       const fields = this.getFields(id);
       if (!fields) return null;
@@ -115,7 +109,11 @@ export function createDocumentManager(collection: string): DocumentManager {
       return Y.encodeStateVector(doc);
     },
 
-    transactWithDelta(id: string, fn: (fields: Y.Map<unknown>) => void, origin?: string): Uint8Array {
+    transactWithDelta(
+      id: string,
+      fn: (fields: Y.Map<unknown>) => void,
+      origin?: string,
+    ): Uint8Array {
       const doc = this.getOrCreate(id);
       const fields = doc.getMap<unknown>("fields");
       const beforeVector = Y.encodeStateVector(doc);
@@ -160,7 +158,10 @@ export function createDocumentManager(collection: string): DocumentManager {
   return manager;
 }
 
-export function serializeDocument(manager: DocumentManager, id: string): Record<string, unknown> | null {
+export function serializeDocument(
+  manager: DocumentManager,
+  id: string,
+): Record<string, unknown> | null {
   const fields = manager.getFields(id);
   if (!fields) return null;
 
@@ -169,11 +170,14 @@ export function serializeDocument(manager: DocumentManager, id: string): Record<
   fields.forEach((value, key) => {
     if (value instanceof Y.XmlFragment) {
       result[key] = fragmentToJSON(value);
-    } else if (value instanceof Y.Map) {
+    }
+    else if (value instanceof Y.Map) {
       result[key] = value.toJSON();
-    } else if (value instanceof Y.Array) {
+    }
+    else if (value instanceof Y.Array) {
       result[key] = value.toJSON();
-    } else {
+    }
+    else {
       result[key] = value;
     }
   });
@@ -192,14 +196,4 @@ export function extractAllDocuments(manager: DocumentManager): Record<string, un
   }
 
   return documents;
-}
-
-export function isMarkedDeleted(manager: DocumentManager, id: string): boolean {
-  const meta = manager.getMeta(id);
-  return meta ? meta.get("_deleted") === true : false;
-}
-
-export function isMarkedCreated(manager: DocumentManager, id: string): boolean {
-  const meta = manager.getMeta(id);
-  return meta ? meta.get("_created") === true : false;
 }

@@ -131,6 +131,20 @@ export async function createPGlitePersistence(
   return {
     createDocPersistence: (collection: string, ydoc: Y.Doc) =>
       new PGlitePersistenceProvider(pg, collection, ydoc),
+    async listDocuments(prefix: string): Promise<string[]> {
+      const result = await pg.query<{ collection: string }>(
+        `SELECT DISTINCT collection FROM (
+          SELECT collection FROM snapshots WHERE collection LIKE $1
+          UNION
+          SELECT collection FROM updates WHERE collection LIKE $1
+        ) AS combined`,
+        [`${prefix}:%`],
+      );
+      return result.rows.map((row) => {
+        const parts = row.collection.split(":");
+        return parts.slice(1).join(":");
+      });
+    },
     kv: new PGliteKeyValueStore(pg),
   };
 }

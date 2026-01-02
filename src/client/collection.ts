@@ -24,11 +24,7 @@ import {
   serializeDocument,
   extractAllDocuments,
 } from "$/client/documents";
-import {
-  createInsertDelta,
-  createDeleteDelta,
-  hasDeleteMarker,
-} from "$/client/deltas";
+import { createDeleteDelta } from "$/client/deltas";
 import * as prose from "$/client/prose";
 import { extractProseFields } from "$/client/prose";
 import {
@@ -353,7 +349,7 @@ export function convexCollectionOptions(
   };
 
   const docManager = createDocumentManager(collection);
-  let docPersistence: PersistenceProvider = null as any;
+  const docPersistence: PersistenceProvider = null as any;
 
   initContext({
     collection,
@@ -391,19 +387,24 @@ export function convexCollectionOptions(
       return;
     }
 
-    for (const document of documents) {
+    const recoveryPromises = documents.map(async (document) => {
       const localVector = docManager.encodeStateVector(document);
 
-      convexClient.query(api.recovery, {
-        document,
-        vector: localVector.buffer as ArrayBuffer,
-      }).then((response) => {
+      try {
+        const response = await convexClient.query(api.recovery, {
+          document,
+          vector: localVector.buffer as ArrayBuffer,
+        });
+
         if (response.diff) {
           const diff = new Uint8Array(response.diff);
           docManager.applyUpdate(document, diff, YjsOrigin.Server);
         }
-      });
-    }
+      }
+      catch { /* recovery errors are non-fatal */ }
+    });
+
+    await Promise.all(recoveryPromises);
   };
 
   const applyYjsInsert = (mutations: CollectionMutation<DataType>[]): Uint8Array[] => {
@@ -614,6 +615,11 @@ export function convexCollectionOptions(
 
         (async () => {
           try {
+            const existingDocIds = await persistence.listDocuments(collection);
+            for (const docId of existingDocIds) {
+              docManager.getOrCreate(docId);
+            }
+
             const docPromises = docManager.enablePersistence((document, ydoc) => {
               return persistence.createDocPersistence(`${collection}:${document}`, ydoc);
             });
@@ -654,7 +660,12 @@ export function convexCollectionOptions(
                 return yield* seqSvc.load(collection);
               }).pipe(Effect.provide(seqLayer)),
             );
-            const cursor = ssrCursor ?? persistedCursor;
+            let cursor = ssrCursor ?? persistedCursor;
+
+            if (cursor > 0 && docManager.documents().length === 0) {
+              cursor = 0;
+              persistence.kv.set(`cursor:${collection}`, 0);
+            }
 
             const replicateRuntime: ReplicateRuntime = await Effect.runPromise(
               Effect.scoped(
@@ -673,7 +684,18 @@ export function convexCollectionOptions(
               document: string,
               exists: boolean,
             ) => {
-              if (!exists && !docManager.has(document)) {
+              const hadLocally = docManager.has(document);
+
+              if (!exists && hadLocally) {
+                const itemBefore = serializeDocument(docManager, document);
+                if (itemBefore) {
+                  ops.delete([itemBefore as DataType]);
+                }
+                docManager.delete(document);
+                return;
+              }
+
+              if (!exists && !hadLocally) {
                 return;
               }
 
@@ -703,15 +725,26 @@ export function convexCollectionOptions(
                 return;
               }
 
-              if (!exists && !docManager.has(document)) {
+              const hadLocally = docManager.has(document);
+
+              if (!exists && hadLocally) {
+                const itemBefore = serializeDocument(docManager, document);
+                if (itemBefore) {
+                  ops.delete([itemBefore as DataType]);
+                }
+                docManager.delete(document);
+                return;
+              }
+
+              if (!exists && !hadLocally) {
                 return;
               }
 
               const itemBefore = serializeDocument(docManager, document);
               const update = new Uint8Array(bytes);
               docManager.applyUpdate(document, update, YjsOrigin.Server);
-
               const itemAfter = serializeDocument(docManager, document);
+
               if (itemAfter) {
                 if (itemBefore) {
                   ops.upsert([itemAfter as DataType]);
@@ -719,9 +752,6 @@ export function convexCollectionOptions(
                 else {
                   ops.insert([itemAfter as DataType]);
                 }
-              }
-              else if (itemBefore) {
-                ops.delete([itemBefore as DataType]);
               }
 
               await runWithRuntime(replicateRuntime, actorManager.onServerUpdate(document));

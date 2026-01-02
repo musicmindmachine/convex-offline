@@ -119,6 +119,21 @@ export function createPersistenceFromExecutor(executor: Executor): Persistence {
   return {
     createDocPersistence: (collection: string, ydoc: Y.Doc) =>
       new SqlitePersistenceProvider(executor, collection, ydoc),
+    async listDocuments(prefix: string): Promise<string[]> {
+      const result = await executor.execute(
+        `SELECT DISTINCT collection FROM (
+          SELECT collection FROM snapshots WHERE collection LIKE ?
+          UNION
+          SELECT collection FROM updates WHERE collection LIKE ?
+        )`,
+        [`${prefix}:%`, `${prefix}:%`],
+      );
+      return result.rows.map((row) => {
+        const collection = row.collection as string;
+        const parts = collection.split(":");
+        return parts.slice(1).join(":");
+      });
+    },
     kv: new SqliteKeyValueStore(executor),
   };
 }
