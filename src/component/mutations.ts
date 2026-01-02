@@ -12,7 +12,7 @@ const DEFAULT_DELTA_COUNT_THRESHOLD = 500;
 
 async function getNextSeq(ctx: any, collection: string): Promise<number> {
   const latest = await ctx.db
-    .query("documents")
+    .query("deltas")
     .withIndex("by_seq", (q: any) => q.eq("collection", collection))
     .order("desc")
     .first();
@@ -32,7 +32,7 @@ export const insertDocument = mutation({
   handler: async (ctx, args) => {
     const seq = await getNextSeq(ctx, args.collection);
 
-    await ctx.db.insert("documents", {
+    await ctx.db.insert("deltas", {
       collection: args.collection,
       document: args.document,
       bytes: args.bytes,
@@ -56,7 +56,7 @@ export const updateDocument = mutation({
   handler: async (ctx, args) => {
     const seq = await getNextSeq(ctx, args.collection);
 
-    await ctx.db.insert("documents", {
+    await ctx.db.insert("deltas", {
       collection: args.collection,
       document: args.document,
       bytes: args.bytes,
@@ -80,7 +80,7 @@ export const deleteDocument = mutation({
   handler: async (ctx, args) => {
     const seq = await getNextSeq(ctx, args.collection);
 
-    await ctx.db.insert("documents", {
+    await ctx.db.insert("deltas", {
       collection: args.collection,
       document: args.document,
       bytes: args.bytes,
@@ -158,7 +158,7 @@ export const compact = mutation({
     const now = Date.now();
 
     const deltas = await ctx.db
-      .query("documents")
+      .query("deltas")
       .withIndex("by_document", (q: any) =>
         q.eq("collection", args.collection).eq("document", args.document),
       )
@@ -326,7 +326,7 @@ export const stream = query({
     const threshold = args.threshold ?? DEFAULT_DELTA_COUNT_THRESHOLD;
 
     const documents = await ctx.db
-      .query("documents")
+      .query("deltas")
       .withIndex("by_seq", (q: any) =>
         q.eq("collection", args.collection).gt("seq", args.seq),
       )
@@ -344,7 +344,7 @@ export const stream = query({
       const newSeq = documents[documents.length - 1]?.seq ?? args.seq;
 
       const allDocs = await ctx.db
-        .query("documents")
+        .query("deltas")
         .withIndex("by_collection", (q: any) => q.eq("collection", args.collection))
         .collect();
 
@@ -372,7 +372,7 @@ export const stream = query({
     }
 
     const oldest = await ctx.db
-      .query("documents")
+      .query("deltas")
       .withIndex("by_seq", (q: any) => q.eq("collection", args.collection))
       .order("asc")
       .first();
@@ -435,7 +435,7 @@ export const recovery = query({
       .first();
 
     const deltas = await ctx.db
-      .query("documents")
+      .query("deltas")
       .withIndex("by_document", (q: any) =>
         q.eq("collection", args.collection).eq("document", args.document),
       )
@@ -493,7 +493,7 @@ export const getDocumentState = query({
       .first();
 
     const deltas = await ctx.db
-      .query("documents")
+      .query("deltas")
       .withIndex("by_document", (q: any) =>
         q.eq("collection", args.collection).eq("document", args.document),
       )

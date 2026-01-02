@@ -21,7 +21,7 @@ async function initSchema(pg: PGliteInterface): Promise<void> {
   `);
 
   await pg.exec(`
-    CREATE TABLE IF NOT EXISTS updates (
+    CREATE TABLE IF NOT EXISTS deltas (
       id SERIAL PRIMARY KEY,
       collection TEXT NOT NULL,
       data BYTEA NOT NULL
@@ -29,7 +29,7 @@ async function initSchema(pg: PGliteInterface): Promise<void> {
   `);
 
   await pg.exec(`
-    CREATE INDEX IF NOT EXISTS updates_collection_idx ON updates (collection)
+    CREATE INDEX IF NOT EXISTS deltas_collection_idx ON deltas (collection)
   `);
 
   await pg.exec(`
@@ -98,12 +98,12 @@ class PGlitePersistenceProvider implements PersistenceProvider {
       Y.applyUpdate(this.ydoc, snapshotData, "pglite");
     }
 
-    const updatesResult = await this.pg.query<{ data: Uint8Array }>(
-      "SELECT data FROM updates WHERE collection = $1 ORDER BY id ASC",
+    const deltasResult = await this.pg.query<{ data: Uint8Array }>(
+      "SELECT data FROM deltas WHERE collection = $1 ORDER BY id ASC",
       [this.collection],
     );
 
-    for (const row of updatesResult.rows) {
+    for (const row of deltasResult.rows) {
       const raw = row.data;
       const updateData = raw instanceof Uint8Array
         ? raw
@@ -114,7 +114,7 @@ class PGlitePersistenceProvider implements PersistenceProvider {
 
   private async saveUpdate(update: Uint8Array): Promise<void> {
     await this.pg.query(
-      "INSERT INTO updates (collection, data) VALUES ($1, $2)",
+      "INSERT INTO deltas (collection, data) VALUES ($1, $2)",
       [this.collection, update],
     );
   }
@@ -136,7 +136,7 @@ export async function createPGlitePersistence(
         `SELECT DISTINCT collection FROM (
           SELECT collection FROM snapshots WHERE collection LIKE $1
           UNION
-          SELECT collection FROM updates WHERE collection LIKE $1
+          SELECT collection FROM deltas WHERE collection LIKE $1
         ) AS combined`,
         [`${prefix}:%`],
       );

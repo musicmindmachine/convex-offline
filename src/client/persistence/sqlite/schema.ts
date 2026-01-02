@@ -17,7 +17,7 @@ export async function initSchema(executor: Executor): Promise<void> {
   `);
 
   await executor.execute(`
-    CREATE TABLE IF NOT EXISTS updates (
+    CREATE TABLE IF NOT EXISTS deltas (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       collection TEXT NOT NULL,
       data BLOB NOT NULL
@@ -25,7 +25,7 @@ export async function initSchema(executor: Executor): Promise<void> {
   `);
 
   await executor.execute(`
-    CREATE INDEX IF NOT EXISTS updates_collection_idx ON updates (collection)
+    CREATE INDEX IF NOT EXISTS deltas_collection_idx ON deltas (collection)
   `);
 
   await executor.execute(`
@@ -91,12 +91,12 @@ class SqlitePersistenceProvider implements PersistenceProvider {
       Y.applyUpdate(this.ydoc, snapshotData, "sqlite");
     }
 
-    const updatesResult = await this.executor.execute(
-      "SELECT data FROM updates WHERE collection = ? ORDER BY id ASC",
+    const deltasResult = await this.executor.execute(
+      "SELECT data FROM deltas WHERE collection = ? ORDER BY id ASC",
       [this.collection],
     );
 
-    for (const row of updatesResult.rows) {
+    for (const row of deltasResult.rows) {
       const raw = row.data;
       const updateData = raw instanceof Uint8Array ? raw : new Uint8Array(raw as ArrayBuffer);
       Y.applyUpdate(this.ydoc, updateData, "sqlite");
@@ -105,7 +105,7 @@ class SqlitePersistenceProvider implements PersistenceProvider {
 
   private async saveUpdate(update: Uint8Array): Promise<void> {
     await this.executor.execute(
-      "INSERT INTO updates (collection, data) VALUES (?, ?)",
+      "INSERT INTO deltas (collection, data) VALUES (?, ?)",
       [this.collection, update],
     );
   }
@@ -124,7 +124,7 @@ export function createPersistenceFromExecutor(executor: Executor): Persistence {
         `SELECT DISTINCT collection FROM (
           SELECT collection FROM snapshots WHERE collection LIKE ?
           UNION
-          SELECT collection FROM updates WHERE collection LIKE ?
+          SELECT collection FROM deltas WHERE collection LIKE ?
         )`,
         [`${prefix}:%`, `${prefix}:%`],
       );
