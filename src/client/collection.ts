@@ -24,7 +24,7 @@ import {
   serializeDocument,
   extractAllDocuments,
 } from "$/client/documents";
-import { createDeleteDelta } from "$/client/deltas";
+import { createDeleteDelta, applyDeleteMarkerToDoc } from "$/client/deltas";
 import * as prose from "$/client/prose";
 import { extractProseFields } from "$/client/prose";
 import {
@@ -479,12 +479,16 @@ export function convexCollectionOptions(
 
     for (const mut of mutations) {
       const document = String(mut.key);
-      // Create synthetic delete delta with _meta._deleted marker
-      // This is the key fix: subdoc destruction doesn't produce CRDT deltas,
-      // so we create a synthetic delta that marks the document as deleted
-      const delta = createDeleteDelta();
-      docManager.delete(document);
-      deltas.push(delta);
+      const ydoc = docManager.get(document);
+
+      if (ydoc) {
+        const delta = applyDeleteMarkerToDoc(ydoc);
+        deltas.push(delta);
+      }
+      else {
+        const delta = createDeleteDelta();
+        deltas.push(delta);
+      }
     }
 
     return deltas;
@@ -572,6 +576,7 @@ export function convexCollectionOptions(
 
       try {
         await Promise.all([persistenceReadyPromise, optimisticReadyPromise]);
+
         const itemsToDelete = transaction.mutations
           .map(mut => mut.original)
           .filter((item): item is DataType => item !== undefined && Object.keys(item).length > 0);

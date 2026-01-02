@@ -185,10 +185,18 @@ export function serializeDocument(
   return result;
 }
 
+export function isDocumentDeleted(manager: DocumentManager, id: string): boolean {
+  const doc = manager.get(id);
+  if (!doc) return false;
+  const meta = doc.getMap("_meta");
+  return meta.get("_deleted") === true;
+}
+
 export function extractAllDocuments(manager: DocumentManager): Record<string, unknown>[] {
   const documents: Record<string, unknown>[] = [];
 
   for (const id of manager.documents()) {
+    if (isDocumentDeleted(manager, id)) continue;
     const doc = serializeDocument(manager, id);
     if (doc) {
       documents.push(doc);

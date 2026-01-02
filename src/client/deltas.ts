@@ -14,6 +14,23 @@ export function createDeleteDelta(): Uint8Array {
   return update;
 }
 
+/**
+ * Apply delete marker to an EXISTING Y.Doc.
+ * This triggers the persistence provider's update handler,
+ * ensuring the delete is saved to local storage.
+ */
+export function applyDeleteMarkerToDoc(ydoc: Y.Doc): Uint8Array {
+  const meta = ydoc.getMap("_meta");
+  const beforeVector = Y.encodeStateVector(ydoc);
+
+  ydoc.transact(() => {
+    meta.set("_deleted", true);
+    meta.set("_deletedAt", Date.now());
+  });
+
+  return Y.encodeStateAsUpdateV2(ydoc, beforeVector);
+}
+
 export function createUpdateDelta(
   ydoc: Y.Doc,
   changes: Record<string, unknown>,
