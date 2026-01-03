@@ -848,6 +848,10 @@ interface CreateCollectionOptions<T extends object> {
   config: () => Omit<LazyCollectionConfig<T>, "material">;
 }
 
+export namespace collection {
+  export type Doc<C> = C extends { $docType?: infer T } ? NonNullable<T> : never;
+}
+
 export const collection = {
   create<
     Schema extends SchemaDefinition<any, any>,
