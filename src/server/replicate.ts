@@ -12,6 +12,8 @@ import {
 	compactResultValidator,
 	recoveryResultValidator,
 	materialResultValidator,
+	replicateTypeValidator,
+	sessionActionValidator,
 } from "$/shared/validators";
 
 const BYTES_PER_MB = 1024 * 1024;
@@ -322,6 +324,275 @@ export class Replicate<T extends object> {
 				});
 
 				return null;
+			},
+		});
+	}
+
+	createReplicateMutation(opts?: {
+		evalWrite?: (ctx: GenericMutationCtx<GenericDataModel>, doc: T) => void | Promise<void>;
+		evalRemove?: (ctx: GenericMutationCtx<GenericDataModel>, docId: string) => void | Promise<void>;
+		onInsert?: (ctx: GenericMutationCtx<GenericDataModel>, doc: T) => void | Promise<void>;
+		onUpdate?: (ctx: GenericMutationCtx<GenericDataModel>, doc: T) => void | Promise<void>;
+		onRemove?: (ctx: GenericMutationCtx<GenericDataModel>, docId: string) => void | Promise<void>;
+	}) {
+		const component = this.component;
+		const collection = this.collectionName;
+
+		return mutationGeneric({
+			args: {
+				document: v.string(),
+				bytes: v.bytes(),
+				material: v.optional(v.any()),
+				type: replicateTypeValidator,
+			},
+			returns: successSeqValidator,
+			handler: async (ctx, args) => {
+				const { document, bytes, material, type } = args;
+
+				if (type === "delete") {
+					if (opts?.evalRemove) {
+						await opts.evalRemove(ctx, document);
+					}
+
+					const existing = await ctx.db
+						.query(collection)
+						.withIndex("by_doc_id", q => q.eq("id", document))
+						.first();
+
+					if (existing) {
+						await ctx.db.delete(existing._id);
+					}
+
+					const result = await ctx.runMutation(component.mutations.deleteDocument, {
+						collection,
+						document,
+						bytes,
+					});
+
+					if (opts?.onRemove) {
+						await opts.onRemove(ctx, document);
+					}
+
+					return { success: true, seq: result.seq };
+				}
+
+				const doc = material as T;
+				if (opts?.evalWrite) {
+					await opts.evalWrite(ctx, doc);
+				}
+
+				if (type === "insert") {
+					await ctx.db.insert(collection, {
+						id: document,
+						...(material as object),
+						timestamp: Date.now(),
+					});
+
+					const result = await ctx.runMutation(component.mutations.insertDocument, {
+						collection,
+						document,
+						bytes,
+					});
+
+					if (opts?.onInsert) {
+						await opts.onInsert(ctx, doc);
+					}
+
+					return { success: true, seq: result.seq };
+				}
+
+				const existing = await ctx.db
+					.query(collection)
+					.withIndex("by_doc_id", q => q.eq("id", document))
+					.first();
+
+				if (existing) {
+					await ctx.db.patch(existing._id, {
+						...(material as object),
+						timestamp: Date.now(),
+					});
+				}
+
+				const result = await ctx.runMutation(component.mutations.updateDocument, {
+					collection,
+					document,
+					bytes,
+				});
+
+				if (opts?.onUpdate) {
+					await opts.onUpdate(ctx, doc);
+				}
+
+				return { success: true, seq: result.seq };
+			},
+		});
+	}
+
+	createSessionMutation(opts?: {
+		evalWrite?: (ctx: GenericMutationCtx<GenericDataModel>, client: string) => void | Promise<void>;
+	}) {
+		const component = this.component;
+		const collection = this.collectionName;
+
+		return mutationGeneric({
+			args: {
+				document: v.string(),
+				client: v.string(),
+				action: sessionActionValidator,
+				user: v.optional(v.string()),
+				profile: v.optional(profileValidator),
+				cursor: v.optional(cursorValidator),
+				interval: v.optional(v.number()),
+				vector: v.optional(v.bytes()),
+				seq: v.optional(v.number()),
+			},
+			returns: v.null(),
+			handler: async (ctx, args) => {
+				if (opts?.evalWrite) {
+					await opts.evalWrite(ctx, args.client);
+				}
+
+				const { action, document, client, user, profile, cursor, interval, vector, seq } = args;
+
+				if (action === "mark") {
+					await ctx.runMutation(component.mutations.mark, {
+						collection,
+						document,
+						client,
+						seq,
+						vector,
+					});
+					return null;
+				}
+
+				if (action === "signal") {
+					if (seq !== undefined || vector !== undefined) {
+						await ctx.runMutation(component.mutations.mark, {
+							collection,
+							document,
+							client,
+							seq,
+							vector,
+						});
+					}
+
+					await ctx.runMutation(component.mutations.presence, {
+						collection,
+						document,
+						client,
+						action: "join",
+						user,
+						profile,
+						cursor,
+						interval,
+						vector,
+					});
+					return null;
+				}
+
+				const presenceAction = action === "join" || action === "leave" ? action : "join";
+				await ctx.runMutation(component.mutations.presence, {
+					collection,
+					document,
+					client,
+					action: presenceAction,
+					user,
+					profile,
+					cursor,
+					interval,
+					vector,
+				});
+
+				return null;
+			},
+		});
+	}
+
+	createSessionQuery(opts?: {
+		evalRead?: (ctx: GenericQueryCtx<GenericDataModel>, collection: string) => void | Promise<void>;
+	}) {
+		const component = this.component;
+		const collection = this.collectionName;
+
+		return queryGeneric({
+			args: {
+				document: v.string(),
+				connected: v.optional(v.boolean()),
+				exclude: v.optional(v.string()),
+			},
+			returns: v.array(sessionValidator),
+			handler: async (ctx, args) => {
+				if (opts?.evalRead) {
+					await opts.evalRead(ctx, collection);
+				}
+
+				return await ctx.runQuery(component.mutations.sessions, {
+					collection,
+					document: args.document,
+					connected: args.connected,
+					exclude: args.exclude,
+				});
+			},
+		});
+	}
+
+	createDeltaQuery(opts?: {
+		evalRead?: (ctx: GenericQueryCtx<GenericDataModel>, collection: string) => void | Promise<void>;
+		onDelta?: (ctx: GenericQueryCtx<GenericDataModel>, result: any) => void | Promise<void>;
+	}) {
+		const component = this.component;
+		const collection = this.collectionName;
+
+		return queryGeneric({
+			args: {
+				seq: v.number(),
+				limit: v.optional(v.number()),
+				threshold: v.optional(v.number()),
+			},
+			returns: streamResultWithExistsValidator,
+			handler: async (ctx, args) => {
+				if (opts?.evalRead) {
+					await opts.evalRead(ctx, collection);
+				}
+				const result = await ctx.runQuery(component.mutations.stream, {
+					collection,
+					seq: args.seq,
+					limit: args.limit,
+					threshold: args.threshold,
+				});
+
+				const docIdSet = new Set<string>();
+				for (const change of result.changes) {
+					docIdSet.add((change as { document: string }).document);
+				}
+
+				const existingDocs = new Set<string>();
+				for (const docId of docIdSet) {
+					const doc = await ctx.db
+						.query(collection)
+						.withIndex("by_doc_id", (q: any) => q.eq("id", docId))
+						.first();
+					if (doc) existingDocs.add(docId);
+				}
+
+				interface StreamChange {
+					document: string;
+					bytes: ArrayBuffer;
+					seq: number;
+					type: string;
+				}
+				const enrichedChanges = result.changes.map((c: StreamChange) => ({
+					...c,
+					exists: existingDocs.has(c.document),
+				}));
+
+				const enrichedResult = { ...result, changes: enrichedChanges };
+
+				if (opts?.onDelta) {
+					await opts.onDelta(ctx, enrichedResult);
+				}
+
+				return enrichedResult;
 			},
 		});
 	}

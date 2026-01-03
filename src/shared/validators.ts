@@ -116,8 +116,32 @@ export const sessionValidator = v.object({
 
 /**
  * Presence action (join or leave).
+ * @deprecated Use sessionActionValidator instead
  */
 export const presenceActionValidator = v.union(v.literal("join"), v.literal("leave"));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// New API Validators (Phase 1: signals.md migration)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Replicate mutation type - combines insert/update/delete.
+ */
+export const replicateTypeValidator = v.union(
+	v.literal("insert"),
+	v.literal("update"),
+	v.literal("delete"),
+);
+
+/**
+ * Session action - combines presence (join/leave) and mark (mark/signal).
+ */
+export const sessionActionValidator = v.union(
+	v.literal("join"),
+	v.literal("leave"),
+	v.literal("mark"),
+	v.literal("signal"),
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mutation Result Validators
@@ -212,6 +236,12 @@ export type Session = Infer<typeof sessionValidator>;
 
 /** Presence action type. */
 export type PresenceAction = Infer<typeof presenceActionValidator>;
+
+/** Replicate mutation type. */
+export type ReplicateType = Infer<typeof replicateTypeValidator>;
+
+/** Session action type. */
+export type SessionAction = Infer<typeof sessionActionValidator>;
 
 /** Success/seq mutation result. */
 export type SuccessSeq = Infer<typeof successSeqValidator>;

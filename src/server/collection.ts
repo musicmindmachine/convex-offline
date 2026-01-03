@@ -8,12 +8,11 @@ export interface CollectionOptions<T extends object> {
 		evalRead?: (ctx: GenericQueryCtx<GenericDataModel>, collection: string) => void | Promise<void>;
 		evalWrite?: (ctx: GenericMutationCtx<GenericDataModel>, doc: T) => void | Promise<void>;
 		evalRemove?: (ctx: GenericMutationCtx<GenericDataModel>, docId: string) => void | Promise<void>;
-		evalMark?: (ctx: GenericMutationCtx<GenericDataModel>, client: string) => void | Promise<void>;
-		evalCompact?: (
+		evalSession?: (
 			ctx: GenericMutationCtx<GenericDataModel>,
-			document: string,
+			client: string,
 		) => void | Promise<void>;
-		onStream?: (ctx: GenericQueryCtx<GenericDataModel>, result: any) => void | Promise<void>;
+		onDelta?: (ctx: GenericQueryCtx<GenericDataModel>, result: any) => void | Promise<void>;
 		onInsert?: (ctx: GenericMutationCtx<GenericDataModel>, doc: T) => void | Promise<void>;
 		onUpdate?: (ctx: GenericMutationCtx<GenericDataModel>, doc: T) => void | Promise<void>;
 		onRemove?: (ctx: GenericMutationCtx<GenericDataModel>, docId: string) => void | Promise<void>;
@@ -45,49 +44,30 @@ function createCollectionInternal<T extends object>(
 	return {
 		__collection: name,
 
-		stream: storage.createStreamQuery({
-			evalRead: hooks?.evalRead,
-			onStream: hooks?.onStream,
-		}),
-
 		material: storage.createSSRQuery({
 			evalRead: hooks?.evalRead,
 			transform: hooks?.transform,
 		}),
 
-		recovery: storage.createRecoveryQuery({
+		delta: storage.createDeltaQuery({
 			evalRead: hooks?.evalRead,
+			onDelta: hooks?.onDelta,
 		}),
 
-		insert: storage.createInsertMutation({
+		replicate: storage.createReplicateMutation({
 			evalWrite: hooks?.evalWrite,
-			onInsert: hooks?.onInsert,
-		}),
-
-		update: storage.createUpdateMutation({
-			evalWrite: hooks?.evalWrite,
-			onUpdate: hooks?.onUpdate,
-		}),
-
-		remove: storage.createRemoveMutation({
 			evalRemove: hooks?.evalRemove,
+			onInsert: hooks?.onInsert,
+			onUpdate: hooks?.onUpdate,
 			onRemove: hooks?.onRemove,
 		}),
 
-		mark: storage.createMarkMutation({
-			evalWrite: hooks?.evalMark,
-		}),
-
-		compact: storage.createCompactMutation({
-			evalWrite: hooks?.evalCompact,
+		presence: storage.createSessionMutation({
+			evalWrite: hooks?.evalSession,
 		}),
 
 		sessions: storage.createSessionsQuery({
 			evalRead: hooks?.evalRead,
-		}),
-
-		presence: storage.createPresenceMutation({
-			evalWrite: hooks?.evalMark,
 		}),
 	};
 }

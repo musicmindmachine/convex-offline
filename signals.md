@@ -8,35 +8,101 @@
 
 This document outlines a comprehensive architectural enhancement to the Replicate library that introduces:
 
-1. **Convex Pagination** - Cursor-based pagination for SSR and infinite scroll
-2. **Unified Actor Model** - All document changes (not just prose) go through actors
-3. **Actor-Based Recovery** - Replace bulk recovery with per-document actor reconciliation
-4. **Priority Queue System** - Visible documents sync first, background the rest
+1. **Simplified Server API** - From 11 exports down to 4: `material`, `delta`, `replicate`, `session`
+2. **Convex Pagination** - Cursor-based pagination for SSR and infinite scroll
+3. **Unified Actor Model** - All document changes (not just prose) go through actors
+4. **Actor-Based Recovery** - Replace bulk recovery with per-document actor reconciliation
+5. **Priority Queue System** - Visible documents sync first, background the rest
 
-These changes will dramatically improve performance for:
-- Large datasets (1000+ documents)
-- Reconnecting clients (offline → online)
-- SSR hydration (first paint with minimal data)
-- Infinite scroll UX (load on demand)
+These changes will dramatically improve:
+- **DX** - Clean, semantic API with only 4 exports
+- **Performance** - Large datasets (1000+ documents)
+- **Reconnection** - Offline → online with priority ordering
+- **SSR** - First paint with minimal data
+- **UX** - Infinite scroll, load on demand
 
 ---
 
 ## Table of Contents
 
-1. [Current Architecture Analysis](#1-current-architecture-analysis)
-2. [Pagination Design](#2-pagination-design)
-3. [Unified Actor Model](#3-unified-actor-model)
-4. [Actor-Based Recovery](#4-actor-based-recovery)
-5. [Priority Queue System](#5-priority-queue-system)
-6. [API Reference](#6-api-reference)
-7. [Implementation Phases](#7-implementation-phases)
-8. [Migration Guide](#8-migration-guide)
+1. [Simplified API Design](#1-simplified-api-design)
+2. [Current Architecture Analysis](#2-current-architecture-analysis)
+3. [Pagination Design](#3-pagination-design)
+4. [Unified Actor Model](#4-unified-actor-model)
+5. [Actor-Based Recovery](#5-actor-based-recovery)
+6. [Priority Queue System](#6-priority-queue-system)
+7. [API Reference](#7-api-reference)
+8. [Implementation Phases](#8-implementation-phases)
+9. [Migration Guide](#9-migration-guide)
 
 ---
 
-## 1. Current Architecture Analysis
+## 1. Simplified API Design
 
-### 1.1 Current Data Flow
+### 1.1 Before vs After
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    BEFORE (11 exports)                          │
+├─────────────────────────────────────────────────────────────────┤
+│  stream, material, insert, update, remove, recovery,            │
+│  mark, compact, sessions, presence, materialPaginated           │
+└─────────────────────────────────────────────────────────────────┘
+
+                              ↓
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    AFTER (4 exports)                            │
+├─────────────────────────────────────────────────────────────────┤
+│  material    - Paginated SSR + infinite scroll                  │
+│  delta       - Real-time delta log subscription                 │
+│  replicate   - Single mutation for ALL CRDT changes             │
+│  session     - Unified session management (presence + sync)     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 1.2 New Server API
+
+```typescript
+// Server-side: 4 clean exports
+const {
+  material,    // Paginated query for SSR/hydration
+  delta,       // Subscribe to delta log changes
+  replicate,   // Push CRDT updates (insert/update/delete)
+  session,     // Unified session management (join/leave/mark/signal + query)
+} = collection.create<Doc<"intervals">>(components.replicate, "intervals");
+```
+
+### 1.3 Export Consolidation
+
+| Old Export | New Export | Reasoning |
+|------------|------------|-----------|
+| `stream` | `delta` | Better name - it's the delta log |
+| `material` | `material` | Now paginated by default |
+| `materialPaginated` | `material` | Merged - pagination is default |
+| `insert` | `replicate` | Merged with `type: "insert"` |
+| `update` | `replicate` | Merged with `type: "update"` |
+| `remove` | `replicate` | Merged with `type: "delete"` |
+| `recovery` | Internal | Handled by actor reconciliation |
+| `mark` | `session` | Merged - now `session({ action: "mark" })` or piggybacked on `signal` |
+| `compact` | Internal | Auto-triggered on write when threshold exceeded |
+| `sessions` | `session.query` | Merged into unified session API |
+| `presence` | `session` | Merged - session manages presence + sync state |
+
+### 1.4 Why These Names?
+
+| Export | Semantic Meaning |
+|--------|------------------|
+| `material` | The **materialized view** of your data |
+| `delta` | The **delta log** of CRDT changes |
+| `replicate` | The core **replication** action (matches library name!) |
+| `session` | Client **session** state (presence, sync progress, cursors) |
+
+---
+
+## 2. Current Architecture Analysis
+
+### 2.1 Current Data Flow
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -67,17 +133,18 @@ These changes will dramatically improve performance for:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 1.2 Problems with Current Approach
+### 2.2 Problems with Current Approach
 
 | Issue | Impact | Severity |
 |-------|--------|----------|
+| 11 server exports | Confusing API, hard to learn | High |
 | Prose-only actors | Inconsistent sync behavior, special cases | High |
 | Bulk recovery | Memory spikes, slow reconnection, blocks UI | High |
 | No pagination | SSR loads entire dataset, slow first paint | High |
 | Direct mutations | No batching for field changes, excessive API calls | Medium |
 | No priority ordering | Background docs compete with visible ones | Medium |
 
-### 1.3 Current Actor Implementation
+### 2.3 Current Actor Implementation
 
 **Location:** `src/client/services/actor.ts`
 
@@ -96,14 +163,13 @@ fragment.observeDeep() → actorManager.onLocalChange(docId) → debounce → sy
 
 ---
 
-## 2. Pagination Design
+## 3. Pagination Design
 
-### 2.1 Convex Pagination API
+### 3.1 Convex Pagination API
 
 Convex uses **cursor-based pagination** with the following primitives:
 
 ```typescript
-// Server-side
 import { paginationOptsValidator } from "convex/server";
 
 interface PaginationOptions {
@@ -124,14 +190,14 @@ const result = await ctx.db
   .paginate(paginationOpts);
 ```
 
-### 2.2 Server API: Paginated Material Query
+### 3.2 New `material` Query (Server)
 
-**New query:** `materialPaginated`
+The `material` query is now **paginated by default**:
 
 ```typescript
 // src/server/replicate.ts
 
-createMaterialPaginatedQuery(opts?: {
+createMaterialQuery(opts?: {
   evalRead?: (ctx: QueryCtx, collection: string) => Promise<void>;
   transform?: (docs: T[]) => T[] | Promise<T[]>;
 }) {
@@ -147,7 +213,7 @@ createMaterialPaginatedQuery(opts?: {
       page: v.array(v.any()),
       isDone: v.boolean(),
       continueCursor: v.string(),
-      cursor: v.optional(v.number()),  // Max seq for recovery
+      seq: v.optional(v.number()),
       crdt: v.optional(v.record(v.string(), v.object({
         bytes: v.bytes(),
         seq: v.number(),
@@ -192,7 +258,7 @@ createMaterialPaginatedQuery(opts?: {
         page: docs,
         isDone: result.isDone,
         continueCursor: result.continueCursor,
-        cursor: maxSeq > 0 ? maxSeq : undefined,
+        seq: maxSeq > 0 ? maxSeq : undefined,
         crdt,
       };
     },
@@ -200,32 +266,311 @@ createMaterialPaginatedQuery(opts?: {
 }
 ```
 
-### 2.3 Server API Export
+### 3.3 New `delta` Query (Server)
+
+Renamed from `stream` for clarity:
 
 ```typescript
-// src/server/replicate.ts - Updated collection.create return
+// src/server/replicate.ts
 
-export const {
-  // Existing
-  stream,
-  material,
-  insert,
-  update,
-  remove,
-  recovery,
-  mark,
-  compact,
-  sessions,
-  presence,
-  
-  // New
-  materialPaginated,  // Paginated SSR query
-} = collection.create<Doc<"intervals">>(components.replicate, "intervals");
+createDeltaQuery(opts?: {
+  evalRead?: (ctx: QueryCtx, collection: string) => Promise<void>;
+}) {
+  return queryGeneric({
+    args: {
+      seq: v.number(),
+      limit: v.optional(v.number()),
+    },
+    returns: v.object({
+      changes: v.array(v.object({
+        document: v.string(),
+        bytes: v.bytes(),
+        seq: v.number(),
+        type: v.string(),
+        exists: v.boolean(),
+      })),
+      seq: v.number(),
+      more: v.boolean(),
+    }),
+    handler: async (ctx, args) => {
+      if (opts?.evalRead) {
+        await opts.evalRead(ctx, this.collectionName);
+      }
+      
+      return await ctx.runQuery(this.component.mutations.stream, {
+        collection: this.collectionName,
+        seq: args.seq,
+        limit: args.limit ?? 1000,
+      });
+    },
+  });
+}
 ```
 
-### 2.4 Client Configuration API
+### 3.4 New `replicate` Mutation (Server)
 
-**Goal:** Consistent DX for configuring pagination on both SSR and client.
+Single mutation for ALL CRDT operations:
+
+```typescript
+// src/server/replicate.ts
+
+createReplicateMutation(opts?: {
+  evalWrite?: (ctx: MutationCtx, doc: T) => Promise<void>;
+  onInsert?: (ctx: MutationCtx, doc: T) => Promise<void>;
+  onUpdate?: (ctx: MutationCtx, doc: T) => Promise<void>;
+  onDelete?: (ctx: MutationCtx, docId: string) => Promise<void>;
+}) {
+  return mutationGeneric({
+    args: {
+      document: v.string(),
+      bytes: v.bytes(),
+      material: v.optional(v.any()),
+      type: v.union(v.literal("insert"), v.literal("update"), v.literal("delete")),
+    },
+    returns: v.object({
+      success: v.boolean(),
+      seq: v.number(),
+    }),
+    handler: async (ctx, args) => {
+      const { document, bytes, material, type } = args;
+      
+      // Evaluate write permissions
+      if (opts?.evalWrite && material) {
+        await opts.evalWrite(ctx, material as T);
+      }
+      
+      // Dispatch to appropriate handler
+      switch (type) {
+        case "insert": {
+          if (opts?.onInsert && material) {
+            await opts.onInsert(ctx, material as T);
+          }
+          return await ctx.runMutation(this.component.mutations.insertDocument, {
+            collection: this.collectionName,
+            document,
+            bytes,
+          });
+        }
+        
+        case "update": {
+          if (opts?.onUpdate && material) {
+            await opts.onUpdate(ctx, material as T);
+          }
+          return await ctx.runMutation(this.component.mutations.updateDocument, {
+            collection: this.collectionName,
+            document,
+            bytes,
+          });
+        }
+        
+        case "delete": {
+          if (opts?.onDelete) {
+            await opts.onDelete(ctx, document);
+          }
+          return await ctx.runMutation(this.component.mutations.deleteDocument, {
+            collection: this.collectionName,
+            document,
+            bytes,
+          });
+        }
+      }
+    },
+  });
+}
+```
+
+### 3.5 New `session` API (Server)
+
+Unified session management combining presence, sync progress, and awareness:
+
+```typescript
+// src/server/replicate.ts
+
+createSessionMutation(opts?: {
+  evalWrite?: (ctx: MutationCtx, client: string) => Promise<void>;
+}) {
+  return mutationGeneric({
+    args: {
+      document: v.string(),
+      client: v.string(),
+      action: v.union(
+        v.literal("join"),    // Connect to document
+        v.literal("leave"),   // Disconnect from document
+        v.literal("mark"),    // Mark replication progress (vector + seq)
+        v.literal("signal"),  // Keep-alive + update all state
+      ),
+      // For join/signal - user identity
+      user: v.optional(v.string()),
+      profile: v.optional(v.object({
+        name: v.optional(v.string()),
+        color: v.optional(v.string()),
+        avatar: v.optional(v.string()),
+      })),
+      // For join/signal - cursor position
+      cursor: v.optional(v.object({
+        anchor: v.any(),
+        head: v.any(),
+        field: v.optional(v.string()),
+      })),
+      // For mark/signal - replication progress
+      vector: v.optional(v.bytes()),
+      seq: v.optional(v.number()),
+    },
+    returns: v.null(),
+    handler: async (ctx, args) => {
+      if (opts?.evalWrite) {
+        await opts.evalWrite(ctx, args.client);
+      }
+      
+      await ctx.runMutation(this.component.mutations.session, {
+        collection: this.collectionName,
+        ...args,
+      });
+      
+      return null;
+    },
+  });
+}
+
+// Query for active sessions
+createSessionQuery(opts?: {
+  evalRead?: (ctx: QueryCtx, collection: string) => Promise<void>;
+}) {
+  return queryGeneric({
+    args: {
+      document: v.string(),
+      connected: v.optional(v.boolean()),
+      exclude: v.optional(v.string()),
+    },
+    returns: v.array(sessionValidator),
+    handler: async (ctx, args) => {
+      if (opts?.evalRead) {
+        await opts.evalRead(ctx, this.collectionName);
+      }
+      
+      return await ctx.runQuery(this.component.mutations.sessions, {
+        collection: this.collectionName,
+        document: args.document,
+        connected: args.connected ?? true,
+        exclude: args.exclude,
+      });
+    },
+  });
+}
+```
+
+### 3.6 Internal Compaction (Auto-Triggered)
+
+Compaction runs automatically when delta count exceeds threshold:
+
+```typescript
+// src/component/mutations.ts (internal)
+
+// Called automatically by insertDocument/updateDocument/deleteDocument
+const _triggerCompactionIfNeeded = async (
+  ctx: MutationCtx,
+  collection: string,
+  document: string,
+  threshold: number = 500,
+) => {
+  const count = await ctx.db
+    .query("deltas")
+    .withIndex("by_document", (q) =>
+      q.eq("collection", collection).eq("document", document),
+    )
+    .collect()
+    .then((d) => d.length);
+
+  if (count >= threshold) {
+    // Schedule internal compaction action
+    await ctx.scheduler.runAfter(0, internal._compact, {
+      collection,
+      document,
+    });
+  }
+};
+
+// Internal action - not exposed to clients
+export const _compact = internalAction({
+  args: {
+    collection: v.string(),
+    document: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // 1. Load all deltas + existing snapshot
+    // 2. Merge into new snapshot
+    // 3. Check all sessions with vectors (connected + recent disconnected)
+    // 4. Find minimum seq where all peers have synced
+    // 5. Delete only deltas where seq <= minSafeSeq
+    // 6. Always retain snapshot for recovery fallback
+  },
+});
+```
+
+**Key behaviors:**
+- **Auto-triggered**: On every write, checks if delta count >= threshold
+- **Peer-aware**: Only deletes deltas that ALL tracked peers have synced
+- **Multi-week offline safe**: Sessions with vectors are retained, their needed deltas preserved
+- **Fallback**: If deltas were compacted before a peer synced, peer uses `recovery` (state vector sync)
+
+**Compaction configuration** (via `collection.create()` options):
+
+```typescript
+const { material, delta, replicate, session } = collection.create<T>(
+  components.replicate,
+  "intervals",
+  {
+    compaction: {
+      sizeThreshold: "5mb",   // Trigger when document exceeds size (default: "5mb")
+      peerTimeout: "24h",     // Consider peer stale after duration (default: "24h")
+    },
+  },
+);
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `sizeThreshold` | `Size` | `"5mb"` | Trigger compaction when document delta size exceeds this |
+| `peerTimeout` | `Duration` | `"24h"` | Consider peer stale (safe to compact their data) after this duration |
+
+### 3.7 Server Hooks
+
+Hooks provide authorization and lifecycle callbacks for all operations:
+
+```typescript
+const { material, delta, replicate, session } = collection.create<T>(
+  components.replicate,
+  "intervals",
+  {
+    hooks: {
+      // Permission checks (throw to reject)
+      evalRead: async (ctx, collection) => { /* before material/delta queries */ },
+      evalWrite: async (ctx, doc) => { /* before replicate mutations */ },
+      evalSession: async (ctx, client) => { /* before session mutations (replaces evalMark) */ },
+      
+      // Lifecycle callbacks (run after operation)
+      onDelta: async (ctx, result) => { /* after delta query (replaces onStream) */ },
+      onReplicate: async (ctx, doc, type) => { /* after replicate mutation */ },
+    },
+  },
+);
+```
+
+**Hook mapping from old API:**
+
+| Old Hook | New Hook | Trigger |
+|----------|----------|---------|
+| `evalRead` | `evalRead` | Before `material`, `delta`, `session.query` |
+| `evalWrite` | `evalWrite` | Before `replicate` (insert/update/delete) |
+| `evalMark` | `evalSession` | Before `session` mutations (join/leave/mark/signal) |
+| `evalCompact` | *(internal)* | Compaction is now internal, no user hook needed |
+| `onStream` | `onDelta` | After `delta` query returns |
+| `onInsert` | `onReplicate` | After `replicate` with `type: "insert"` |
+| `onUpdate` | `onReplicate` | After `replicate` with `type: "update"` |
+| `onRemove` | `onReplicate` | After `replicate` with `type: "delete"` |
+| `transform` | `transform` | Transform documents before returning from `material` |
+
+### 3.8 Client Configuration API
 
 ```typescript
 // src/client/collection.ts
@@ -249,9 +594,16 @@ export interface PaginationConfig {
 
 export interface CollectionOptions<T extends object> {
   persistence: () => Promise<Persistence>;
-  config: () => Omit<LazyCollectionConfig<T>, "material">;
-  
-  // New: Pagination configuration
+  config: () => {
+    convexClient: ConvexClient;
+    api: {
+      material: FunctionReference<"query">;
+      delta: FunctionReference<"query">;
+      replicate: FunctionReference<"mutation">;
+      session: FunctionReference<"mutation">;  // Unified session API
+    };
+    getKey: (doc: T) => string;
+  };
   pagination?: PaginationConfig;
 }
 
@@ -260,12 +612,12 @@ export const intervals = collection.create(schema, "intervals", {
   persistence: pglite,
   config: () => ({
     convexClient: new ConvexClient(PUBLIC_CONVEX_URL),
-    api: api.intervals,
+    api: api.intervals,  // { material, delta, replicate, session }
     getKey: (interval) => interval.id,
   }),
   pagination: {
     pageSize: 25,
-    ssrPages: 2,           // Load first 50 items on SSR
+    ssrPages: 2,
     ssrIncludeCRDT: true,
     infiniteScroll: true,
     preloadThreshold: 5,
@@ -273,25 +625,25 @@ export const intervals = collection.create(schema, "intervals", {
 });
 ```
 
-### 2.5 SSR Hydration Flow
+### 3.9 SSR Hydration Flow
 
 **Server (TanStack Start / SvelteKit / Next.js):**
 
 ```typescript
-// routes/index.tsx (TanStack Start example)
+// routes/index.tsx
 
 export const Route = createFileRoute("/")({
   loader: async () => {
     const convex = createConvexHttpClient(CONVEX_URL);
     
     // Fetch first 2 pages with CRDT state
-    const page1 = await convex.query(api.intervals.materialPaginated, {
+    const page1 = await convex.query(api.intervals.material, {
       paginationOpts: { numItems: 25, cursor: null },
       includeCRDT: true,
     });
     
     const page2 = !page1.isDone
-      ? await convex.query(api.intervals.materialPaginated, {
+      ? await convex.query(api.intervals.material, {
           paginationOpts: { numItems: 25, cursor: page1.continueCursor },
           includeCRDT: true,
         })
@@ -303,7 +655,7 @@ export const Route = createFileRoute("/")({
         cursor: page2?.continueCursor ?? page1.continueCursor,
         isDone: page2?.isDone ?? page1.isDone,
         crdt: { ...page1.crdt, ...page2?.crdt },
-        seq: Math.max(page1.cursor ?? 0, page2?.cursor ?? 0),
+        seq: Math.max(page1.seq ?? 0, page2?.seq ?? 0),
       },
     };
   },
@@ -337,57 +689,15 @@ async initWithMaterial(material: PaginatedMaterial<T>): Promise<void> {
     loadedPages: material.pages.length,
   };
   
-  // 4. Start stream from SSR cursor (skip already-loaded deltas)
-  this.startStream(material.seq);
+  // 4. Start delta subscription from SSR seq (skip already-loaded deltas)
+  this.startDeltaSubscription(material.seq);
   
   // 5. Ready immediately - no loading state for SSR docs!
   this.markReady();
 }
 ```
 
-### 2.6 Client Pagination API
-
-```typescript
-// src/client/collection.ts
-
-export interface LazyCollection<T extends object> {
-  // Existing
-  init(material?: Materialized<T>): Promise<void>;
-  get(): Collection<T>;
-  readonly $docType?: T;
-  
-  // New: Pagination
-  readonly pagination: {
-    /** Load next page of documents */
-    loadMore(): Promise<PaginatedPage<T>>;
-    
-    /** Current pagination status */
-    readonly status: PaginationStatus;
-    
-    /** Subscribe to status changes */
-    onStatusChange(callback: (status: PaginationStatus) => void): () => void;
-    
-    /** Total loaded document count */
-    readonly loadedCount: number;
-    
-    /** Whether more pages are available */
-    readonly hasMore: boolean;
-  };
-}
-
-type PaginationStatus =
-  | "idle"              // Initial state
-  | "loading"           // Loading a page
-  | "ready"             // Page loaded, more available
-  | "exhausted";        // No more pages
-
-interface PaginatedPage<T> {
-  documents: T[];
-  isDone: boolean;
-}
-```
-
-### 2.7 Infinite Scroll Integration
+### 3.10 Infinite Scroll Integration
 
 ```typescript
 // React example with TanStack Virtual
@@ -436,16 +746,16 @@ function IntervalList() {
 
 ---
 
-## 3. Unified Actor Model
+## 4. Unified Actor Model
 
-### 3.1 Design Goals
+### 4.1 Design Goals
 
 1. **All changes through actors** - Prose fields, regular fields, deletes
 2. **Single sync path** - No special cases
 3. **Consistent batching** - All changes debounced
 4. **Unified pending state** - One source of truth per document
 
-### 3.2 New Message Types
+### 4.2 New Message Types
 
 ```typescript
 // src/client/services/actor.ts
@@ -458,8 +768,7 @@ export type DocumentMessage =
   
   // New
   | { readonly _tag: "Reconcile"; readonly done: Deferred.Deferred<ReconcileResult, SyncError> }
-  | { readonly _tag: "FieldChange"; readonly field: string; readonly value: unknown }
-  | { readonly _tag: "Delete" };
+  | { readonly _tag: "SetPriority"; readonly priority: ActorPriority };
 
 interface ReconcileResult {
   localChanges: number;   // Changes pushed to server
@@ -468,7 +777,7 @@ interface ReconcileResult {
 }
 ```
 
-### 3.3 Actor State
+### 4.3 Actor State
 
 ```typescript
 // src/client/services/actor.ts
@@ -483,7 +792,7 @@ interface ActorState {
   readonly status: ActorStatus;
   readonly priority: ActorPriority;
   readonly lastSyncAt: number | null;
-  readonly pendingFields: Set<string>;  // Fields with unsaved changes
+  readonly pendingFields: Set<string>;
 }
 
 type ActorStatus =
@@ -500,7 +809,7 @@ type ActorPriority =
   | "low";           // Offscreen, defer sync
 ```
 
-### 3.4 Unified Sync Function
+### 4.4 Unified Sync Function
 
 ```typescript
 // src/client/services/actor.ts
@@ -520,9 +829,12 @@ const performSync = Effect.gen(function* () {
   const material = serializeYMapValue(ymap);
   const bytes = delta.buffer as ArrayBuffer;
   
-  // Single mutation handles all change types
+  // Determine operation type
+  const type = state.isNew ? "insert" : state.isDeleted ? "delete" : "update";
+  
+  // Single mutation handles everything via `replicate`
   yield* Effect.tryPromise({
-    try: () => syncFn({ bytes, material }),
+    try: () => replicateFn({ document: documentId, bytes, material, type }),
     catch: (e) => new SyncError({
       documentId,
       cause: e,
@@ -539,11 +851,12 @@ const performSync = Effect.gen(function* () {
     lastError: null,
     lastSyncAt: Date.now(),
     status: "idle",
+    isNew: false,
   }));
 });
 ```
 
-### 3.5 Document-Level Observer
+### 4.5 Document-Level Observer
 
 **Key Change:** Observe entire `ydoc`, not just prose fragments.
 
@@ -577,7 +890,7 @@ export function observeDocument(
 }
 ```
 
-### 3.6 Integration with TanStack DB
+### 4.6 Integration with TanStack DB
 
 ```typescript
 // src/client/collection.ts
@@ -599,9 +912,9 @@ const createMutationHandlers = <T extends object>(
       }
     }, YjsOrigin.Local);
     
-    // Register actor for this document
-    const syncFn = createSyncFn(docId, ydoc, ymap, collection);
-    await runWithRuntime(runtime, actorManager.register(docId, ydoc, syncFn));
+    // Register actor for this document (marks as new)
+    const replicateFn = createReplicateFn(docId, ydoc, ymap, collection);
+    await runWithRuntime(runtime, actorManager.register(docId, ydoc, replicateFn, { isNew: true }));
     
     // Actor will handle sync via observer
   },
@@ -626,26 +939,25 @@ const createMutationHandlers = <T extends object>(
   onDelete: async (mutation: CollectionMutation<T>) => {
     const docId = mutation.key as string;
     
-    // Create delete marker in Yjs
-    const deleteMarker = createDeleteDelta(docId);
+    // Mark document as deleted in actor state
+    await runWithRuntime(runtime, actorManager.markDeleted(docId));
     
-    // Notify actor to sync the delete
-    await runWithRuntime(runtime, actorManager.onLocalChange(docId));
+    // Actor will sync the delete
   },
 });
 ```
 
 ---
 
-## 4. Actor-Based Recovery
+## 5. Actor-Based Recovery
 
-### 4.1 Current Recovery (Problems)
+### 5.1 Current Recovery (Problems)
 
 ```typescript
 // Current: Bulk recovery on reconnect
 const recoverFromServer = async () => {
   // 1. Fetch ALL deltas since last cursor
-  const result = await convexClient.query(api.stream, {
+  const result = await convexClient.query(api.delta, {
     seq: lastCursor,
     limit: 10000,  // Potentially huge!
   });
@@ -663,7 +975,7 @@ const recoverFromServer = async () => {
 };
 ```
 
-### 4.2 Actor-Based Recovery (Solution)
+### 5.2 Actor-Based Recovery (Solution)
 
 ```typescript
 // New: Per-document reconciliation via actors
@@ -715,7 +1027,7 @@ const handleReconcile = Effect.gen(function* () {
 });
 ```
 
-### 4.3 Reconnection Flow
+### 5.3 Reconnection Flow
 
 ```typescript
 // src/client/collection.ts
@@ -759,7 +1071,7 @@ const handleReconnection = async () => {
 };
 ```
 
-### 4.4 Benefits of Actor-Based Recovery
+### 5.4 Benefits of Actor-Based Recovery
 
 | Aspect | Bulk Recovery | Actor Recovery |
 |--------|---------------|----------------|
@@ -772,9 +1084,9 @@ const handleReconnection = async () => {
 
 ---
 
-## 5. Priority Queue System
+## 6. Priority Queue System
 
-### 5.1 Queue Architecture
+### 6.1 Queue Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -797,7 +1109,7 @@ const handleReconnection = async () => {
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 5.2 Priority Assignment
+### 6.2 Priority Assignment
 
 ```typescript
 // src/client/services/priority.ts
@@ -839,7 +1151,7 @@ export const determinePriority = (
 };
 ```
 
-### 5.3 Queue Processor
+### 6.3 Queue Processor
 
 ```typescript
 // src/client/services/queue.ts
@@ -862,44 +1174,30 @@ export const createPriorityQueue = (
     const lowQueue = yield* Queue.unbounded<QueuedSync>();
     
     // Processors with different concurrency
-    yield* Effect.forkScoped(
-      processQueue(criticalQueue, config.critical),
-    );
-    yield* Effect.forkScoped(
-      processQueue(highQueue, config.high),
-    );
-    yield* Effect.forkScoped(
-      processQueue(normalQueue, config.normal),
-    );
-    yield* Effect.forkScoped(
-      processQueue(lowQueue, config.low),
-    );
+    yield* Effect.forkScoped(processQueue(criticalQueue, config.critical));
+    yield* Effect.forkScoped(processQueue(highQueue, config.high));
+    yield* Effect.forkScoped(processQueue(normalQueue, config.normal));
+    yield* Effect.forkScoped(processQueue(lowQueue, config.low));
     
     return {
       enqueue: (sync: QueuedSync) => {
         switch (sync.priority) {
-          case "critical":
-            return Queue.offer(criticalQueue, sync);
-          case "high":
-            return Queue.offer(highQueue, sync);
-          case "normal":
-            return Queue.offer(normalQueue, sync);
-          case "low":
-            return Queue.offer(lowQueue, sync);
+          case "critical": return Queue.offer(criticalQueue, sync);
+          case "high": return Queue.offer(highQueue, sync);
+          case "normal": return Queue.offer(normalQueue, sync);
+          case "low": return Queue.offer(lowQueue, sync);
         }
       },
       
-      // Promote document to higher priority
       promote: (documentId: string, priority: ActorPriority) =>
         Effect.gen(function* () {
           // Move from current queue to target queue
-          // Implementation details...
         }),
     };
   });
 ```
 
-### 5.4 Visibility Detection
+### 6.4 Visibility Detection
 
 ```typescript
 // src/client/services/visibility.ts
@@ -909,7 +1207,6 @@ export const createVisibilityTracker = (): VisibilityTracker => {
   const observers = new Map<string, IntersectionObserver>();
   
   return {
-    /** Register element for visibility tracking */
     observe: (documentId: string, element: HTMLElement) => {
       const observer = new IntersectionObserver(
         (entries) => {
@@ -934,126 +1231,121 @@ export const createVisibilityTracker = (): VisibilityTracker => {
       };
     },
     
-    /** Check if document is currently visible */
     isVisible: (documentId: string) => visibleDocs.has(documentId),
-    
-    /** Get all visible document IDs */
     getVisible: () => Array.from(visibleDocs),
   };
 };
 ```
 
-### 5.5 Integration with Actors
-
-```typescript
-// src/client/services/manager.ts
-
-export const createActorManager = (
-  config: ActorManagerConfig = {},
-): Effect.Effect<ActorManager, never, Scope.Scope> =>
-  Effect.gen(function* () {
-    // ... existing setup ...
-    
-    const priorityQueue = yield* createPriorityQueue(config.queue);
-    const visibilityTracker = config.visibilityTracker ?? createVisibilityTracker();
-    
-    const manager: ActorManager = {
-      // ... existing methods ...
-      
-      onLocalChange: (documentId) =>
-        Effect.gen(function* () {
-          const actor = yield* manager.get(documentId);
-          if (!actor) return;
-          
-          // Determine priority based on visibility
-          const priority = determinePriority(
-            documentId,
-            yield* Ref.get(actor.stateRef),
-            { isVisible: visibilityTracker.isVisible },
-          );
-          
-          // Enqueue with priority
-          yield* priorityQueue.enqueue({
-            documentId,
-            priority,
-            actor,
-            type: "sync",
-          });
-        }),
-      
-      /** Mark document as visible (promotes priority) */
-      markVisible: (documentId: string, element: HTMLElement) => {
-        return visibilityTracker.observe(documentId, element);
-      },
-    };
-    
-    return manager;
-  });
-```
-
 ---
 
-## 6. API Reference
+## 7. API Reference
 
-### 6.1 Server API
+### 7.1 Server API (4 exports)
 
 ```typescript
-// Collection creation (server-side)
-const { 
-  // Existing
-  stream,           // Real-time delta stream
-  material,         // Full dataset (deprecated for large collections)
-  insert,           // Insert mutation
-  update,           // Update mutation
-  remove,           // Remove mutation
-  recovery,         // Per-document recovery query
-  mark,             // Mark client cursor
-  compact,          // Compaction mutation
-  sessions,         // Active sessions query
-  presence,         // Presence mutation
-  
-  // New
-  materialPaginated,  // Paginated SSR query
-} = collection.create<T>(component, "tableName", options);
+// Server-side collection creation
+const {
+  material,    // Paginated SSR query
+  delta,       // Real-time delta subscription
+  replicate,   // Single mutation for all CRDT changes
+  session,     // Unified session management
+} = collection.create<Doc<"intervals">>(components.replicate, "intervals");
+```
 
-// materialPaginated signature
-materialPaginated(args: {
+#### `material` - Paginated Query
+
+```typescript
+material(args: {
   paginationOpts: { numItems: number; cursor: string | null };
   includeCRDT?: boolean;
 }): Promise<{
   page: T[];
   isDone: boolean;
   continueCursor: string;
-  cursor?: number;
+  seq?: number;
   crdt?: Record<string, { bytes: ArrayBuffer; seq: number }>;
 }>
 ```
 
-### 6.2 Client API
+#### `delta` - Real-time Subscription
 
 ```typescript
-// Collection creation (client-side)
+delta(args: {
+  seq: number;
+  limit?: number;
+}): {
+  changes: Array<{
+    document: string;
+    bytes: ArrayBuffer;
+    seq: number;
+    type: string;
+    exists: boolean;
+  }>;
+  seq: number;
+  more: boolean;
+}
+```
+
+#### `replicate` - CRDT Mutation
+
+```typescript
+replicate(args: {
+  document: string;
+  bytes: ArrayBuffer;
+  material?: T;
+  type: "insert" | "update" | "delete";
+}): Promise<{
+  success: boolean;
+  seq: number;
+}>
+```
+
+#### `session` - Unified Session Management
+
+```typescript
+// Mutation - manage session state
+session(args: {
+  document: string;
+  client: string;
+  action: "join" | "leave" | "mark" | "signal";
+  // For join/signal - user identity
+  user?: string;
+  profile?: { name?: string; color?: string; avatar?: string };
+  // For join/signal - cursor position  
+  cursor?: { anchor: any; head: any; field?: string };
+  // For mark/signal - replication progress
+  vector?: ArrayBuffer;
+  seq?: number;
+}): Promise<null>
+
+// Query - get active sessions
+session.query(args: {
+  document: string;
+  connected?: boolean;
+  exclude?: string;
+}): Promise<Session[]>
+```
+
+**Action semantics:**
+- `join` - Connect to document, set `connected=true`, optionally set user/profile/cursor
+- `leave` - Disconnect from document, set `connected=false`, clear cursor
+- `mark` - Mark replication progress (vector + seq) after applying deltas from server
+- `signal` - Keep-alive combining all of the above (presence + replication progress)
+
+### 7.2 Client API
+
+```typescript
+// Collection creation
 const collection = collection.create(schema, "tableName", {
   persistence: () => pglite(),
   config: () => ({
     convexClient,
-    api: api.tableName,
+    api: api.tableName,  // { material, delta, replicate, session }
     getKey: (doc) => doc.id,
   }),
-  pagination: {
-    pageSize: 25,
-    ssrPages: 2,
-    ssrIncludeCRDT: true,
-    infiniteScroll: true,
-    preloadThreshold: 5,
-  },
-  actors: {
-    debounceMs: 200,
-    maxRetries: 3,
-    priority: {
-      recentThreshold: 5000,
-    },
-  },
+  pagination: { pageSize: 25, ssrPages: 2 },
+  actors: { debounceMs: 200, maxRetries: 3 },
 });
 
 // Type extraction
@@ -1079,21 +1371,28 @@ interface LazyCollection<T> {
     reconcileAll(): Promise<ReconcileResult[]>;
     markVisible(documentId: string, element: HTMLElement): () => void;
   };
+  
+  session: {
+    join(documentId: string, opts?: SessionJoinOptions): Promise<void>;
+    leave(documentId: string): Promise<void>;
+    updateCursor(documentId: string, cursor: Cursor): Promise<void>;
+    getSessions(documentId: string): Promise<Session[]>;
+    onSessionsChange(documentId: string, cb: (sessions: Session[]) => void): () => void;
+  };
 }
 ```
 
-### 6.3 Actor Messages
+### 7.3 Actor Messages
 
 ```typescript
 type DocumentMessage =
-  | { _tag: "LocalChange" }                    // Field/prose changed locally
-  | { _tag: "ExternalUpdate" }                 // Server pushed update
+  | { _tag: "LocalChange" }
+  | { _tag: "ExternalUpdate" }
   | { _tag: "Reconcile"; done: Deferred<ReconcileResult, SyncError> }
   | { _tag: "Shutdown"; done: Deferred<void, never> }
   | { _tag: "SetPriority"; priority: ActorPriority };
 
 type ActorPriority = "critical" | "high" | "normal" | "low";
-
 type ActorStatus = "idle" | "pending" | "syncing" | "reconciling" | "error";
 
 interface ReconcileResult {
@@ -1105,131 +1404,260 @@ interface ReconcileResult {
 
 ---
 
-## 7. Implementation Phases
+## 8. Implementation Phases
 
-### Phase 1: Pagination Foundation (3-4 days)
+Each phase is **contained and testable** - the system works after each phase completes.
 
-**Deliverables:**
-- [ ] `materialPaginated` query on server
-- [ ] `PaginationConfig` interface on client
-- [ ] `collection.pagination` API
-- [ ] SSR hydration with pagination
-- [ ] Basic infinite scroll support
-
-**Files to modify:**
-- `src/server/replicate.ts` - Add `createMaterialPaginatedQuery`
-- `src/client/collection.ts` - Add pagination config and state
-- `src/shared/validators.ts` - Add pagination validators
-
-### Phase 2: Unified Actor Model (4-5 days)
-
-**Deliverables:**
-- [ ] New message types (`Reconcile`, `SetPriority`)
-- [ ] Document-level observer (not just prose)
-- [ ] Remove prose-specific actor registration
-- [ ] TanStack DB mutation integration with actors
-
-**Files to modify:**
-- `src/client/services/actor.ts` - Extend message types, add reconcile
-- `src/client/services/manager.ts` - Add reconcile, priority methods
-- `src/client/documents.ts` - Add document-level observer
-- `src/client/prose.ts` - Simplify, remove actor registration
-- `src/client/collection.ts` - Wire mutations through actors
-
-### Phase 3: Priority Queue System (2-3 days)
-
-**Deliverables:**
-- [ ] Priority queue with 4 levels
-- [ ] Visibility tracker (IntersectionObserver)
-- [ ] Priority-based debounce configuration
-- [ ] Queue processor with concurrency limits
-
-**Files to create:**
-- `src/client/services/queue.ts` - Priority queue implementation
-- `src/client/services/priority.ts` - Priority determination
-- `src/client/services/visibility.ts` - Visibility tracking
-
-### Phase 4: Actor-Based Recovery (2-3 days)
-
-**Deliverables:**
-- [ ] `Reconcile` message handler in actor
-- [ ] Reconnection handler using actors
-- [ ] Priority-ordered recovery (visible first)
-- [ ] Remove bulk recovery code
-
-**Files to modify:**
-- `src/client/services/actor.ts` - Add `handleReconcile`
-- `src/client/collection.ts` - Replace bulk recovery with actor reconciliation
-
-### Phase 5: Testing & Examples (2-3 days)
-
-**Deliverables:**
-- [ ] Unit tests for pagination
-- [ ] Unit tests for actor reconciliation
-- [ ] Integration tests for recovery
-- [ ] Update SvelteKit example with infinite scroll
-- [ ] Update TanStack Start example with SSR pagination
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Phase 1: New Server API (backward compatible)                  │
+│  └── Add new exports, keep old ones working                     │
+├─────────────────────────────────────────────────────────────────┤
+│  Phase 2: Client Migration                                      │
+│  └── Switch client to use new API, update examples              │
+├─────────────────────────────────────────────────────────────────┤
+│  Phase 3: Pagination                                            │
+│  └── Add pagination to material query, SSR hydration            │
+├─────────────────────────────────────────────────────────────────┤
+│  Phase 4: Unified Actor Model                                   │
+│  └── All changes through actors, priority queue, recovery       │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## 8. Migration Guide
+### Phase 1: New Server API (Backward Compatible)
 
-### 8.1 Breaking Changes
+**Goal:** Add new consolidated exports while keeping old ones working for gradual migration.
 
-**None** - All changes are additive. Existing APIs continue to work.
+**Commits:**
 
-### 8.2 Deprecations
+1. **Add `replicate` mutation**
+   - Combines `insert`/`update`/`remove` with `type: "insert" | "update" | "delete"` field
+   - File: `src/server/replicate.ts`
 
-| Deprecated | Replacement | Timeline |
-|------------|-------------|----------|
-| `material()` for large datasets | `materialPaginated()` | v2.0 |
-| Bulk recovery | Actor-based recovery | Automatic |
+2. **Add `session` mutation**
+   - Combines `mark`/`presence` with `action: "join" | "leave" | "mark" | "signal"` field
+   - Rename `sessions` query to `session.query`
+   - File: `src/server/replicate.ts`
 
-### 8.3 Upgrade Steps
+3. **Rename `stream` → `delta`**
+   - Keep `stream` as deprecated alias for backward compatibility
+   - File: `src/server/replicate.ts`
 
-**Step 1: Enable pagination (optional)**
+4. **Internal compact auto-trigger**
+   - Add `_compact` internal action triggered on write when threshold exceeded
+   - Keep old `compact` export for manual/admin use
+   - Files: `src/component/mutations.ts`, `src/server/replicate.ts`
+
+**Files to modify:**
+- `src/server/replicate.ts` - Add new methods, keep old as deprecated
+- `src/server/collection.ts` - Update factory to export both old and new
+- `src/component/mutations.ts` - Add internal compact trigger
+- `src/shared/validators.ts` - Add new validators for `replicate` and `session`
+
+**Test:** Old examples still work unchanged (backward compatible)
+
+---
+
+### Phase 2: Client Migration
+
+**Goal:** Switch client to use new API, then remove deprecated server exports.
+
+**Commits:**
+
+1. **Update `ConvexCollectionApi` interface**
+   - New shape: `{ material, delta, replicate, session }`
+   - File: `src/client/collection.ts`
+
+2. **Migrate mutations to `replicate`**
+   - `onInsert` → `api.replicate({ type: "insert", ... })`
+   - `onUpdate` → `api.replicate({ type: "update", ... })`
+   - `onDelete` → `api.replicate({ type: "delete", ... })`
+   - File: `src/client/collection.ts`
+
+3. **Migrate subscription to `delta` + `session`**
+   - Use `api.delta` instead of `api.stream`
+   - Use `api.session({ action: "mark" })` instead of `api.mark`
+   - Remove client-side compact calls (now internal)
+   - File: `src/client/collection.ts`
+
+4. **Migrate prose binding to `session`**
+   - Use `api.session` instead of `api.presence`
+   - Use `api.session.query` instead of `api.sessions`
+   - File: `src/client/services/awareness.ts`
+
+5. **Update examples**
+   - Update TanStack Start example to use new 4-export API
+   - Update SvelteKit example to use new 4-export API
+   - Files: `examples/tanstack-start/convex/`, `examples/sveltekit/src/convex/`
+
+6. **Remove deprecated exports**
+   - Remove old method aliases from server
+   - File: `src/server/replicate.ts`, `src/server/collection.ts`
+
+**Test:** Examples work with new 4-export API
+
+---
+
+### Phase 3: Pagination
+
+**Goal:** Add pagination support to material query and client.
+
+**Commits:**
+
+1. **Server: paginated `material` query**
+   - Add `paginationOpts` argument support
+   - Return `{ page, isDone, continueCursor, seq?, crdt? }`
+   - File: `src/server/replicate.ts`
+
+2. **Client: pagination state**
+   - Add `PaginationConfig` interface
+   - Track cursor, hasMore, loading state
+   - Add `loadMore()` method
+   - File: `src/client/collection.ts`
+
+3. **Client: SSR hydration with pagination**
+   - Handle paginated material in `init()`
+   - Support multiple pages in initial load
+   - File: `src/client/collection.ts`
+
+4. **Examples: infinite scroll**
+   - Add infinite scroll demo to TanStack Start
+   - Add infinite scroll demo to SvelteKit
+   - Files: `examples/tanstack-start/`, `examples/sveltekit/`
+
+**Test:** SSR loads first page, infinite scroll loads more
+
+---
+
+### Phase 4: Unified Actor Model
+
+**Goal:** All changes through actors, priority queue, actor-based recovery.
+
+**Commits:**
+
+1. **Document-level observer**
+   - Observe entire Y.Doc changes, not just prose fragments
+   - Trigger actor on any field change
+   - File: `src/client/documents.ts`
+
+2. **Route mutations through actors**
+   - `onInsert`/`onUpdate`/`onDelete` queue through actor
+   - Actor batches and syncs changes
+   - Files: `src/client/collection.ts`, `src/client/services/actor.ts`
+
+3. **Actor-based recovery**
+   - Add `Reconcile` message type
+   - Replace bulk `recover()` with per-document actor reconciliation
+   - Files: `src/client/services/actor.ts`, `src/client/collection.ts`
+
+4. **Priority queue**
+   - Add priority levels: critical, high, normal, low
+   - Visible documents sync first
+   - Files: `src/client/services/queue.ts`, `src/client/services/priority.ts`
+
+5. **Simplify prose.ts**
+   - Remove actor registration (handled at document level)
+   - Keep fragment observation for editor binding
+   - File: `src/client/prose.ts`
+
+**Test:** All field changes sync through actors, reconnection prioritizes visible docs
+
+---
+
+### Estimated Timeline
+
+| Phase | Duration | Cumulative |
+|-------|----------|------------|
+| Phase 1: New Server API | 2-3 days | 2-3 days |
+| Phase 2: Client Migration | 2-3 days | 4-6 days |
+| Phase 3: Pagination | 2-3 days | 6-9 days |
+| Phase 4: Unified Actor Model | 4-5 days | 10-14 days |
+
+**Total: ~2 weeks**
+
+---
+
+## 9. Migration Guide
+
+### 9.1 Server API Migration
 
 ```typescript
-// Before
-export const intervals = collection.create(schema, "intervals", {
-  persistence: pglite,
-  config: () => ({ ... }),
-});
+// BEFORE (11 exports)
+const {
+  stream, material, insert, update, remove,
+  recovery, mark, compact, sessions, presence,
+  materialPaginated,
+} = collection.create<T>(component, "tableName");
 
-// After
-export const intervals = collection.create(schema, "intervals", {
-  persistence: pglite,
-  config: () => ({ ... }),
-  pagination: {           // New: optional
-    pageSize: 25,
-    ssrPages: 2,
-  },
-});
+// AFTER (4 exports)
+const {
+  material,    // Paginated by default
+  delta,       // Renamed from stream
+  replicate,   // Replaces insert/update/remove
+  session,     // Unified: sessions + presence + mark (sync progress)
+} = collection.create<T>(component, "tableName");
 ```
 
-**Step 2: Update SSR loader (if using pagination)**
+### 9.2 Client API Migration
 
 ```typescript
-// Before
+// BEFORE
+api: {
+  stream: api.intervals.stream,
+  material: api.intervals.material,
+  insert: api.intervals.insert,
+  update: api.intervals.update,
+  remove: api.intervals.remove,
+  mark: api.intervals.mark,
+  // ...
+}
+
+// AFTER
+api: api.intervals,  // { material, delta, replicate, session }
+
+// Note: mark is now under session API via action: "mark" or "signal"
+```
+
+### 9.3 SSR Migration
+
+```typescript
+// BEFORE
 const material = await convex.query(api.intervals.material, {});
 
-// After
-const page1 = await convex.query(api.intervals.materialPaginated, {
+// AFTER
+const page1 = await convex.query(api.intervals.material, {
   paginationOpts: { numItems: 50, cursor: null },
   includeCRDT: true,
 });
 ```
 
-**Step 3: Add infinite scroll (optional)**
+### 9.4 Mutation Migration
 
 ```typescript
-// In component
-const { loadMore, hasMore, status } = intervals.pagination;
+// BEFORE
+await convex.mutation(api.intervals.insert, { document, bytes, material });
+await convex.mutation(api.intervals.update, { document, bytes, material });
+await convex.mutation(api.intervals.remove, { document, bytes });
 
-<button onClick={loadMore} disabled={!hasMore || status === "loading"}>
-  Load More
-</button>
+// AFTER
+await convex.mutation(api.intervals.replicate, { document, bytes, material, type: "insert" });
+await convex.mutation(api.intervals.replicate, { document, bytes, material, type: "update" });
+await convex.mutation(api.intervals.replicate, { document, bytes, type: "delete" });
 ```
+
+### 9.5 Breaking Changes
+
+| Change | Migration |
+|--------|-----------|
+| `stream` → `delta` | Rename import |
+| `insert`/`update`/`remove` → `replicate` | Add `type` field |
+| `sessions` → `session.query` | Update to unified session API |
+| `presence` → `session` | Rename + use `action` field |
+| `mark` → `session` | Now via `action: "mark"` or `action: "signal"` |
+| `compact` → internal | No longer called by client; auto-triggered on write |
+| `material` now paginated | Add `paginationOpts` |
 
 ---
 
@@ -1329,10 +1757,11 @@ src/client/
 └── ...
 
 src/server/
-├── replicate.ts         # Extended with materialPaginated
+├── replicate.ts         # Simplified to 4 exports
+├── collection.ts        # Updated factory
 └── ...
 
 src/shared/
-├── validators.ts        # Extended with pagination validators
+├── validators.ts        # Extended with new validators
 └── ...
 ```

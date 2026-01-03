@@ -30,6 +30,22 @@ async function getNextSeq(ctx: any, collection: string): Promise<number> {
 	return (latest?.seq ?? 0) + 1;
 }
 
+async function scheduleCompactionIfNeeded(
+	ctx: any,
+	collection: string,
+	document: string,
+	threshold: number = DEFAULT_DELTA_COUNT_THRESHOLD,
+): Promise<void> {
+	const deltas = await ctx.db
+		.query("deltas")
+		.withIndex("by_document", (q: any) => q.eq("collection", collection).eq("document", document))
+		.collect();
+
+	if (deltas.length >= threshold) {
+		await ctx.scheduler.runAfter(0, api.mutations.compact, { collection, document });
+	}
+}
+
 export const insertDocument = mutation({
 	args: {
 		collection: v.string(),
@@ -46,6 +62,8 @@ export const insertDocument = mutation({
 			bytes: args.bytes,
 			seq,
 		});
+
+		await scheduleCompactionIfNeeded(ctx, args.collection, args.document);
 
 		return { success: true, seq };
 	},
@@ -68,6 +86,8 @@ export const updateDocument = mutation({
 			seq,
 		});
 
+		await scheduleCompactionIfNeeded(ctx, args.collection, args.document);
+
 		return { success: true, seq };
 	},
 });
@@ -88,6 +108,8 @@ export const deleteDocument = mutation({
 			bytes: args.bytes,
 			seq,
 		});
+
+		await scheduleCompactionIfNeeded(ctx, args.collection, args.document);
 
 		return { success: true, seq };
 	},
