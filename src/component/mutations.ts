@@ -4,6 +4,17 @@ import { mutation, query } from "$/component/_generated/server";
 import { api } from "$/component/_generated/api";
 import { getLogger } from "$/component/logger";
 import { OperationType } from "$/shared/types";
+import {
+  profileValidator,
+  cursorValidator,
+  streamResultValidator,
+  sessionValidator,
+  presenceActionValidator,
+  successSeqValidator,
+  compactResultValidator,
+  recoveryResultValidator,
+  documentStateValidator,
+} from "$/shared/validators";
 
 export { OperationType };
 
@@ -25,10 +36,7 @@ export const insertDocument = mutation({
     document: v.string(),
     bytes: v.bytes(),
   },
-  returns: v.object({
-    success: v.boolean(),
-    seq: v.number(),
-  }),
+  returns: successSeqValidator,
   handler: async (ctx, args) => {
     const seq = await getNextSeq(ctx, args.collection);
 
@@ -49,10 +57,7 @@ export const updateDocument = mutation({
     document: v.string(),
     bytes: v.bytes(),
   },
-  returns: v.object({
-    success: v.boolean(),
-    seq: v.number(),
-  }),
+  returns: successSeqValidator,
   handler: async (ctx, args) => {
     const seq = await getNextSeq(ctx, args.collection);
 
@@ -73,10 +78,7 @@ export const deleteDocument = mutation({
     document: v.string(),
     bytes: v.bytes(),
   },
-  returns: v.object({
-    success: v.boolean(),
-    seq: v.number(),
-  }),
+  returns: successSeqValidator,
   handler: async (ctx, args) => {
     const seq = await getNextSeq(ctx, args.collection);
 
@@ -147,12 +149,7 @@ export const compact = mutation({
     collection: v.string(),
     document: v.string(),
   },
-  returns: v.object({
-    success: v.boolean(),
-    removed: v.number(),
-    retained: v.number(),
-    size: v.number(),
-  }),
+  returns: compactResultValidator,
   handler: async (ctx, args) => {
     const logger = getLogger(["compaction"]);
     const now = Date.now();
@@ -306,21 +303,7 @@ export const stream = query({
     limit: v.optional(v.number()),
     threshold: v.optional(v.number()),
   },
-  returns: v.object({
-    changes: v.array(
-      v.object({
-        document: v.string(),
-        bytes: v.bytes(),
-        seq: v.number(),
-        type: v.string(),
-      }),
-    ),
-    seq: v.number(),
-    more: v.boolean(),
-    compact: v.optional(v.object({
-      documents: v.array(v.string()),
-    })),
-  }),
+  returns: streamResultValidator,
   handler: async (ctx, args) => {
     const limit = args.limit ?? 100;
     const threshold = args.threshold ?? DEFAULT_DELTA_COUNT_THRESHOLD;
@@ -422,10 +405,7 @@ export const recovery = query({
     document: v.string(),
     vector: v.bytes(),
   },
-  returns: v.object({
-    diff: v.optional(v.bytes()),
-    vector: v.bytes(),
-  }),
+  returns: recoveryResultValidator,
   handler: async (ctx, args) => {
     const snapshot = await ctx.db
       .query("snapshots")
@@ -477,13 +457,7 @@ export const getDocumentState = query({
     collection: v.string(),
     document: v.string(),
   },
-  returns: v.union(
-    v.object({
-      bytes: v.bytes(),
-      seq: v.number(),
-    }),
-    v.null(),
-  ),
+  returns: documentStateValidator,
   handler: async (ctx, args) => {
     const snapshot = await ctx.db
       .query("snapshots")
@@ -533,18 +507,7 @@ export const sessions = query({
     exclude: v.optional(v.string()),
     group: v.optional(v.boolean()),
   },
-  returns: v.array(v.object({
-    client: v.string(),
-    document: v.string(),
-    user: v.optional(v.string()),
-    profile: v.optional(v.any()),
-    cursor: v.optional(v.object({
-      anchor: v.any(),
-      head: v.any(),
-      field: v.optional(v.string()),
-    })),
-    seen: v.number(),
-  })),
+  returns: v.array(sessionValidator),
   handler: async (ctx, args) => {
     let query = ctx.db
       .query("sessions")
@@ -620,18 +583,10 @@ export const presence = mutation({
     collection: v.string(),
     document: v.string(),
     client: v.string(),
-    action: v.union(v.literal("join"), v.literal("leave")),
+    action: presenceActionValidator,
     user: v.optional(v.string()),
-    profile: v.optional(v.object({
-      name: v.optional(v.string()),
-      color: v.optional(v.string()),
-      avatar: v.optional(v.string()),
-    })),
-    cursor: v.optional(v.object({
-      anchor: v.any(),
-      head: v.any(),
-      field: v.optional(v.string()),
-    })),
+    profile: v.optional(profileValidator),
+    cursor: v.optional(cursorValidator),
     interval: v.optional(v.number()),
     vector: v.optional(v.bytes()),
   },

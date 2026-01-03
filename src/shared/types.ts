@@ -1,25 +1,17 @@
-/**
- * Shared types for @trestleinc/replicate
- *
- * These types are used across client, server, and component code.
- * They are safe to import in any environment (browser, Node.js, Convex).
- */
+import { type ProseValue } from "./validators.js";
 
-/** Marker used during insert/update to signal a fragment field */
+export { type ProseValue };
+
 export interface FragmentValue {
   __xmlFragment: true;
   content?: XmlFragmentJSON;
 }
 
-/** ProseMirror-compatible JSON for XmlFragment serialization */
 export interface XmlFragmentJSON {
   type: "doc";
   content?: XmlNodeJSON[];
 }
 
-export type ProseValue = XmlFragmentJSON;
-
-/** ProseMirror node structure */
 export interface XmlNodeJSON {
   type: string;
   attrs?: Record<string, unknown>;

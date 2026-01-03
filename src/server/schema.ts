@@ -1,16 +1,12 @@
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
+import { proseValidator } from "$/shared/validators";
 
-/** Fields automatically added to replicated tables */
 export interface ReplicationFields {
   timestamp: number;
 }
 
-export const prose = () =>
-  v.object({
-    type: v.literal("doc"),
-    content: v.optional(v.array(v.any())),
-  });
+export const prose = () => proseValidator;
 
 /**
  * Define a table with automatic timestamp field for replication.

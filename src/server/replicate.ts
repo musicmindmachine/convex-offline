@@ -2,6 +2,17 @@ import { v } from "convex/values";
 import type { GenericMutationCtx, GenericQueryCtx, GenericDataModel } from "convex/server";
 import { queryGeneric, mutationGeneric } from "convex/server";
 import { type CompactionConfig, parseSize, parseDuration } from "$/shared/types";
+import {
+  profileValidator,
+  cursorValidator,
+  streamResultWithExistsValidator,
+  sessionValidator,
+  presenceActionValidator,
+  successSeqValidator,
+  compactResultValidator,
+  recoveryResultValidator,
+  materialResultValidator,
+} from "$/shared/validators";
 
 const BYTES_PER_MB = 1024 * 1024;
 const MS_PER_HOUR = 60 * 60 * 1000;
@@ -38,22 +49,7 @@ export class Replicate<T extends object> {
         limit: v.optional(v.number()),
         threshold: v.optional(v.number()),
       },
-      returns: v.object({
-        changes: v.array(
-          v.object({
-            document: v.string(),
-            bytes: v.bytes(),
-            seq: v.number(),
-            type: v.string(),
-            exists: v.boolean(),
-          }),
-        ),
-        seq: v.number(),
-        more: v.boolean(),
-        compact: v.optional(v.object({
-          documents: v.array(v.string()),
-        })),
-      }),
+      returns: streamResultWithExistsValidator,
       handler: async (ctx, args) => {
         if (opts?.evalRead) {
           await opts.evalRead(ctx, collection);
@@ -106,15 +102,7 @@ export class Replicate<T extends object> {
 
     return queryGeneric({
       args: {},
-      returns: v.object({
-        documents: v.any(),
-        count: v.number(),
-        crdt: v.optional(v.record(v.string(), v.object({
-          bytes: v.bytes(),
-          seq: v.number(),
-        }))),
-        cursor: v.optional(v.number()),
-      }),
+      returns: materialResultValidator,
       handler: async (ctx) => {
         if (opts?.evalRead) {
           await opts.evalRead(ctx, collection);
@@ -173,10 +161,7 @@ export class Replicate<T extends object> {
         bytes: v.bytes(),
         material: v.any(),
       },
-      returns: v.object({
-        success: v.boolean(),
-        seq: v.number(),
-      }),
+      returns: successSeqValidator,
       handler: async (ctx, args) => {
         const doc = args.material as T;
 
@@ -221,10 +206,7 @@ export class Replicate<T extends object> {
         bytes: v.bytes(),
         material: v.any(),
       },
-      returns: v.object({
-        success: v.boolean(),
-        seq: v.number(),
-      }),
+      returns: successSeqValidator,
       handler: async (ctx, args) => {
         const doc = args.material as T;
 
@@ -274,10 +256,7 @@ export class Replicate<T extends object> {
         document: v.string(),
         bytes: v.bytes(),
       },
-      returns: v.object({
-        success: v.boolean(),
-        seq: v.number(),
-      }),
+      returns: successSeqValidator,
       handler: async (ctx, args) => {
         if (opts?.evalRemove) {
           await opts.evalRemove(ctx, args.document);
@@ -355,18 +334,7 @@ export class Replicate<T extends object> {
         exclude: v.optional(v.string()),
         group: v.optional(v.boolean()),
       },
-      returns: v.array(v.object({
-        client: v.string(),
-        document: v.string(),
-        user: v.optional(v.string()),
-        profile: v.optional(v.any()),
-        cursor: v.optional(v.object({
-          anchor: v.any(),
-          head: v.any(),
-          field: v.optional(v.string()),
-        })),
-        seen: v.number(),
-      })),
+      returns: v.array(sessionValidator),
       handler: async (ctx, args) => {
         if (opts?.evalRead) {
           await opts.evalRead(ctx, collection);
@@ -393,18 +361,10 @@ export class Replicate<T extends object> {
       args: {
         document: v.string(),
         client: v.string(),
-        action: v.union(v.literal("join"), v.literal("leave")),
+        action: presenceActionValidator,
         user: v.optional(v.string()),
-        profile: v.optional(v.object({
-          name: v.optional(v.string()),
-          color: v.optional(v.string()),
-          avatar: v.optional(v.string()),
-        })),
-        cursor: v.optional(v.object({
-          anchor: v.any(),
-          head: v.any(),
-          field: v.optional(v.string()),
-        })),
+        profile: v.optional(profileValidator),
+        cursor: v.optional(cursorValidator),
         interval: v.optional(v.number()),
         vector: v.optional(v.bytes()),
       },
@@ -444,12 +404,7 @@ export class Replicate<T extends object> {
       args: {
         document: v.string(),
       },
-      returns: v.object({
-        success: v.boolean(),
-        removed: v.number(),
-        retained: v.number(),
-        size: v.number(),
-      }),
+      returns: compactResultValidator,
       handler: async (ctx, args) => {
         if (opts?.evalWrite) {
           await opts.evalWrite(ctx, args.document);
@@ -478,10 +433,7 @@ export class Replicate<T extends object> {
         document: v.string(),
         vector: v.bytes(),
       },
-      returns: v.object({
-        diff: v.optional(v.bytes()),
-        vector: v.bytes(),
-      }),
+      returns: recoveryResultValidator,
       handler: async (ctx, args) => {
         if (opts?.evalRead) {
           await opts.evalRead(ctx, collection, args.document);

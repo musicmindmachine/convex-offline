@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { profileValidator, cursorValidator } from "$/shared/validators";
 
 export default defineSchema({
   deltas: defineTable({
@@ -30,16 +31,8 @@ export default defineSchema({
     seq: v.number(),
     seen: v.number(),
     user: v.optional(v.string()),
-    profile: v.optional(v.object({
-      name: v.optional(v.string()),
-      color: v.optional(v.string()),
-      avatar: v.optional(v.string()),
-    })),
-    cursor: v.optional(v.object({
-      anchor: v.any(),
-      head: v.any(),
-      field: v.optional(v.string()),
-    })),
+    profile: v.optional(profileValidator),
+    cursor: v.optional(cursorValidator),
     timeout: v.optional(v.id("_scheduled_functions")),
   })
     .index("by_collection", ["collection"])
