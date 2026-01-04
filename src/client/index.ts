@@ -4,6 +4,10 @@ export {
 	type ConvexCollection,
 	type LazyCollection,
 	type Materialized,
+	type PaginatedPage,
+	type PaginatedMaterial,
+	type PaginationConfig,
+	type PaginationStatus,
 	type ProseOptions,
 } from "$/client/collection";
 

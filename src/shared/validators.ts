@@ -189,7 +189,7 @@ export const documentStateValidator = v.union(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * SSR material query result.
+ * SSR material query result (non-paginated, backward compatible).
  */
 export const materialResultValidator = v.object({
 	documents: v.any(),

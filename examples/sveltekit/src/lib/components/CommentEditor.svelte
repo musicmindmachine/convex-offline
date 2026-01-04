@@ -11,8 +11,8 @@
 
   const collection = comments.get();
 
-  let editedBody = $state(body);
   let isEditing = $state(false);
+  let editedBody = $state("");
 
   $effect(() => {
     if (!isEditing) {

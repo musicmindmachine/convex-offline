@@ -23,6 +23,22 @@
   const collection = intervalsLazy.get();
   const intervalsQuery = useLiveQuery(collection);
   const filters = getFilterContext();
+  const { pagination } = intervalsLazy;
+
+  let loadingMore = $state(false);
+  let tableContainer: HTMLDivElement | undefined = $state();
+
+  async function handleScroll(e: Event) {
+    const target = e.target as HTMLDivElement;
+    const { scrollTop, scrollHeight, clientHeight } = target;
+    const nearBottom = scrollHeight - scrollTop - clientHeight < 200;
+    
+    if (nearBottom && pagination.hasMore && !loadingMore) {
+      loadingMore = true;
+      await pagination.loadMore();
+      loadingMore = false;
+    }
+  }
 
   const intervals = $derived(intervalsQuery.data ?? []) as Interval[];
 
@@ -106,7 +122,11 @@
       {/if}
     </div>
   {:else}
-    <div class="flex-1 overflow-auto">
+    <div 
+      class="flex-1 overflow-auto"
+      bind:this={tableContainer}
+      onscroll={handleScroll}
+    >
       <Table.Root>
         <Table.Body>
           {#each rows as row (row.id)}
@@ -120,6 +140,21 @@
           {/each}
         </Table.Body>
       </Table.Root>
+      
+      {#if loadingMore}
+        <div class="flex justify-center py-4">
+          <span class="text-sm text-muted-foreground">Loading more...</span>
+        </div>
+      {:else if pagination.hasMore}
+        <div class="flex justify-center py-4">
+          <button 
+            class="text-sm text-muted-foreground hover:text-foreground"
+            onclick={() => pagination.loadMore()}
+          >
+            Load more
+          </button>
+        </div>
+      {/if}
     </div>
   {/if}
 </div>

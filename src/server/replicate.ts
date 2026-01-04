@@ -11,7 +11,6 @@ import {
 	successSeqValidator,
 	compactResultValidator,
 	recoveryResultValidator,
-	materialResultValidator,
 	replicateTypeValidator,
 	sessionActionValidator,
 } from "$/shared/validators";
@@ -99,58 +98,51 @@ export class Replicate<T extends object> {
 		});
 	}
 
-	createSSRQuery(opts?: {
+	createMaterialQuery(opts?: {
 		evalRead?: (ctx: GenericQueryCtx<GenericDataModel>, collection: string) => void | Promise<void>;
 		transform?: (docs: T[]) => T[] | Promise<T[]>;
-		includeCRDTState?: boolean;
 	}) {
 		const collection = this.collectionName;
-		const component = this.component;
 
 		return queryGeneric({
-			args: {},
-			returns: materialResultValidator,
-			handler: async ctx => {
+			args: {
+				numItems: v.optional(v.number()),
+				cursor: v.optional(v.string()),
+			},
+			returns: v.any(),
+			handler: async (ctx, args) => {
 				if (opts?.evalRead) {
 					await opts.evalRead(ctx, collection);
 				}
+
+				if (args.numItems !== undefined) {
+					const result = await ctx.db
+						.query(collection)
+						.withIndex("by_timestamp")
+						.order("desc")
+						.paginate({ numItems: args.numItems, cursor: args.cursor ?? null });
+
+					let docs = result.page as T[];
+					if (opts?.transform) {
+						docs = await opts.transform(docs);
+					}
+
+					return {
+						page: docs,
+						isDone: result.isDone,
+						continueCursor: result.continueCursor,
+					};
+				}
+
 				let docs = (await ctx.db.query(collection).collect()) as T[];
 				if (opts?.transform) {
 					docs = await opts.transform(docs);
 				}
 
-				const response: {
-					documents: T[];
-					count: number;
-					crdt?: Record<string, { bytes: ArrayBuffer; seq: number }>;
-					cursor?: number;
-				} = {
+				return {
 					documents: docs,
 					count: docs.length,
 				};
-
-				if (opts?.includeCRDTState && docs.length > 0) {
-					const crdt: Record<string, { bytes: ArrayBuffer; seq: number }> = {};
-					let maxSeq = 0;
-
-					for (const doc of docs) {
-						const docId = (doc as { id: string }).id;
-						const state = await ctx.runQuery(component.mutations.getDocumentState, {
-							collection,
-							document: docId,
-						});
-
-						if (state) {
-							crdt[docId] = { bytes: state.bytes, seq: state.seq };
-							maxSeq = Math.max(maxSeq, state.seq);
-						}
-					}
-
-					response.crdt = crdt;
-					response.cursor = maxSeq;
-				}
-
-				return response;
 			},
 		});
 	}

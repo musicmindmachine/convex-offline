@@ -92,6 +92,31 @@ export interface Materialized<T> {
 	crdt?: Record<string, { bytes: ArrayBuffer; seq: number }>;
 }
 
+export interface PaginatedPage<T> {
+	page: readonly T[];
+	isDone: boolean;
+	continueCursor: string;
+}
+
+export interface PaginatedMaterial<T> {
+	pages: readonly PaginatedPage<T>[];
+	cursor: string;
+	isDone: boolean;
+}
+
+export interface PaginationConfig {
+	pageSize?: number;
+}
+
+export type PaginationStatus = "idle" | "loading" | "error";
+
+export interface PaginationState {
+	status: PaginationStatus;
+	hasMore: boolean;
+	loadedCount: number;
+	cursor: string | null;
+}
+
 interface ConvexCollectionApi {
 	material: FunctionReference<"query">;
 	delta: FunctionReference<"query">;
@@ -769,9 +794,16 @@ type LazyCollectionConfig<T extends object> = Omit<
 >;
 
 export interface LazyCollection<T extends object> {
-	init(material?: Materialized<T>): Promise<void>;
+	init(material?: Materialized<T> | PaginatedMaterial<T>): Promise<void>;
 	get(): Collection<T, string, ConvexCollectionUtils<T>, never, T> & NonSingleResult;
 	readonly $docType?: T;
+	readonly pagination: {
+		loadMore(): Promise<PaginatedPage<T> | null>;
+		readonly status: PaginationStatus;
+		readonly hasMore: boolean;
+		readonly loadedCount: number;
+		onStatusChange(callback: (status: PaginationStatus) => void): () => void;
+	};
 }
 
 export type ConvexCollection<T extends object> = Collection<
@@ -786,6 +818,7 @@ export type ConvexCollection<T extends object> = Collection<
 interface CreateCollectionOptions<T extends object> {
 	persistence: () => Promise<Persistence>;
 	config: () => Omit<LazyCollectionConfig<T>, "material">;
+	pagination?: PaginationConfig;
 }
 
 export namespace collection {
@@ -814,12 +847,45 @@ export const collection = {
 		type Instance = LazyCollection<T>["get"] extends () => infer R ? R : never;
 		let instance: Instance | null = null;
 
+		let paginationState: PaginationState = {
+			status: "idle",
+			hasMore: true,
+			loadedCount: 0,
+			cursor: null,
+		};
+		const statusListeners = new Set<(status: PaginationStatus) => void>();
+
+		const isPaginatedMaterial = (
+			mat: Materialized<T> | PaginatedMaterial<T> | undefined,
+		): mat is PaginatedMaterial<T> => {
+			return mat !== undefined && "pages" in mat && Array.isArray(mat.pages);
+		};
+
+		const convertPaginatedToMaterial = (paginated: PaginatedMaterial<T>): Materialized<T> => {
+			const allDocs = paginated.pages.flatMap(p => p.page);
+			return {
+				documents: allDocs,
+				count: allDocs.length,
+			};
+		};
+
 		return {
-			async init(mat?: Materialized<T>) {
+			async init(mat?: Materialized<T> | PaginatedMaterial<T>) {
 				if (!persistence) {
 					persistence = await options.persistence();
 					resolvedConfig = options.config();
-					material = mat;
+
+					if (isPaginatedMaterial(mat)) {
+						material = convertPaginatedToMaterial(mat);
+						paginationState = {
+							status: "idle",
+							hasMore: !mat.isDone,
+							loadedCount: mat.pages.reduce((sum, p) => sum + p.page.length, 0),
+							cursor: mat.cursor,
+						};
+					} else {
+						material = mat;
+					}
 				}
 			},
 
@@ -837,6 +903,60 @@ export const collection = {
 					instance = createCollection(opts) as Instance;
 				}
 				return instance!;
+			},
+
+			pagination: {
+				async loadMore(): Promise<PaginatedPage<T> | null> {
+					if (!resolvedConfig || !paginationState.hasMore || paginationState.status === "loading") {
+						return null;
+					}
+
+					paginationState = { ...paginationState, status: "loading" };
+					statusListeners.forEach(cb => cb("loading"));
+
+					try {
+						const pageSize = options.pagination?.pageSize ?? 25;
+						const result = (await resolvedConfig.convexClient.query(resolvedConfig.api.material, {
+							numItems: pageSize,
+							cursor: paginationState.cursor ?? undefined,
+						})) as PaginatedPage<T>;
+
+						if (instance && result.page.length > 0) {
+							instance.insert(result.page as T[]);
+						}
+
+						paginationState = {
+							status: "idle",
+							hasMore: !result.isDone,
+							loadedCount: paginationState.loadedCount + result.page.length,
+							cursor: result.continueCursor,
+						};
+						statusListeners.forEach(cb => cb("idle"));
+
+						return result;
+					} catch {
+						paginationState = { ...paginationState, status: "error" };
+						statusListeners.forEach(cb => cb("error"));
+						return null;
+					}
+				},
+
+				get status() {
+					return paginationState.status;
+				},
+
+				get hasMore() {
+					return paginationState.hasMore;
+				},
+
+				get loadedCount() {
+					return paginationState.loadedCount;
+				},
+
+				onStatusChange(callback: (status: PaginationStatus) => void) {
+					statusListeners.add(callback);
+					return () => statusListeners.delete(callback);
+				},
 			},
 		};
 	},

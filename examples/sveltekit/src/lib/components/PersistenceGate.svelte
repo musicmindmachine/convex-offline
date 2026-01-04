@@ -3,7 +3,7 @@
 	import { browser } from '$app/environment';
 	import { intervals, type Interval } from '$collections/useIntervals';
 	import { comments, type Comment } from '$collections/useComments';
-	import type { Materialized } from '@trestleinc/replicate/client';
+	import type { Materialized, PaginatedMaterial } from '@trestleinc/replicate/client';
 
 	let {
 		children,
@@ -11,7 +11,7 @@
 		commentsMaterial,
 	}: {
 		children: Snippet;
-		intervalsMaterial?: Materialized<Interval>;
+		intervalsMaterial?: PaginatedMaterial<Interval>;
 		commentsMaterial?: Materialized<Comment>;
 	} = $props();
 

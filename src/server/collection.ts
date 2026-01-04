@@ -44,7 +44,7 @@ function createCollectionInternal<T extends object>(
 	return {
 		__collection: name,
 
-		material: storage.createSSRQuery({
+		material: storage.createMaterialQuery({
 			evalRead: hooks?.evalRead,
 			transform: hooks?.transform,
 		}),
