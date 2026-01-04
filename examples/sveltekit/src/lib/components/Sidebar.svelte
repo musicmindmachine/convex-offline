@@ -6,9 +6,8 @@
   import { Input } from "$lib/components/ui/input";
   import StatusIcon from "./StatusIcon.svelte";
   import StarIcon from "./StarIcon.svelte";
-  import { intervals as intervalsCollection } from "$collections/useIntervals";
+  import { intervals as intervalsCollection, type Interval } from "$collections/useIntervals";
   import { schema } from "@trestleinc/replicate/client";
-  import type { Interval } from "$lib/types";
 
   interface Props {
     onsearchopen?: () => void;

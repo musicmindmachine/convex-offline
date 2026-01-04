@@ -1,8 +1,8 @@
 <script lang="ts">
   import StatusIcon from "$lib/components/StatusIcon.svelte";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
-  import { Status, StatusLabels, type Interval, type StatusValue } from "$lib/types";
-  import { intervals } from "$collections/useIntervals";
+  import { Status, StatusLabels, type StatusValue } from "$lib/types";
+  import { intervals, type Interval } from "$collections/useIntervals";
 
   type Props = { interval: Interval };
   const { interval }: Props = $props();

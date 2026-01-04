@@ -14,4 +14,4 @@ export const intervals = collection.create(schema, "intervals", {
   }),
 });
 
-export type Interval = collection.Doc<typeof intervals>;
+export type Interval = collection.Infer<typeof intervals>;

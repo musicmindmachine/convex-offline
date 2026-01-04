@@ -1,8 +1,8 @@
 <script lang="ts">
   import PriorityIcon from "$lib/components/PriorityIcon.svelte";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
-  import { Priority, PriorityLabels, type Interval, type PriorityValue } from "$lib/types";
-  import { intervals } from "$collections/useIntervals";
+  import { Priority, PriorityLabels, type PriorityValue } from "$lib/types";
+  import { intervals, type Interval } from "$collections/useIntervals";
 
   type Props = { interval: Interval };
   const { interval }: Props = $props();

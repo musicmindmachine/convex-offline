@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Interval } from "$lib/types";
+  import type { Interval } from "$collections/useIntervals";
 
   type Props = { interval: Interval };
   const { interval }: Props = $props();

@@ -2,14 +2,30 @@ import { defineSchema, type TableDefinition } from "convex/server";
 import { v } from "convex/values";
 import { schema } from "@trestleinc/replicate/server";
 
+const statusValidator = v.union(
+  v.literal("backlog"),
+  v.literal("todo"),
+  v.literal("in_progress"),
+  v.literal("done"),
+  v.literal("canceled"),
+);
+
+const priorityValidator = v.union(
+  v.literal("none"),
+  v.literal("low"),
+  v.literal("medium"),
+  v.literal("high"),
+  v.literal("urgent"),
+);
+
 export default defineSchema({
   intervals: schema.table(
     {
       id: v.string(),
       title: v.string(),
       description: schema.prose(),
-      status: v.string(), // backlog | todo | in_progress | done | canceled
-      priority: v.string(), // none | low | medium | high | urgent
+      status: statusValidator,
+      priority: priorityValidator,
       createdAt: v.number(),
       updatedAt: v.number(),
     },

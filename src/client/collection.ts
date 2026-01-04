@@ -789,7 +789,7 @@ interface CreateCollectionOptions<T extends object> {
 }
 
 export namespace collection {
-	export type Doc<C> = C extends { $docType?: infer T } ? NonNullable<T> : never;
+	export type Infer<C> = C extends { $docType?: infer T } ? NonNullable<T> : never;
 }
 
 export const collection = {

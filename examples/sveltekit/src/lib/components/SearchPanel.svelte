@@ -3,14 +3,12 @@
 	import { useLiveQuery } from '@tanstack/svelte-db';
 	import { Search, Plus } from '@lucide/svelte';
 	import * as Dialog from '$lib/components/ui/dialog';
-	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { ScrollArea } from '$lib/components/ui/scroll-area';
 	import StatusIcon from './StatusIcon.svelte';
 	import { cn } from '$lib/utils';
-	import { intervals as intervalsCollection } from '$collections/useIntervals';
+	import { intervals as intervalsCollection, type Interval } from '$collections/useIntervals';
 	import { schema } from '@trestleinc/replicate/client';
-	import type { Interval } from '$lib/types';
 
 	type Props = {
 		open: boolean;

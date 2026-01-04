@@ -3,9 +3,9 @@
   import { browser } from "$app/environment";
   import type { Editor } from "@tiptap/core";
   import type { EditorBinding } from "@trestleinc/replicate/client";
-  import type { Interval, StatusValue, PriorityValue } from "$lib/types";
+  import type { StatusValue, PriorityValue } from "$lib/types";
   import { Status, Priority, StatusLabels, PriorityLabels } from "$lib/types";
-  import { intervals } from "$collections/useIntervals";
+  import { intervals, type Interval } from "$collections/useIntervals";
   import StatusIcon from "./StatusIcon.svelte";
   import PriorityIcon from "./PriorityIcon.svelte";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
@@ -221,8 +221,8 @@
             <DropdownMenu.Trigger
               class="flex items-center gap-2 px-2 py-1 rounded-sm hover:bg-muted transition-colors"
             >
-              <StatusIcon status={interval.status} size={14} />
-              <span>{StatusLabels[interval.status]}</span>
+              <StatusIcon status={interval.status as StatusValue} size={14} />
+              <span>{StatusLabels[interval.status as StatusValue]}</span>
             </DropdownMenu.Trigger>
             <DropdownMenu.Content align="start">
               <DropdownMenu.RadioGroup
@@ -243,8 +243,8 @@
             <DropdownMenu.Trigger
               class="flex items-center gap-2 px-2 py-1 rounded-sm hover:bg-muted transition-colors"
             >
-              <PriorityIcon priority={interval.priority} size={14} />
-              <span>{PriorityLabels[interval.priority]}</span>
+              <PriorityIcon priority={interval.priority as PriorityValue} size={14} />
+              <span>{PriorityLabels[interval.priority as PriorityValue]}</span>
             </DropdownMenu.Trigger>
             <DropdownMenu.Content align="start">
               <DropdownMenu.RadioGroup

@@ -14,4 +14,4 @@ export const comments = collection.create(schema, "comments", {
   }),
 });
 
-export type Comment = collection.Doc<typeof comments>;
+export type Comment = collection.Infer<typeof comments>;

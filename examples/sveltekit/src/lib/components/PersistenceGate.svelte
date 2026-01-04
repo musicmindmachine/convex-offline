@@ -1,10 +1,9 @@
 <script lang="ts">
 	import { onMount, type Snippet } from 'svelte';
 	import { browser } from '$app/environment';
-	import { intervals } from '$collections/useIntervals';
-	import { comments } from '$collections/useComments';
+	import { intervals, type Interval } from '$collections/useIntervals';
+	import { comments, type Comment } from '$collections/useComments';
 	import type { Materialized } from '@trestleinc/replicate/client';
-	import type { Interval, Comment } from '$lib/types';
 
 	let {
 		children,

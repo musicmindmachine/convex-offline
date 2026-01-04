@@ -2,8 +2,7 @@
   import { Trash2 } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button";
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
-  import type { Interval } from "$lib/types";
-  import { intervals } from "$collections/useIntervals";
+  import { intervals, type Interval } from "$collections/useIntervals";
 
   type Props = { interval: Interval };
   const { interval }: Props = $props();
