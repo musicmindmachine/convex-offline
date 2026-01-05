@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { useLiveQuery } from "@tanstack/svelte-db";
   import { getFilterContext } from "$lib/contexts/filters.svelte";
   import IntervalListSkeleton from "$lib/components/IntervalListSkeleton.svelte";
@@ -19,25 +20,26 @@
   import PriorityCell from "./PriorityCell.svelte";
   import ActionsCell from "./ActionsCell.svelte";
   import TitleCell from "./TitleCell.svelte";
+  import { infiniteScroll } from "$lib/actions/infiniteScroll";
 
   const collection = intervalsLazy.get();
   const intervalsQuery = useLiveQuery(collection);
   const filters = getFilterContext();
   const { pagination } = intervalsLazy;
 
-  let loadingMore = $state(false);
-  let tableContainer: HTMLDivElement | undefined = $state();
+  let canLoadMore = $state(pagination.canLoadMore);
+  let isLoading = $state(pagination.status === "busy");
 
-  async function handleScroll(e: Event) {
-    const target = e.target as HTMLDivElement;
-    const { scrollTop, scrollHeight, clientHeight } = target;
-    const nearBottom = scrollHeight - scrollTop - clientHeight < 200;
-    
-    if (nearBottom && pagination.hasMore && !loadingMore) {
-      loadingMore = true;
-      await pagination.loadMore();
-      loadingMore = false;
-    }
+  onMount(() => {
+    return pagination.subscribe((state) => {
+      canLoadMore = state.status === "idle";
+      isLoading = state.status === "busy";
+    });
+  });
+
+  async function handleLoadMore() {
+    if (!pagination.canLoadMore) return;
+    await pagination.load();
   }
 
   const intervals = $derived(intervalsQuery.data ?? []) as Interval[];
@@ -122,11 +124,7 @@
       {/if}
     </div>
   {:else}
-    <div 
-      class="flex-1 overflow-auto"
-      bind:this={tableContainer}
-      onscroll={handleScroll}
-    >
+    <div class="flex-1 overflow-auto">
       <Table.Root>
         <Table.Body>
           {#each rows as row (row.id)}
@@ -141,18 +139,20 @@
         </Table.Body>
       </Table.Root>
       
-      {#if loadingMore}
-        <div class="flex justify-center py-4">
-          <span class="text-sm text-muted-foreground">Loading more...</span>
+      {#if canLoadMore}
+        <div 
+          use:infiniteScroll={{ onLoadMore: handleLoadMore, hasMore: canLoadMore, rootMargin: "200px" }}
+          class="flex justify-center py-4"
+        >
+          {#if isLoading}
+            <span class="text-sm text-muted-foreground">Loading more...</span>
+          {:else}
+            <span class="text-xs text-muted-foreground/50">Scroll for more</span>
+          {/if}
         </div>
-      {:else if pagination.hasMore}
-        <div class="flex justify-center py-4">
-          <button 
-            class="text-sm text-muted-foreground hover:text-foreground"
-            onclick={() => pagination.loadMore()}
-          >
-            Load more
-          </button>
+      {:else if intervals.length > 0}
+        <div class="flex justify-center py-4 text-xs text-muted-foreground/50">
+          All {intervals.length} items loaded
         </div>
       {/if}
     </div>

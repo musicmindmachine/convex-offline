@@ -704,7 +704,7 @@ async initWithMaterial(material: PaginatedMaterial<T>): Promise<void> {
 
 function IntervalList() {
   const collection = useIntervals();
-  const { status, loadMore, hasMore } = collection.pagination;
+  const { status, load, canLoadMore } = collection.pagination;
   
   const parentRef = useRef<HTMLDivElement>(null);
   const documents = collection.get().query().toArray();
@@ -724,12 +724,12 @@ function IntervalList() {
     if (
       lastItem &&
       lastItem.index >= documents.length - 5 &&
-      hasMore &&
-      status === "ready"
+      canLoadMore &&
+      status === "idle"
     ) {
-      loadMore();
+      load();
     }
-  }, [virtualizer.getVirtualItems(), hasMore, status]);
+  }, [virtualizer.getVirtualItems(), canLoadMore, status]);
   
   return (
     <div ref={parentRef} style={{ height: "100vh", overflow: "auto" }}>
@@ -738,7 +738,7 @@ function IntervalList() {
           <IntervalRow key={item.key} interval={documents[item.index]} />
         ))}
       </div>
-      {status === "loading" && <LoadingSpinner />}
+      {status === "busy" && <LoadingSpinner />}
     </div>
   );
 }
@@ -1357,11 +1357,11 @@ interface LazyCollection<T> {
   get(): Collection<T>;
   
   pagination: {
-    loadMore(): Promise<PaginatedPage<T>>;
-    status: PaginationStatus;
-    hasMore: boolean;
-    loadedCount: number;
-    onStatusChange(cb: (status: PaginationStatus) => void): () => void;
+    load(): Promise<PaginatedPage<T>>;
+    status: PaginationStatus;  // "idle" | "busy" | "done" | "error"
+    canLoadMore: boolean;
+    count: number;
+    subscribe(cb: (state: PaginationState) => void): () => void;
   };
   
   actors: {
@@ -1513,8 +1513,8 @@ Each phase is **contained and testable** - the system works after each phase com
 
 2. **Client: pagination state**
    - Add `PaginationConfig` interface
-   - Track cursor, hasMore, loading state
-   - Add `loadMore()` method
+   - Track cursor and status (idle/busy/done/error)
+   - Add `load()` method and `subscribe()` for reactivity
    - File: `src/client/collection.ts`
 
 3. **Client: SSR hydration with pagination**

@@ -109,13 +109,13 @@ export interface PaginationConfig {
 	pageSize?: number;
 }
 
-export type PaginationStatus = "idle" | "loading" | "error";
+export type PaginationStatus = "idle" | "busy" | "done" | "error";
 
 export interface PaginationState {
 	status: PaginationStatus;
-	hasMore: boolean;
-	loadedCount: number;
+	count: number;
 	cursor: string | null;
+	error?: Error;
 }
 
 interface ConvexCollectionApi {
@@ -819,11 +819,11 @@ export interface LazyCollection<T extends object> {
 	get(): Collection<T, string, ConvexCollectionUtils<T>, never, T> & NonSingleResult;
 	readonly $docType?: T;
 	readonly pagination: {
-		loadMore(): Promise<PaginatedPage<T> | null>;
+		load(): Promise<PaginatedPage<T> | null>;
 		readonly status: PaginationStatus;
-		readonly hasMore: boolean;
-		readonly loadedCount: number;
-		onStatusChange(callback: (status: PaginationStatus) => void): () => void;
+		readonly canLoadMore: boolean;
+		readonly count: number;
+		subscribe(callback: (state: PaginationState) => void): () => void;
 	};
 }
 
@@ -870,11 +870,12 @@ export const collection = {
 
 		let paginationState: PaginationState = {
 			status: "idle",
-			hasMore: true,
-			loadedCount: 0,
+			count: 0,
 			cursor: null,
 		};
-		const statusListeners = new Set<(status: PaginationStatus) => void>();
+		const listeners = new Set<(state: PaginationState) => void>();
+
+		const notify = () => listeners.forEach(cb => cb(paginationState));
 
 		const isPaginatedMaterial = (
 			mat: Materialized<T> | PaginatedMaterial<T> | undefined,
@@ -899,9 +900,8 @@ export const collection = {
 					if (isPaginatedMaterial(mat)) {
 						material = convertPaginatedToMaterial(mat);
 						paginationState = {
-							status: "idle",
-							hasMore: !mat.isDone,
-							loadedCount: mat.pages.reduce((sum, p) => sum + p.page.length, 0),
+							status: mat.isDone ? "done" : "idle",
+							count: mat.pages.reduce((sum, p) => sum + p.page.length, 0),
 							cursor: mat.cursor,
 						};
 					} else {
@@ -927,13 +927,13 @@ export const collection = {
 			},
 
 			pagination: {
-				async loadMore(): Promise<PaginatedPage<T> | null> {
-					if (!resolvedConfig || !paginationState.hasMore || paginationState.status === "loading") {
+				async load(): Promise<PaginatedPage<T> | null> {
+					if (!resolvedConfig || paginationState.status !== "idle") {
 						return null;
 					}
 
-					paginationState = { ...paginationState, status: "loading" };
-					statusListeners.forEach(cb => cb("loading"));
+					paginationState = { ...paginationState, status: "busy" };
+					notify();
 
 					try {
 						const pageSize = options.pagination?.pageSize ?? 25;
@@ -947,17 +947,20 @@ export const collection = {
 						}
 
 						paginationState = {
-							status: "idle",
-							hasMore: !result.isDone,
-							loadedCount: paginationState.loadedCount + result.page.length,
+							status: result.isDone ? "done" : "idle",
+							count: paginationState.count + result.page.length,
 							cursor: result.continueCursor,
 						};
-						statusListeners.forEach(cb => cb("idle"));
+						notify();
 
 						return result;
-					} catch {
-						paginationState = { ...paginationState, status: "error" };
-						statusListeners.forEach(cb => cb("error"));
+					} catch (err) {
+						paginationState = {
+							...paginationState,
+							status: "error",
+							error: err instanceof Error ? err : new Error(String(err)),
+						};
+						notify();
 						return null;
 					}
 				},
@@ -966,17 +969,18 @@ export const collection = {
 					return paginationState.status;
 				},
 
-				get hasMore() {
-					return paginationState.hasMore;
+				get canLoadMore() {
+					return paginationState.status === "idle";
 				},
 
-				get loadedCount() {
-					return paginationState.loadedCount;
+				get count() {
+					return paginationState.count;
 				},
 
-				onStatusChange(callback: (status: PaginationStatus) => void) {
-					statusListeners.add(callback);
-					return () => statusListeners.delete(callback);
+				subscribe(callback: (state: PaginationState) => void) {
+					listeners.add(callback);
+					callback(paginationState);
+					return () => listeners.delete(callback);
 				},
 			},
 		};
