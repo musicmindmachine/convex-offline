@@ -51,9 +51,10 @@ src/
 │   ├── persistence/         # Swappable storage backends
 │   │   ├── types.ts         # Persistence, KeyValueStore interfaces
 │   │   ├── sqlite/          # SQLite backends
-│   │   │   ├── browser.ts   # sql.js WASM + OPFS
+│   │   │   ├── web.ts       # wa-sqlite Web Worker + OPFSCoopSyncVFS
+│   │   │   ├── worker.ts    # Web Worker with wa-sqlite (CDN loaded)
+│   │   │   ├── schema.ts    # SQLite schema + persistence providers
 │   │   │   └── native.ts    # op-sqlite (React Native)
-│   │   ├── pglite.ts        # PGlite persistence
 │   │   ├── memory.ts        # Testing: in-memory
 │   │   └── custom.ts        # Custom adapter wrapper
 │   └── services/            # Effect.ts services (see below)
@@ -115,7 +116,7 @@ Shutdown → interrupt debounce fiber → signal done
 - Creates Effect runtime with `ActorManager` and `SeqService`
 - Two modes:
   - **Per-collection** (default): Each collection gets its own runtime
-  - **Singleton**: Shared runtime with reference counting (for PGlite)
+  - **Singleton**: Shared runtime with reference counting (for shared SQLite)
 - `runWithRuntime` helper for executing effects
 
 #### Error Types (`errors.ts`)
@@ -169,9 +170,9 @@ Server update (via stream subscription)
 collection.create()           // Create lazy-initialized collection (SSR-safe)
 
 // Persistence providers
-persistence.pglite()          // Browser: PGlite (PostgreSQL in IndexedDB)
-persistence.pglite.once()     // PGlite singleton (shared across collections)
-persistence.sqlite.native()   // React Native: op-sqlite
+persistence.sqlite()          // Browser: wa-sqlite Web Worker + OPFSCoopSyncVFS
+persistence.sqlite.once()     // SQLite singleton (shared across collections)
+persistence.native()          // React Native: op-sqlite
 persistence.memory()          // Testing: in-memory
 persistence.custom()          // Custom storage adapter
 

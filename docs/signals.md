@@ -609,7 +609,7 @@ export interface CollectionOptions<T extends object> {
 
 // Usage
 export const intervals = collection.create(schema, "intervals", {
-  persistence: pglite,
+  persistence: sqlite,
   config: () => ({
     convexClient: new ConvexClient(PUBLIC_CONVEX_URL),
     api: api.intervals,  // { material, delta, replicate, session }
@@ -1338,7 +1338,7 @@ session.query(args: {
 ```typescript
 // Collection creation
 const collection = collection.create(schema, "tableName", {
-  persistence: () => pglite(),
+  persistence: () => sqlite(),
   config: () => ({
     convexClient,
     api: api.tableName,  // { material, delta, replicate, session }

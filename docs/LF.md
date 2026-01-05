@@ -390,7 +390,7 @@ async function remove(ctx, { document, bytes }) {
 ```typescript
 // Collection setup
 const tasks = collection.create({
-  persistence: () => persistence.pglite(db, 'tasks'),
+  persistence: () => persistence.sqlite({ name: "tasks", worker: () => new Worker(...) }),
   config: () => ({
     schema: taskSchema,
     convexClient,

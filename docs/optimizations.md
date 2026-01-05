@@ -406,11 +406,11 @@ The client uses a **per-document actor model** for sync, built with Effect.ts pr
 │     - Separate ActorManager per collection                              │
 │     - Cleanup when collection is destroyed                              │
 │                                                                          │
-│  2. Singleton (for PGlite)                                               │
-│     ──────────────────────                                               │
+│  2. Singleton (for shared SQLite)                                        │
+│     ─────────────────────────────                                        │
 │     - Shared runtime across collections                                 │
 │     - Reference counting for cleanup                                    │
-│     - Use when persistence is shared (PGlite once() mode)               │
+│     - Use when persistence is shared (sqlite.once() mode)               │
 │                                                                          │
 │  Usage:                                                                  │
 │                                                                          │
