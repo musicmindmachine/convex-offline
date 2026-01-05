@@ -28,6 +28,7 @@ import {
 	hasContext,
 	updateContext,
 	deleteContext,
+	waitForActorReady,
 } from "$/client/services/context";
 import { createRuntime, runWithRuntime, type ReplicateRuntime } from "$/client/services/engine";
 import {
@@ -274,9 +275,7 @@ export function convexCollectionOptions<
 				});
 			}
 
-			if (ctx.actorReady) {
-				await ctx.actorReady;
-			}
+			await waitForActorReady(collection);
 
 			const collectionRef = ctx.ref;
 			if (collectionRef) {

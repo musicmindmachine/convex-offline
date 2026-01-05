@@ -5,10 +5,11 @@ const CDN_BASE = "https://cdn.jsdelivr.net/gh/rhashimoto/wa-sqlite@master";
 const INIT = 0;
 const EXECUTE = 1;
 const CLOSE = 2;
+const FLUSH = 3;
 
 interface Request {
 	id: number;
-	type: typeof INIT | typeof EXECUTE | typeof CLOSE;
+	type: typeof INIT | typeof EXECUTE | typeof CLOSE | typeof FLUSH;
 	name?: string;
 	sql?: string;
 	params?: unknown[];
@@ -24,11 +25,12 @@ interface Response {
 let sqlite3: any;
 let db: number;
 let vfs: any;
+let mutex: Promise<unknown> = Promise.resolve();
 
 async function init(name: string): Promise<void> {
-	const [{ default: SQLiteESMFactory }, { OPFSCoopSyncVFS }, SQLite] = await Promise.all([
-		import(/* @vite-ignore */ `${CDN_BASE}/dist/wa-sqlite.mjs`),
-		import(/* @vite-ignore */ `${CDN_BASE}/src/examples/OPFSCoopSyncVFS.js`),
+	const [{ default: SQLiteESMFactory }, { IDBBatchAtomicVFS }, SQLite] = await Promise.all([
+		import(/* @vite-ignore */ `${CDN_BASE}/dist/wa-sqlite-async.mjs`),
+		import(/* @vite-ignore */ `${CDN_BASE}/src/examples/IDBBatchAtomicVFS.js`),
 		import(/* @vite-ignore */ `${CDN_BASE}/src/sqlite-api.js`),
 	]);
 
@@ -37,12 +39,14 @@ async function init(name: string): Promise<void> {
 	});
 	sqlite3 = SQLite.Factory(module);
 
-	vfs = await OPFSCoopSyncVFS.create(name, module);
+	vfs = await IDBBatchAtomicVFS.create(name, module);
 	sqlite3.vfs_register(vfs, true);
 
 	db = await sqlite3.open_v2(name);
 
-	await sqlite3.exec(db, "PRAGMA locking_mode = exclusive;");
+	await sqlite3.exec(db, "PRAGMA cache_size = -8000;");
+	await sqlite3.exec(db, "PRAGMA synchronous = NORMAL;");
+	await sqlite3.exec(db, "PRAGMA temp_store = MEMORY;");
 
 	const executor: Executor = {
 		async execute(sql, params) {
@@ -57,29 +61,33 @@ async function init(name: string): Promise<void> {
 	await initSchema(executor);
 }
 
-async function execute(
-	sql: string,
-	params?: unknown[],
-): Promise<{ rows: Record<string, unknown>[] }> {
-	const rows: Record<string, unknown>[] = [];
+function execute(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> {
+	const operation = mutex
+		.catch(() => {})
+		.then(async () => {
+			const rows: Record<string, unknown>[] = [];
 
-	for await (const stmt of sqlite3.statements(db, sql)) {
-		if (params && params.length > 0) {
-			sqlite3.bind_collection(stmt, params);
-		}
+			for await (const stmt of sqlite3.statements(db, sql)) {
+				if (params && params.length > 0) {
+					sqlite3.bind_collection(stmt, params);
+				}
 
-		const columns: string[] = sqlite3.column_names(stmt);
-		while ((await sqlite3.step(stmt)) === 100) {
-			const row = sqlite3.row(stmt);
-			const obj: Record<string, unknown> = {};
-			columns.forEach((col: string, i: number) => {
-				obj[col] = row[i];
-			});
-			rows.push(obj);
-		}
-	}
+				const columns: string[] = sqlite3.column_names(stmt);
+				while ((await sqlite3.step(stmt)) === 100) {
+					const row = sqlite3.row(stmt);
+					const obj: Record<string, unknown> = {};
+					columns.forEach((col: string, i: number) => {
+						obj[col] = row[i];
+					});
+					rows.push(obj);
+				}
+			}
 
-	return { rows };
+			return { rows };
+		});
+
+	mutex = operation;
+	return operation;
 }
 
 self.onmessage = async (e: MessageEvent<Request>) => {
@@ -94,6 +102,9 @@ self.onmessage = async (e: MessageEvent<Request>) => {
 			case EXECUTE:
 				const result = await execute(sql!, params);
 				self.postMessage({ id, ok: true, rows: result.rows } satisfies Response);
+				break;
+			case FLUSH:
+				self.postMessage({ id, ok: true } satisfies Response);
 				break;
 			case CLOSE:
 				sqlite3.close(db);

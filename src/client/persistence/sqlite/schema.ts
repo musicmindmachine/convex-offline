@@ -59,21 +59,40 @@ class SqliteKeyValueStore implements KeyValueStore {
 
 class SqlitePersistenceProvider implements PersistenceProvider {
 	private updateHandler: (update: Uint8Array, origin: unknown) => void;
+	private pendingWrites: Promise<void>[] = [];
+	private lastError: Error | null = null;
 	readonly whenSynced: Promise<void>;
 
 	constructor(
 		private executor: Executor,
 		private collection: string,
 		private ydoc: Y.Doc,
+		private onError?: (error: Error) => void,
 	) {
 		this.whenSynced = this.loadState();
 
 		this.updateHandler = (update: Uint8Array, origin: unknown) => {
 			if (origin !== "sqlite") {
-				void this.saveUpdate(update);
+				const writePromise = this.saveUpdate(update).catch((error: Error) => {
+					this.lastError = error;
+					this.onError?.(error);
+				});
+				this.pendingWrites.push(writePromise);
+				writePromise.finally(() => {
+					this.pendingWrites = this.pendingWrites.filter(p => p !== writePromise);
+				});
 			}
 		};
 		this.ydoc.on("update", this.updateHandler);
+	}
+
+	async flush(): Promise<void> {
+		await Promise.all(this.pendingWrites);
+		if (this.lastError) {
+			const error = this.lastError;
+			this.lastError = null;
+			throw error;
+		}
 	}
 
 	private async loadState(): Promise<void> {

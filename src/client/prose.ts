@@ -37,7 +37,7 @@ function createSyncFn(
 			document,
 			{ metadata: { contentSync: { bytes, material } } },
 			(draft: any) => {
-				draft.updatedAt = Date.now();
+				draft.timestamp = Date.now();
 			},
 		);
 		await result.isPersisted.promise;

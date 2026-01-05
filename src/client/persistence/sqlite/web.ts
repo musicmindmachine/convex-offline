@@ -64,6 +64,10 @@ class WorkerExecutor implements Executor {
 	}
 
 	close(): void {
+		for (const [, handler] of this.pending) {
+			handler.reject(new Error("Worker terminated"));
+		}
+		this.pending.clear();
 		this.send(CLOSE).catch(() => {});
 		this.worker.terminate();
 	}

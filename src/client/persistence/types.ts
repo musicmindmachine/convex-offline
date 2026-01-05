@@ -35,6 +35,7 @@ export interface StorageAdapter {
 export interface PersistenceProvider {
 	readonly whenSynced: Promise<void>;
 	destroy(): void;
+	flush?(): Promise<void>;
 }
 
 /**

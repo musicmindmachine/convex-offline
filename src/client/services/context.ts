@@ -33,6 +33,14 @@ export interface CollectionContext {
 }
 
 const contexts = new Map<string, CollectionContext>();
+const ACTOR_INIT_TIMEOUT_MS = 10000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+	return Promise.race([
+		promise,
+		new Promise<T>((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+	]);
+}
 
 export function getContext(collection: string): CollectionContext {
 	const ctx = contexts.get(collection);
@@ -74,6 +82,16 @@ export function initContext(config: InitContextConfig): CollectionContext {
 
 export function deleteContext(collection: string): void {
 	contexts.delete(collection);
+}
+
+export async function waitForActorReady(collection: string): Promise<void> {
+	const ctx = contexts.get(collection);
+	if (!ctx?.actorReady) return;
+	await withTimeout(
+		ctx.actorReady,
+		ACTOR_INIT_TIMEOUT_MS,
+		`Actor initialization timed out for collection ${collection}`,
+	);
 }
 
 type UpdateableFields = "clientId" | "ref" | "cleanup" | "actorManager" | "runtime";
