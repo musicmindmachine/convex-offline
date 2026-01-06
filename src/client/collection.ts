@@ -135,6 +135,7 @@ export interface ConvexCollectionConfig<
 	api: ConvexCollectionApi;
 	persistence: Persistence;
 	material?: Materialized<T>;
+	user?: () => UserIdentity | undefined;
 }
 
 /**
@@ -193,7 +194,7 @@ export function convexCollectionOptions<
 	id: string;
 	utils: ConvexCollectionUtils<T>;
 } {
-	const { validator, getKey, material, convexClient, api, persistence } = config;
+	const { validator, getKey, material, convexClient, api, persistence, user: userGetter } = config;
 
 	const functionPath = getFunctionName(api.delta);
 	const collection = functionPath.split(":")[0];
@@ -298,6 +299,7 @@ export function convexCollectionOptions<
 			let awarenessProvider: ConvexAwarenessProvider | null = null;
 			const hasPresenceApi = storedApi?.session && storedApi?.presence;
 			if (storedConvexClient && hasPresenceApi && storedClientId) {
+				const resolvedUser = options?.user ?? ctx.userGetter?.();
 				awarenessProvider = createAwarenessProvider({
 					convexClient: storedConvexClient,
 					api: {
@@ -308,7 +310,7 @@ export function convexCollectionOptions<
 					client: storedClientId,
 					ydoc: subdoc,
 					syncReady: ctx.synced,
-					user: options?.user,
+					user: resolvedUser,
 				});
 			}
 
@@ -345,6 +347,7 @@ export function convexCollectionOptions<
 		api,
 		persistence,
 		fields: proseFieldSet,
+		userGetter,
 	});
 
 	// Bound replicate operations - set during sync initialization

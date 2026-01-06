@@ -4,6 +4,7 @@ import type { Collection } from "@tanstack/db";
 import type { Persistence } from "$/client/persistence/types";
 import type { DocumentManager } from "$/client/documents";
 import type { ActorManager, ReplicateRuntime } from "$/client/services/engine";
+import type { UserIdentity } from "$/client/services/awareness";
 
 interface ConvexCollectionApi {
 	material: FunctionReference<"query">;
@@ -30,6 +31,7 @@ export interface CollectionContext {
 	resolve?: () => void;
 	actorReady?: Promise<void>;
 	resolveActorReady?: () => void;
+	userGetter?: () => UserIdentity | undefined;
 }
 
 const contexts = new Map<string, CollectionContext>();

@@ -459,7 +459,8 @@ export class Replicate<T extends object> {
 						.filter((q: any) => q.eq(q.field("id"), args.document))
 						.first();
 					if (!canAccess) {
-						throw new Error("Unauthorized: cannot access this document");
+						// Silently return for unauthorized documents (e.g., stale cached docs after logout)
+						return null;
 					}
 				}
 
@@ -624,7 +625,8 @@ export class Replicate<T extends object> {
 						.filter((q: any) => q.eq(q.field("id"), args.document))
 						.first();
 					if (!canAccess) {
-						throw new Error("Unauthorized: cannot access this document");
+						// Return empty sessions for unauthorized documents
+						return [];
 					}
 				}
 

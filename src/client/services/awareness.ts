@@ -12,6 +12,7 @@ interface AwarenessApi {
 }
 
 export interface UserIdentity {
+	id?: string;
 	name?: string;
 	color?: string;
 	avatar?: string;
@@ -128,18 +129,29 @@ export function createAwarenessProvider(config: ConvexAwarenessConfig): ConvexAw
 		if (!awarenessState) return {};
 
 		const userState = awarenessState.user as
-			| { name?: string; color?: string; avatar?: string; [key: string]: unknown }
+			| { id?: string; name?: string; color?: string; avatar?: string; [key: string]: unknown }
 			| undefined;
 
 		if (userState) {
+			const result: {
+				user?: string;
+				profile?: { name?: string; color?: string; avatar?: string };
+			} = {};
+
+			if (typeof userState.id === "string") {
+				result.user = userState.id;
+			}
+
 			const profile: { name?: string; color?: string; avatar?: string } = {};
 			if (typeof userState.name === "string") profile.name = userState.name;
 			if (typeof userState.color === "string") profile.color = userState.color;
 			if (typeof userState.avatar === "string") profile.avatar = userState.avatar;
 
 			if (Object.keys(profile).length > 0) {
-				return { profile };
+				result.profile = profile;
 			}
+
+			return result;
 		}
 
 		return {};
