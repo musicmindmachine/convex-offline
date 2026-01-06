@@ -1,20 +1,18 @@
 <script lang="ts">
-	import './layout.css';
-	import favicon from '$lib/assets/favicon.svg';
-	import { page } from '$app/state';
-	import { onMount } from 'svelte';
-	import { dev, browser } from '$app/environment';
-	import { setConvexClientContext } from 'convex-svelte';
-	import { ConvexClient } from 'convex/browser';
-	import { PUBLIC_CONVEX_URL } from '$env/static/public';
-	import { configure, getConsoleSink } from '@logtape/logtape';
-	import PersistenceGate from '$lib/components/PersistenceGate.svelte';
+	import "./layout.css";
+	import favicon from "$lib/assets/favicon.svg";
+	import { page } from "$app/state";
+	import { onMount } from "svelte";
+	import { dev, browser } from "$app/environment";
+	import { configure, getConsoleSink } from "@logtape/logtape";
+	import { createSvelteAuthClient } from "@mmailaender/convex-better-auth-svelte/svelte";
+	import { authClient } from "$lib/auth-client";
+	import { convexClient } from "$lib/convex";
+	import PersistenceGate from "$lib/components/PersistenceGate.svelte";
 
 	let { children } = $props();
 
-	if (browser) {
-		setConvexClientContext(new ConvexClient(PUBLIC_CONVEX_URL));
-	}
+	createSvelteAuthClient({ authClient, convexClient });
 
 	onMount(async () => {
 		await configure({
@@ -24,8 +22,8 @@
 			],
 		});
 
-		if (!dev && 'serviceWorker' in navigator) {
-			navigator.serviceWorker.register('/service-worker.js');
+		if (!dev && "serviceWorker" in navigator) {
+			navigator.serviceWorker.register("/service-worker.js");
 		}
 	});
 </script>

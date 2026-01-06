@@ -4,12 +4,15 @@
   import CommentEditor from "./CommentEditor.svelte";
   import { Input } from "$lib/components/ui/input";
   import { Button } from "$lib/components/ui/button";
+  import { authClient } from "$lib/auth-client";
 
   interface Props {
     intervalId: string;
+    isPublic?: boolean;
   }
 
-  let { intervalId }: Props = $props();
+  let { intervalId, isPublic = true }: Props = $props();
+  const session = authClient.useSession();
 
   const commentsCollection = commentsLazy.get();
   const commentsQuery = useLiveQuery(commentsCollection);
@@ -27,9 +30,12 @@
 
     const id = crypto.randomUUID();
     const now = Date.now();
+    const user = $session.data?.user;
 
     commentsCollection.insert({
       id,
+      ownerId: user?.id,
+      isPublic,
       intervalId,
       body: newCommentText.trim(),
       createdAt: now,

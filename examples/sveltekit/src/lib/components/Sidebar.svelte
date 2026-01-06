@@ -1,13 +1,16 @@
 <script lang="ts">
   import { page } from "$app/state";
   import { useLiveQuery } from "@tanstack/svelte-db";
-  import { Plus, Search, SlidersHorizontal } from "@lucide/svelte";
+  import { Plus, Search, SlidersHorizontal, Globe, Lock } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import StatusIcon from "./StatusIcon.svelte";
   import StarIcon from "./StarIcon.svelte";
+  import AuthBar from "./AuthBar.svelte";
   import { intervals as intervalsCollection, type Interval } from "$collections/useIntervals";
   import { schema } from "@trestleinc/replicate/client";
+  import { authClient } from "$lib/auth-client";
+  import { useAuth } from "@mmailaender/convex-better-auth-svelte/svelte";
 
   interface Props {
     onsearchopen?: () => void;
@@ -17,6 +20,9 @@
 
   const { onsearchopen, onfilteropen, hasActiveFilters = false }: Props = $props();
 
+  const auth = useAuth();
+  const isAuthenticated = $derived(auth.isAuthenticated);
+  const session = authClient.useSession();
   const collection = intervalsCollection.get();
   const intervalsQuery = useLiveQuery(collection);
 
@@ -32,11 +38,14 @@
 
   const activeId = $derived(page.params.id);
 
-  function createInterval() {
+  function createInterval(isPublic: boolean = true) {
     const id = crypto.randomUUID();
     const now = Date.now();
+    const user = $session.data?.user;
     collection.insert({
       id,
+      ownerId: user?.id,
+      isPublic,
       title: "New Interval",
       description: schema.prose.empty(),
       status: "backlog",
@@ -97,11 +106,17 @@
     </div>
   </div>
 
-  <div class="p-2">
-    <Button variant="outline" class="w-full justify-start gap-2" onclick={createInterval}>
-      <Plus class="w-4 h-4" />
-      <span>New Interval</span>
+  <div class="p-2 space-y-1">
+    <Button variant="outline" class="w-full justify-start gap-2" onclick={() => createInterval(true)}>
+      <Globe class="w-4 h-4" />
+      <span>New Public</span>
     </Button>
+    {#if $session.data?.user}
+      <Button variant="outline" class="w-full justify-start gap-2" onclick={() => createInterval(false)}>
+        <Lock class="w-4 h-4" />
+        <span>New Private</span>
+      </Button>
+    {/if}
   </div>
 
   <div class="flex-1 overflow-auto">
@@ -148,6 +163,11 @@
                   >
                     {interval.title || "Untitled"}
                   </button>
+                  {#if interval.isPublic}
+                    <Globe class="w-3 h-3 text-muted-foreground/50 shrink-0" />
+                  {:else}
+                    <Lock class="w-3 h-3 text-muted-foreground/50 shrink-0" />
+                  {/if}
                 </a>
               {/if}
             </li>
@@ -155,5 +175,9 @@
         </ul>
       </nav>
     {/if}
+  </div>
+
+  <div class="border-t border-sidebar-border p-3">
+    <AuthBar />
   </div>
 </aside>

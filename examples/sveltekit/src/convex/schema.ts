@@ -22,6 +22,8 @@ export default defineSchema({
   intervals: schema.table(
     {
       id: v.string(),
+      ownerId: v.optional(v.string()),
+      isPublic: v.boolean(),
       title: v.string(),
       description: schema.prose(),
       status: statusValidator,
@@ -35,12 +37,16 @@ export default defineSchema({
         .index("by_timestamp", ["timestamp"])
         .index("by_status", ["status"])
         .index("by_priority", ["priority"])
-        .index("by_updated", ["updatedAt"]),
+        .index("by_updated", ["updatedAt"])
+        .index("by_owner", ["ownerId"])
+        .index("by_public", ["isPublic"]),
   ),
 
   comments: schema.table(
     {
       id: v.string(),
+      ownerId: v.optional(v.string()),
+      isPublic: v.boolean(),
       intervalId: v.string(),
       body: v.string(),
       createdAt: v.number(),
@@ -50,6 +56,8 @@ export default defineSchema({
       t
         .index("by_doc_id", ["id"])
         .index("by_timestamp", ["timestamp"])
-        .index("by_interval", ["intervalId"]),
+        .index("by_interval", ["intervalId"])
+        .index("by_owner", ["ownerId"])
+        .index("by_public", ["isPublic"]),
   ),
 });

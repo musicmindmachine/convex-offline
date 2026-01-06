@@ -1,16 +1,26 @@
 import { collection } from "@trestleinc/replicate/client";
-import { ConvexClient } from "convex/browser";
-import { PUBLIC_CONVEX_URL } from "$env/static/public";
 import { api } from "$convex/_generated/api";
 import schema from "$convex/schema";
 import { sqlite } from "$lib/sqlite";
+import { convexClient } from "$lib/convex";
+import { authClient } from "$lib/auth-client";
 
 export const intervals = collection.create(schema, "intervals", {
   persistence: sqlite,
   config: () => ({
-    convexClient: new ConvexClient(PUBLIC_CONVEX_URL),
+    convexClient,
     api: api.intervals,
     getKey: (interval) => interval.id,
+    user: () => {
+      const store = authClient.useSession();
+      const session = store.get();
+      if (!session.data?.user) return undefined;
+      return {
+        id: session.data.user.id,
+        name: session.data.user.name,
+        avatar: session.data.user.image ?? undefined,
+      };
+    },
   }),
 });
 

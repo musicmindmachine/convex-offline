@@ -172,6 +172,265 @@ hooks: {
 | "Hide sensitive fields" | | ✅ `transform` |
 | "Log after write" | | ✅ `onInsert` etc |
 
+## Client-Side Setup
+
+Replicate uses a **pre-authenticated ConvexClient** for server-side authorization. Your auth provider (Better Auth, Clerk, etc.) configures the client, and Replicate reuses it.
+
+### Setting Up the Authenticated Client
+
+Create a shared ConvexClient and configure auth via your provider's integration:
+
+```typescript
+// src/lib/convex.ts
+import { ConvexClient } from "convex/browser";
+
+export const convexClient = new ConvexClient(process.env.PUBLIC_CONVEX_URL);
+```
+
+Then pass it to your auth provider's setup (this configures `setAuth()` internally):
+
+**Better Auth (SvelteKit):**
+```typescript
+// +layout.svelte
+import { createSvelteAuthClient } from "@mmailaender/convex-better-auth-svelte/svelte";
+import { authClient } from "$lib/auth-client";
+import { convexClient } from "$lib/convex";
+
+createSvelteAuthClient({ authClient, convexClient });
+```
+
+**Clerk (React):**
+```typescript
+// App.tsx
+import { ConvexProviderWithClerk } from "convex/react-clerk";
+import { convexClient } from "./lib/convex";
+
+<ClerkProvider>
+  <ConvexProviderWithClerk client={convexClient} useAuth={useAuth}>
+    <App />
+  </ConvexProviderWithClerk>
+</ClerkProvider>
+```
+
+**Custom Auth:**
+```typescript
+// Manual setAuth configuration
+convexClient.setAuth(
+  async ({ forceRefreshToken }) => {
+    const token = await yourAuthProvider.getToken({ skipCache: forceRefreshToken });
+    return token ?? null;
+  },
+  (isAuthenticated) => console.log("Auth state:", isAuthenticated)
+);
+```
+
+### Using the Authenticated Client in Collections
+
+Pass the shared client to your collection config:
+
+```typescript
+// src/collections/tasks.ts
+import { collection, persistence } from "@trestleinc/replicate/client";
+import { convexClient } from "$lib/convex";
+
+export const tasks = collection.create(schema, "tasks", {
+  persistence: () => persistence.sqlite(db, "tasks"),
+  config: () => ({
+    convexClient,  // Pre-authenticated client
+    api: api.tasks,
+    getKey: (t) => t.id,
+  }),
+});
+```
+
+Now `ctx.auth.getUserIdentity()` will work in your server-side `view` and `hooks`.
+
+## Presence Identity (Auth-Agnostic)
+
+Replicate's presence system (cursors, avatars) uses a separate **client-side identity** that works with any auth provider.
+
+### UserIdentity Interface
+
+```typescript
+interface UserIdentity {
+  id?: string;      // User ID (for session grouping across devices)
+  name?: string;    // Display name (shown in cursors)
+  color?: string;   // Cursor/selection color (hex, e.g., "#6366f1")
+  avatar?: string;  // Avatar URL (for presence indicators)
+}
+```
+
+### Passing Identity to Collections
+
+Provide a `user` getter in your collection config. This function is called when establishing presence:
+
+```typescript
+import { collection, persistence } from "@trestleinc/replicate/client";
+
+export const tasks = collection.create(schema, "tasks", {
+  persistence: async () => persistence.pglite(db, "tasks"),
+  config: () => ({
+    convexClient,
+    api: api.tasks,
+    getKey: (t) => t.id,
+    
+    user: () => {
+      const session = getAuthSession(); // Your auth provider
+      if (!session?.user) return undefined;
+      
+      return {
+        id: session.user.id,
+        name: session.user.name,
+        avatar: session.user.image,
+      };
+    },
+  }),
+});
+```
+
+### Provider Examples
+
+**Better Auth:**
+```typescript
+import { authClient } from "$lib/auth-client";
+
+user: () => {
+  const session = authClient.useSession();
+  if (!session.data?.user) return undefined;
+  
+  return {
+    id: session.data.user.id,
+    name: session.data.user.name,
+    avatar: session.data.user.image,
+  };
+},
+```
+
+**Clerk:**
+```typescript
+import { useUser } from "@clerk/clerk-react";
+
+user: () => {
+  const { user } = useUser();
+  if (!user) return undefined;
+  
+  return {
+    id: user.id,
+    name: user.fullName ?? user.username,
+    avatar: user.imageUrl,
+  };
+},
+```
+
+**WorkOS AuthKit:**
+```typescript
+import { useAuth } from "@workos-inc/authkit-react";
+
+user: () => {
+  const { user } = useAuth();
+  if (!user) return undefined;
+  
+  return {
+    id: user.id,
+    name: `${user.firstName} ${user.lastName}`.trim(),
+    avatar: user.profilePictureUrl,
+  };
+},
+```
+
+**Convex Auth (ctx.auth):**
+```typescript
+// For SSR scenarios where you have the identity from server
+user: () => {
+  const identity = getServerIdentity(); // From your SSR loader
+  if (!identity) return undefined;
+  
+  return {
+    id: identity.subject,
+    name: identity.name,
+    avatar: identity.pictureUrl,
+  };
+},
+```
+
+**Custom/JWT:**
+```typescript
+import { jwtDecode } from "jwt-decode";
+
+user: () => {
+  const token = localStorage.getItem("auth_token");
+  if (!token) return undefined;
+  
+  const decoded = jwtDecode<{ sub: string; name: string }>(token);
+  return {
+    id: decoded.sub,
+    name: decoded.name,
+  };
+},
+```
+
+### How Identity Flows Through the System
+
+```
+┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
+│   Auth Provider │      │     Client      │      │     Server      │
+│                 │      │                 │      │                 │
+│  Better Auth    │      │  collection     │      │  sessions table │
+│  Clerk          │ ───► │  config.user()  │ ───► │                 │
+│  WorkOS         │      │                 │      │  ┌───────────┐  │
+│  Custom JWT     │      │  UserIdentity   │      │  │ client    │  │
+│                 │      │  {              │      │  │ user      │  │
+└─────────────────┘      │    id,          │      │  │ profile   │  │
+                         │    name,        │      │  │ cursor    │  │
+                         │    avatar       │      │  └───────────┘  │
+                         │  }              │      │                 │
+                         └─────────────────┘      └─────────────────┘
+```
+
+1. **Auth provider** authenticates user (any provider)
+2. **Client** extracts identity via `config.user()` getter
+3. **Presence system** sends identity with heartbeats
+4. **Server** stores in sessions table, groups by `user.id`
+5. **Other clients** see user presence via `session` query
+
+### Per-Document Identity Override
+
+You can also pass identity per-document when binding to prose fields:
+
+```typescript
+const binding = await collection.utils.prose(docId, "content", {
+  user: {
+    id: currentUser.id,
+    name: currentUser.displayName,
+    color: "#6366f1",
+    avatar: currentUser.avatarUrl,
+  },
+});
+```
+
+This is useful when you need different identity per document or want to override the collection-level default.
+
+### Anonymous Users
+
+If `user()` returns `undefined`, presence still works with anonymous identity:
+
+```typescript
+user: () => {
+  const session = getAuthSession();
+  if (!session) return undefined; // Anonymous - auto-generated name/color
+  
+  return {
+    id: session.user.id,
+    name: session.user.name,
+  };
+},
+```
+
+Anonymous users get:
+- Stable random name (e.g., "Swift Fox", "Calm Bear")
+- Stable random color (seeded from client ID)
+- No cross-device grouping (each device is separate)
+
 ## Session + Presence
 
 ### Session Query (Who's Online)

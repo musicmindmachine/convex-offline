@@ -39,6 +39,6 @@
     {#key id}
       <IntervalEditor intervalId={id} {interval} onPropertyUpdate={handlePropertyUpdate} />
     {/key}
-    <CommentList intervalId={id} />
+    <CommentList intervalId={id} isPublic={interval.isPublic} />
   </div>
 {/if}
