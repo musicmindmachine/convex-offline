@@ -49,7 +49,6 @@ export const schema = {
 
 export {
 	persistence,
-	isPRFSupported,
 	type StorageAdapter,
 	type Persistence,
 	type EncryptedPersistence,
