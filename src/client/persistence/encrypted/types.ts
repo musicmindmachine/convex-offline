@@ -24,9 +24,9 @@ export interface NativeUnlockConfig {
 	passphrase?: PassphraseConfig;
 }
 
-export interface WebEncryptedConfig {
+export interface WebEncryptionConfig {
 	storage: Persistence;
-	userId: string;
+	user: string;
 	mode?: "local" | "e2e";
 	unlock: WebUnlockConfig;
 	recovery?: RecoveryConfig;
@@ -35,9 +35,9 @@ export interface WebEncryptedConfig {
 	onUnlock?: () => void;
 }
 
-export interface NativeEncryptedConfig {
+export interface NativeEncryptionConfig {
 	storage: Persistence;
-	userId: string;
+	user: string;
 	mode?: "local" | "e2e";
 	unlock: NativeUnlockConfig;
 	recovery?: RecoveryConfig;
@@ -48,7 +48,7 @@ export interface NativeEncryptedConfig {
 
 export type EncryptionState = "locked" | "unlocked" | "setup";
 
-export interface EncryptedPersistence extends Persistence {
+export interface EncryptionPersistence extends Persistence {
 	readonly state: EncryptionState;
 	lock(): Promise<void>;
 	unlock(): Promise<void>;

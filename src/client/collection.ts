@@ -31,11 +31,17 @@ import {
 	waitForActorReady,
 } from "$/client/services/context";
 import { createRuntime, runWithRuntime, type ReplicateRuntime } from "$/client/services/engine";
+import { createAwarenessProvider, type ConvexAwarenessProvider } from "$/client/services/awareness";
 import {
-	createAwarenessProvider,
-	type ConvexAwarenessProvider,
-	type UserIdentity,
-} from "$/client/services/awareness";
+	createDocumentPresence,
+	type DocumentHandle,
+	type DocumentPresence,
+	type DocumentPresenceProvider,
+	type PresenceState,
+} from "$/client/document";
+
+export type { DocumentHandle, DocumentPresence, PresenceState };
+import type { UserIdentity } from "$/client/identity";
 import { Awareness } from "y-protocols/awareness";
 
 enum YjsOrigin {
@@ -183,6 +189,25 @@ interface ConvexCollectionUtils<T extends object> {
 	prose(document: string, field: ProseFields<T>, options?: ProseOptions): Promise<EditorBinding>;
 }
 
+export interface SessionInfo {
+	client: string;
+	document: string;
+	user?: string;
+	profile?: { name?: string; color?: string; avatar?: string };
+	cursor?: unknown;
+	connected: boolean;
+}
+
+export interface SessionAPI {
+	get(docId?: string): SessionInfo[];
+	subscribe(callback: (sessions: SessionInfo[]) => void): () => void;
+}
+
+interface ConvexCollectionExtensions<T extends object> {
+	doc(id: string): DocumentHandle<T>;
+	readonly session: SessionAPI;
+}
+
 const DEFAULT_DEBOUNCE_MS = 200;
 
 export function convexCollectionOptions<
@@ -193,6 +218,7 @@ export function convexCollectionOptions<
 ): CollectionConfig<T, TKey, never, ConvexCollectionUtils<T>> & {
 	id: string;
 	utils: ConvexCollectionUtils<T>;
+	extensions: ConvexCollectionExtensions<T>;
 } {
 	const { validator, getKey, material, convexClient, api, persistence, user: userGetter } = config;
 
@@ -335,6 +361,111 @@ export function convexCollectionOptions<
 
 			return binding;
 		},
+	};
+
+	const documentHandles = new Map<string, DocumentHandle<DataType>>();
+	const presenceProviders = new Map<string, DocumentPresenceProvider>();
+
+	const getOrCreateDocumentHandle = (documentId: string): DocumentHandle<DataType> => {
+		let handle = documentHandles.get(documentId);
+		if (handle) return handle;
+
+		const ctx = hasContext(collection) ? getContext(collection) : null;
+		if (!ctx) {
+			throw new Error(`Collection ${collection} not initialized. Call init() first.`);
+		}
+
+		const subdoc = ctx.docManager.getOrCreate(documentId);
+
+		let presenceProvider = presenceProviders.get(documentId);
+		if (!presenceProvider) {
+			const hasPresenceApi = ctx.api?.session && ctx.api?.presence;
+			if (ctx.client && hasPresenceApi && ctx.clientId) {
+				presenceProvider = createDocumentPresence({
+					convexClient: ctx.client,
+					api: {
+						presence: ctx.api.presence!,
+						session: ctx.api.session!,
+					},
+					document: documentId,
+					client: ctx.clientId,
+					ydoc: subdoc,
+					syncReady: ctx.synced,
+					userGetter: ctx.userGetter,
+				});
+				presenceProviders.set(documentId, presenceProvider);
+			}
+		}
+
+		const presence: DocumentPresence = presenceProvider ?? {
+			join: () => {},
+			leave: () => {},
+			update: () => {},
+			get: () => ({ local: null, remote: [] }),
+			subscribe: () => () => {},
+		};
+
+		handle = {
+			id: documentId,
+			presence,
+			awareness: presenceProvider?.awareness ?? new Awareness(subdoc),
+
+			async prose(field: ProseFields<DataType>, options?: ProseOptions): Promise<EditorBinding> {
+				return utils.prose(documentId, field, options);
+			},
+		};
+
+		documentHandles.set(documentId, handle);
+		return handle;
+	};
+
+	let sessionCache: SessionInfo[] = [];
+	const sessionSubscribers = new Set<(sessions: SessionInfo[]) => void>();
+	let sessionUnsubscribe: (() => void) | null = null;
+
+	const initSessionSubscription = (): void => {
+		if (sessionUnsubscribe) return;
+
+		const ctx = hasContext(collection) ? getContext(collection) : null;
+		if (!ctx?.client || !ctx?.api?.session) return;
+
+		sessionUnsubscribe = ctx.client.onUpdate(
+			ctx.api.session,
+			{ connected: true },
+			(sessions: SessionInfo[]) => {
+				sessionCache = sessions;
+				sessionSubscribers.forEach(cb => cb(sessions));
+			},
+		);
+	};
+
+	const sessionApi: SessionAPI = {
+		get(docId?: string): SessionInfo[] {
+			if (docId) {
+				return sessionCache.filter(s => s.document === docId);
+			}
+			return sessionCache;
+		},
+
+		subscribe(callback: (sessions: SessionInfo[]) => void): () => void {
+			initSessionSubscription();
+			sessionSubscribers.add(callback);
+			callback(sessionCache);
+			return () => {
+				sessionSubscribers.delete(callback);
+				if (sessionSubscribers.size === 0 && sessionUnsubscribe) {
+					sessionUnsubscribe();
+					sessionUnsubscribe = null;
+				}
+			};
+		},
+	};
+
+	const extensions: ConvexCollectionExtensions<DataType> = {
+		doc(id: string): DocumentHandle<DataType> {
+			return getOrCreateDocumentHandle(id);
+		},
+		session: sessionApi,
 	};
 
 	const docManager = createDocumentManager(collection);
@@ -480,6 +611,7 @@ export function convexCollectionOptions<
 		id: collection,
 		getKey,
 		utils,
+		extensions,
 
 		onInsert: async ({ transaction }: CollectionTransaction<DataType>) => {
 			const deltas = applyYjsInsert(transaction.mutations);
@@ -819,7 +951,9 @@ type LazyCollectionConfig<T extends object> = Omit<
 
 export interface LazyCollection<T extends object> {
 	init(material?: Materialized<T> | PaginatedMaterial<T>): Promise<void>;
-	get(): Collection<T, string, ConvexCollectionUtils<T>, never, T> & NonSingleResult;
+	get(): Collection<T, string, ConvexCollectionUtils<T>, never, T> &
+		NonSingleResult &
+		ConvexCollectionExtensions<T>;
 	readonly $docType?: T;
 	readonly pagination: {
 		load(): Promise<PaginatedPage<T> | null>;
@@ -837,7 +971,8 @@ export type ConvexCollection<T extends object> = Collection<
 	never,
 	T
 > &
-	NonSingleResult;
+	NonSingleResult &
+	ConvexCollectionExtensions<T>;
 
 interface CreateCollectionOptions<T extends object> {
 	persistence: () => Promise<Persistence>;
@@ -924,7 +1059,8 @@ export const collection = {
 						persistence,
 						material,
 					});
-					instance = createCollection(opts) as Instance;
+					const baseCollection = createCollection(opts);
+					instance = Object.assign(baseCollection, opts.extensions) as Instance;
 				}
 				return instance!;
 			},

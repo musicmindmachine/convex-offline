@@ -54,6 +54,72 @@ export declare const internal: FilterApi<
 
 export declare const components: {
   replicate: {
+    encryption: {
+      approveDevice: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          collection: string;
+          deviceId: string;
+          userId: string;
+          wrappedUmk: ArrayBuffer;
+        },
+        any
+      >;
+      getDocKey: FunctionReference<
+        "query",
+        "internal",
+        { collection: string; document: string; userId: string },
+        any
+      >;
+      getDocKeysForUser: FunctionReference<
+        "query",
+        "internal",
+        { collection: string; userId: string },
+        any
+      >;
+      getPendingDevices: FunctionReference<
+        "query",
+        "internal",
+        { collection: string; userId: string },
+        any
+      >;
+      getWrappedUmk: FunctionReference<
+        "query",
+        "internal",
+        { collection: string; deviceId: string; userId: string },
+        any
+      >;
+      listDevices: FunctionReference<
+        "query",
+        "internal",
+        { collection: string; userId: string },
+        any
+      >;
+      registerDevice: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          collection: string;
+          deviceId: string;
+          name?: string;
+          publicKey: ArrayBuffer;
+          userId: string;
+        },
+        any
+      >;
+      storeDocKey: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          collection: string;
+          document: string;
+          userId: string;
+          wrappedKey: ArrayBuffer;
+        },
+        any
+      >;
+    };
     mutations: {
       compact: FunctionReference<
         "mutation",

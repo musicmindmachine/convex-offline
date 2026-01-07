@@ -4,7 +4,7 @@ import type { Collection } from "@tanstack/db";
 import type { Persistence } from "$/client/persistence/types";
 import type { DocumentManager } from "$/client/documents";
 import type { ActorManager, ReplicateRuntime } from "$/client/services/engine";
-import type { UserIdentity } from "$/client/services/awareness";
+import type { UserIdentity } from "$/client/identity";
 
 interface ConvexCollectionApi {
 	material: FunctionReference<"query">;

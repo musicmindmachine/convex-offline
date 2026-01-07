@@ -1,7 +1,7 @@
 import { writable, get, derived, type Readable } from "svelte/store";
 import {
   persistence,
-  type EncryptedPersistence,
+  type EncryptionPersistence,
   type Persistence,
 } from "@trestleinc/replicate/client";
 import { sqlite, setEncryptedPersistence } from "./sqlite";
@@ -49,7 +49,7 @@ const store = writable<EncryptionStoreValue>({
   webauthnSupported: false,
 });
 
-let encryptedPersistence: EncryptedPersistence | null = null;
+let encryptedPersistence: EncryptionPersistence | null = null;
 let plainPersistence: Persistence | null = null;
 let initPromise: Promise<Persistence | null> | null = null;
 
@@ -107,9 +107,9 @@ export const encryptionStore = {
       }
 
       try {
-        encryptedPersistence = await persistence.web.encrypted({
+        encryptedPersistence = await persistence.web.encryption({
           storage,
-          userId,
+          user: userId,
           mode: "local",
           unlock: {
             webauthn: true,

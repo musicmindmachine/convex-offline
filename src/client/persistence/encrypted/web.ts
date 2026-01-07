@@ -1,6 +1,6 @@
 import * as Y from "yjs";
 import type { Persistence, PersistenceProvider, KeyValueStore } from "../types.js";
-import type { WebEncryptedConfig, EncryptedPersistence, EncryptionState } from "./types.js";
+import type { WebEncryptionConfig, EncryptionPersistence, EncryptionState } from "./types.js";
 import {
 	isPRFSupported,
 	createPRFCredential,
@@ -157,10 +157,10 @@ class EncryptedPersistenceProvider implements PersistenceProvider {
 	}
 }
 
-export async function createWebEncryptedPersistence(
-	config: WebEncryptedConfig,
-): Promise<EncryptedPersistence> {
-	const { storage, userId, unlock, recovery, lock: lockConfig, onLock, onUnlock } = config;
+export async function createWebEncryptionPersistence(
+	config: WebEncryptionConfig,
+): Promise<EncryptionPersistence> {
+	const { storage, user, unlock, recovery, lock: lockConfig, onLock, onUnlock } = config;
 
 	let encryptionKey: CryptoKey | null = null;
 	let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -199,9 +199,9 @@ export async function createWebEncryptedPersistence(
 				const supported = await isPRFSupported();
 				if (supported) {
 					try {
-						const credential = await createPRFCredential(userId);
+						const credential = await createPRFCredential(user);
 						const prfKey = await getPRFKey(credential);
-						encryptionKey = await deriveEncryptionKey(prfKey, `replicate:${userId}`);
+						encryptionKey = await deriveEncryptionKey(prfKey, `replicate:${user}`);
 
 						await storage.kv.set(CREDENTIAL_KEY, serializeCredential(credential));
 						await storage.kv.set(SETUP_KEY, true);
@@ -246,7 +246,7 @@ export async function createWebEncryptedPersistence(
 				try {
 					const credential = deserializeCredential(storedCred);
 					const prfKey = await getPRFKey(credential);
-					encryptionKey = await deriveEncryptionKey(prfKey, `replicate:${userId}`);
+					encryptionKey = await deriveEncryptionKey(prfKey, `replicate:${user}`);
 
 					state = "unlocked";
 					resetIdleTimer();

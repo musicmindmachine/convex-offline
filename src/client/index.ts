@@ -9,11 +9,16 @@ export {
 	type PaginationConfig,
 	type PaginationStatus,
 	type ProseOptions,
+	type DocumentHandle,
+	type DocumentPresence,
+	type PresenceState,
+	type SessionInfo,
+	type SessionAPI,
 } from "$/client/collection";
 
 export type { DocFromSchema, TableNamesFromSchema, InferDoc } from "$/client/types";
 
-export { type UserIdentity } from "$/client/services/awareness";
+export { identity, type UserIdentity } from "$/client/identity";
 
 export { type Seq } from "$/client/services/seq";
 
@@ -51,8 +56,13 @@ export {
 	persistence,
 	type StorageAdapter,
 	type Persistence,
-	type EncryptedPersistence,
+	type EncryptionPersistence,
 	type EncryptionState,
-	type WebEncryptedConfig,
-	type NativeEncryptedConfig,
+	type WebEncryptionConfig,
+	type NativeEncryptionConfig,
+	type EncryptionManager,
+	type EncryptionManagerConfig,
+	type EncryptionManagerState,
+	type EncryptionManagerHooks,
+	type EncryptionPreference,
 } from "$/client/persistence/index";

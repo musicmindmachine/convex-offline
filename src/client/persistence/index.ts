@@ -4,22 +4,32 @@ import { memoryPersistence } from "./memory.js";
 import { createNativeSqlitePersistence } from "./sqlite/native.js";
 import { createWebSqlitePersistence, onceWebSqlitePersistence } from "./sqlite/web.js";
 import { createCustomPersistence } from "./custom.js";
-import { createWebEncryptedPersistence } from "./encrypted/web.js";
+import { createWebEncryptionPersistence } from "./encrypted/web.js";
 import { isPRFSupported } from "./encrypted/webauthn.js";
+import { createEncryptionManager } from "./encrypted/manager.js";
 
 export type {
-	WebEncryptedConfig,
-	NativeEncryptedConfig,
-	EncryptedPersistence,
+	WebEncryptionConfig,
+	NativeEncryptionConfig,
+	EncryptionPersistence,
 	EncryptionState,
 } from "./encrypted/types.js";
+
+export type {
+	EncryptionManager,
+	EncryptionManagerConfig,
+	EncryptionManagerState,
+	EncryptionManagerHooks,
+	EncryptionPreference,
+} from "./encrypted/manager.js";
 
 export const persistence = {
 	web: {
 		sqlite: Object.assign(createWebSqlitePersistence, {
 			once: onceWebSqlitePersistence,
 		}),
-		encrypted: Object.assign(createWebEncryptedPersistence, {
+		encryption: Object.assign(createWebEncryptionPersistence, {
+			manager: createEncryptionManager,
 			webauthn: {
 				supported: isPRFSupported,
 			},
@@ -27,9 +37,9 @@ export const persistence = {
 	},
 	native: {
 		sqlite: createNativeSqlitePersistence,
-		encrypted: Object.assign(
+		encryption: Object.assign(
 			(): never => {
-				throw new Error("persistence.native.encrypted() not yet implemented");
+				throw new Error("persistence.native.encryption() not yet implemented");
 			},
 			{
 				biometric: {
