@@ -72,4 +72,22 @@ export default defineSchema({
 		.index("by_document", ["collection", "document"])
 		.index("by_client", ["collection", "document", "client"])
 		.index("by_connected", ["collection", "document", "connected"]),
+
+	compaction: defineTable({
+		collection: v.string(),
+		document: v.string(),
+		status: v.union(
+			v.literal("pending"),
+			v.literal("running"),
+			v.literal("done"),
+			v.literal("failed"),
+		),
+		started: v.number(),
+		completed: v.optional(v.number()),
+		retries: v.number(),
+		timeout: v.optional(v.number()),
+		error: v.optional(v.string()),
+	})
+		.index("by_document", ["collection", "document", "status"])
+		.index("by_status", ["status", "started"]),
 });

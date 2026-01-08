@@ -18,8 +18,10 @@ import {
 
 export { OperationType };
 
-// Delta count threshold matching y-indexeddb's PREFERRED_TRIM_SIZE
+const DEFAULT_THRESHOLD = 500;
+const DEFAULT_TIMEOUT = 24 * 60 * 60 * 1000;
 const DEFAULT_DELTA_COUNT_THRESHOLD = 500;
+const MAX_RETRIES = 3;
 
 async function getNextSeq(ctx: any, collection: string): Promise<number> {
 	const latest = await ctx.db
@@ -34,7 +36,9 @@ async function scheduleCompactionIfNeeded(
 	ctx: any,
 	collection: string,
 	document: string,
-	threshold: number = DEFAULT_DELTA_COUNT_THRESHOLD,
+	threshold: number = DEFAULT_THRESHOLD,
+	timeout: number = DEFAULT_TIMEOUT,
+	retain: number = 0,
 ): Promise<void> {
 	const deltas = await ctx.db
 		.query("deltas")
@@ -42,7 +46,12 @@ async function scheduleCompactionIfNeeded(
 		.collect();
 
 	if (deltas.length >= threshold) {
-		await ctx.scheduler.runAfter(0, api.mutations.compact, { collection, document });
+		await ctx.runMutation(api.mutations.scheduleCompaction, {
+			collection,
+			document,
+			timeout,
+			retain,
+		});
 	}
 }
 
@@ -51,6 +60,9 @@ export const insertDocument = mutation({
 		collection: v.string(),
 		document: v.string(),
 		bytes: v.bytes(),
+		threshold: v.optional(v.number()),
+		timeout: v.optional(v.number()),
+		retain: v.optional(v.number()),
 	},
 	returns: successSeqValidator,
 	handler: async (ctx, args) => {
@@ -63,7 +75,14 @@ export const insertDocument = mutation({
 			seq,
 		});
 
-		await scheduleCompactionIfNeeded(ctx, args.collection, args.document);
+		await scheduleCompactionIfNeeded(
+			ctx,
+			args.collection,
+			args.document,
+			args.threshold ?? DEFAULT_THRESHOLD,
+			args.timeout ?? DEFAULT_TIMEOUT,
+			args.retain ?? 0,
+		);
 
 		return { success: true, seq };
 	},
@@ -74,6 +93,9 @@ export const updateDocument = mutation({
 		collection: v.string(),
 		document: v.string(),
 		bytes: v.bytes(),
+		threshold: v.optional(v.number()),
+		timeout: v.optional(v.number()),
+		retain: v.optional(v.number()),
 	},
 	returns: successSeqValidator,
 	handler: async (ctx, args) => {
@@ -86,7 +108,14 @@ export const updateDocument = mutation({
 			seq,
 		});
 
-		await scheduleCompactionIfNeeded(ctx, args.collection, args.document);
+		await scheduleCompactionIfNeeded(
+			ctx,
+			args.collection,
+			args.document,
+			args.threshold ?? DEFAULT_THRESHOLD,
+			args.timeout ?? DEFAULT_TIMEOUT,
+			args.retain ?? 0,
+		);
 
 		return { success: true, seq };
 	},
@@ -97,6 +126,9 @@ export const deleteDocument = mutation({
 		collection: v.string(),
 		document: v.string(),
 		bytes: v.bytes(),
+		threshold: v.optional(v.number()),
+		timeout: v.optional(v.number()),
+		retain: v.optional(v.number()),
 	},
 	returns: successSeqValidator,
 	handler: async (ctx, args) => {
@@ -109,7 +141,14 @@ export const deleteDocument = mutation({
 			seq,
 		});
 
-		await scheduleCompactionIfNeeded(ctx, args.collection, args.document);
+		await scheduleCompactionIfNeeded(
+			ctx,
+			args.collection,
+			args.document,
+			args.threshold ?? DEFAULT_THRESHOLD,
+			args.timeout ?? DEFAULT_TIMEOUT,
+			args.retain ?? 0,
+		);
 
 		return { success: true, seq };
 	},
@@ -308,6 +347,235 @@ export const compact = mutation({
 			retained: deltas.length - removed,
 			size: merged.byteLength,
 		};
+	},
+});
+
+export const scheduleCompaction = mutation({
+	args: {
+		collection: v.string(),
+		document: v.string(),
+		timeout: v.optional(v.number()),
+		retain: v.optional(v.number()),
+	},
+	returns: v.object({
+		id: v.optional(v.id("compaction")),
+		status: v.union(
+			v.literal("scheduled"),
+			v.literal("already_running"),
+			v.literal("already_pending"),
+		),
+	}),
+	handler: async (ctx, args) => {
+		const existing = await ctx.db
+			.query("compaction")
+			.withIndex("by_document", (q: any) =>
+				q.eq("collection", args.collection).eq("document", args.document).eq("status", "running"),
+			)
+			.first();
+
+		if (existing) {
+			return { id: existing._id, status: "already_running" as const };
+		}
+
+		const pending = await ctx.db
+			.query("compaction")
+			.withIndex("by_document", (q: any) =>
+				q.eq("collection", args.collection).eq("document", args.document).eq("status", "pending"),
+			)
+			.first();
+
+		if (pending) {
+			return { id: pending._id, status: "already_pending" as const };
+		}
+
+		const id = await ctx.db.insert("compaction", {
+			collection: args.collection,
+			document: args.document,
+			status: "pending",
+			started: Date.now(),
+			retries: 0,
+		});
+
+		await ctx.scheduler.runAfter(0, api.mutations.runCompaction, {
+			id,
+			timeout: args.timeout,
+			retain: args.retain,
+		});
+
+		return { id, status: "scheduled" as const };
+	},
+});
+
+export const runCompaction = mutation({
+	args: {
+		id: v.id("compaction"),
+		timeout: v.optional(v.number()),
+		retain: v.optional(v.number()),
+	},
+	returns: v.union(v.null(), v.object({ removed: v.number(), retained: v.number() })),
+	handler: async (ctx, args) => {
+		const logger = getLogger(["compaction"]);
+		const job = await ctx.db.get(args.id);
+
+		if (!job || job.status === "done") {
+			return null;
+		}
+
+		await ctx.db.patch(args.id, { status: "running" });
+
+		const now = Date.now();
+		const timeout = args.timeout ?? DEFAULT_TIMEOUT;
+		const retain = args.retain ?? 0;
+
+		try {
+			const deltas = await ctx.db
+				.query("deltas")
+				.withIndex("by_document", (q: any) =>
+					q.eq("collection", job.collection).eq("document", job.document),
+				)
+				.collect();
+
+			if (deltas.length === 0) {
+				await ctx.db.patch(args.id, { status: "done", completed: now });
+				return { removed: 0, retained: 0 };
+			}
+
+			const snapshot = await ctx.db
+				.query("snapshots")
+				.withIndex("by_document", (q: any) =>
+					q.eq("collection", job.collection).eq("document", job.document),
+				)
+				.first();
+
+			const updates: Uint8Array[] = [];
+			if (snapshot) {
+				updates.push(new Uint8Array(snapshot.bytes));
+			}
+			updates.push(...deltas.map((d: any) => new Uint8Array(d.bytes)));
+
+			const merged = Y.mergeUpdatesV2(updates);
+			const vector = Y.encodeStateVectorFromUpdateV2(merged);
+
+			const sessions = await ctx.db
+				.query("sessions")
+				.withIndex("by_document", (q: any) =>
+					q.eq("collection", job.collection).eq("document", job.document),
+				)
+				.collect();
+
+			let canDeleteAll = true;
+			for (const session of sessions) {
+				const isActive = session.connected || now - session.seen < timeout;
+				if (!isActive) continue;
+
+				if (!session.vector) {
+					canDeleteAll = false;
+					logger.warn("Active session without vector, skipping full compaction", {
+						client: session.client,
+					});
+					break;
+				}
+
+				const sessionVector = new Uint8Array(session.vector);
+				const missing = Y.diffUpdateV2(merged, sessionVector);
+
+				if (missing.byteLength > 2) {
+					canDeleteAll = false;
+					logger.debug("Active session still needs data", {
+						client: session.client,
+						missingSize: missing.byteLength,
+					});
+					break;
+				}
+			}
+
+			const seq = Math.max(...deltas.map((d: any) => d.seq));
+
+			if (snapshot) {
+				await ctx.db.patch(snapshot._id, {
+					bytes: merged.buffer as ArrayBuffer,
+					vector: vector.buffer as ArrayBuffer,
+					seq,
+					created: now,
+				});
+			} else {
+				await ctx.db.insert("snapshots", {
+					collection: job.collection,
+					document: job.document,
+					bytes: merged.buffer as ArrayBuffer,
+					vector: vector.buffer as ArrayBuffer,
+					seq,
+					created: now,
+				});
+			}
+
+			let removed = 0;
+			if (canDeleteAll) {
+				const sortedDeltas = [...deltas].sort((a: any, b: any) => b.seq - a.seq);
+				const deltasToRetain = sortedDeltas.slice(0, retain);
+				const deltasToDelete = sortedDeltas.slice(retain);
+				const retainIds = new Set(deltasToRetain.map((d: any) => d._id));
+
+				for (const delta of deltasToDelete) {
+					if (!retainIds.has(delta._id)) {
+						await ctx.db.delete(delta._id);
+						removed++;
+					}
+				}
+
+				logger.info("Compaction completed", {
+					document: job.document,
+					removed,
+					retained: deltasToRetain.length,
+					size: merged.byteLength,
+				});
+			} else {
+				logger.info("Snapshot created, deltas retained (clients still syncing)", {
+					document: job.document,
+					deltaCount: deltas.length,
+					activeCount: sessions.filter((s: any) => s.connected || now - s.seen < timeout).length,
+				});
+			}
+
+			for (const session of sessions) {
+				if (session.connected) continue;
+				if (now - session.seen > timeout) {
+					await ctx.db.delete(session._id);
+					logger.debug("Cleaned up stale session", { client: session.client });
+				}
+			}
+
+			await ctx.db.patch(args.id, { status: "done", completed: now });
+			return { removed, retained: deltas.length - removed };
+		} catch (error) {
+			const retries = (job.retries ?? 0) + 1;
+
+			if (retries < MAX_RETRIES) {
+				await ctx.db.patch(args.id, { status: "pending", retries });
+				const backoff = Math.pow(2, retries) * 1000;
+				await ctx.scheduler.runAfter(backoff, api.mutations.runCompaction, {
+					id: args.id,
+					timeout: args.timeout,
+					retain: args.retain,
+				});
+				logger.warn("Compaction failed, scheduling retry", {
+					document: job.document,
+					retries,
+					backoff,
+				});
+			} else {
+				await ctx.db.patch(args.id, {
+					status: "failed",
+					error: String(error),
+					completed: now,
+				});
+				logger.error("Compaction failed after max retries", {
+					document: job.document,
+					error: String(error),
+				});
+			}
+			throw error;
+		}
 	},
 });
 

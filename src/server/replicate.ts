@@ -9,14 +9,13 @@ import type {
 	Query,
 } from "convex/server";
 import { queryGeneric, mutationGeneric } from "convex/server";
-import { type CompactionConfig, parseSize, parseDuration } from "$/shared/types";
+import { type CompactionConfig, parseDuration } from "$/shared/types";
 import {
 	profileValidator,
 	cursorValidator,
 	streamResultWithExistsValidator,
 	sessionValidator,
 	successSeqValidator,
-	compactResultValidator,
 	replicateTypeValidator,
 	sessionActionValidator,
 } from "$/shared/validators";
@@ -43,26 +42,22 @@ export type ViewFunction<TableInfo extends GenericTableInfo = GenericTableInfo> 
 	query: QueryInitializer<TableInfo>,
 ) => ViewQuery<TableInfo> | Promise<ViewQuery<TableInfo>>;
 
-const BYTES_PER_MB = 1024 * 1024;
-const MS_PER_HOUR = 60 * 60 * 1000;
-const DEFAULT_SIZE_THRESHOLD_5MB = 5 * BYTES_PER_MB;
-const DEFAULT_PEER_TIMEOUT_24H = 24 * MS_PER_HOUR;
+const DEFAULT_THRESHOLD = 500;
+const DEFAULT_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
 export class Replicate<T extends object> {
-	private sizeThreshold: number;
-	private peerTimeout: number;
+	private threshold: number;
+	private timeout: number;
+	private retain: number;
 
 	constructor(
 		public component: any,
 		public collectionName: string,
 		compaction?: Partial<CompactionConfig>,
 	) {
-		this.sizeThreshold = compaction?.sizeThreshold
-			? parseSize(compaction.sizeThreshold)
-			: DEFAULT_SIZE_THRESHOLD_5MB;
-		this.peerTimeout = compaction?.peerTimeout
-			? parseDuration(compaction.peerTimeout)
-			: DEFAULT_PEER_TIMEOUT_24H;
+		this.threshold = compaction?.threshold ?? DEFAULT_THRESHOLD;
+		this.timeout = compaction?.timeout ? parseDuration(compaction.timeout) : DEFAULT_TIMEOUT_MS;
+		this.retain = compaction?.retain ?? 0;
 	}
 
 	createStreamQuery(opts?: {
@@ -187,6 +182,7 @@ export class Replicate<T extends object> {
 	}) {
 		const component = this.component;
 		const collection = this.collectionName;
+		const { threshold, timeout, retain } = this;
 
 		return mutationGeneric({
 			args: {
@@ -212,6 +208,9 @@ export class Replicate<T extends object> {
 					collection,
 					document: args.document,
 					bytes: args.bytes,
+					threshold,
+					timeout,
+					retain,
 				});
 
 				if (opts?.onInsert) {
@@ -232,6 +231,7 @@ export class Replicate<T extends object> {
 	}) {
 		const component = this.component;
 		const collection = this.collectionName;
+		const { threshold, timeout, retain } = this;
 
 		return mutationGeneric({
 			args: {
@@ -263,6 +263,9 @@ export class Replicate<T extends object> {
 					collection,
 					document: args.document,
 					bytes: args.bytes,
+					threshold,
+					timeout,
+					retain,
 				});
 
 				if (opts?.onUpdate) {
@@ -283,6 +286,7 @@ export class Replicate<T extends object> {
 	}) {
 		const component = this.component;
 		const collection = this.collectionName;
+		const { threshold, timeout, retain } = this;
 
 		return mutationGeneric({
 			args: {
@@ -308,6 +312,9 @@ export class Replicate<T extends object> {
 					collection,
 					document: args.document,
 					bytes: args.bytes,
+					threshold,
+					timeout,
+					retain,
 				});
 
 				if (opts?.onRemove) {
@@ -363,6 +370,7 @@ export class Replicate<T extends object> {
 	}) {
 		const component = this.component;
 		const collection = this.collectionName;
+		const { threshold, timeout, retain } = this;
 
 		return mutationGeneric({
 			args: {
@@ -393,6 +401,9 @@ export class Replicate<T extends object> {
 						collection,
 						document,
 						bytes,
+						threshold,
+						timeout,
+						retain,
 					});
 
 					if (opts?.onRemove) {
@@ -418,6 +429,9 @@ export class Replicate<T extends object> {
 						collection,
 						document,
 						bytes,
+						threshold,
+						timeout,
+						retain,
 					});
 
 					if (opts?.onInsert) {
@@ -443,6 +457,9 @@ export class Replicate<T extends object> {
 					collection,
 					document,
 					bytes,
+					threshold,
+					timeout,
+					retain,
 				});
 
 				if (opts?.onUpdate) {
@@ -660,33 +677,6 @@ export class Replicate<T extends object> {
 					document: args.document,
 					connected: args.connected,
 					exclude: args.exclude,
-				});
-			},
-		});
-	}
-
-	createCompactMutation(opts?: {
-		evalWrite?: (
-			ctx: GenericMutationCtx<GenericDataModel>,
-			document: string,
-		) => void | Promise<void>;
-	}) {
-		const component = this.component;
-		const collection = this.collectionName;
-
-		return mutationGeneric({
-			args: {
-				document: v.string(),
-			},
-			returns: compactResultValidator,
-			handler: async (ctx, args) => {
-				if (opts?.evalWrite) {
-					await opts.evalWrite(ctx, args.document);
-				}
-
-				return await ctx.runMutation(component.mutations.compact, {
-					collection,
-					document: args.document,
 				});
 			},
 		});
