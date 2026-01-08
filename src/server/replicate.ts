@@ -1,5 +1,13 @@
 import { v } from "convex/values";
-import type { GenericMutationCtx, GenericQueryCtx, GenericDataModel } from "convex/server";
+import type {
+	GenericMutationCtx,
+	GenericQueryCtx,
+	GenericDataModel,
+	GenericTableInfo,
+	QueryInitializer,
+	OrderedQuery,
+	Query,
+} from "convex/server";
 import { queryGeneric, mutationGeneric } from "convex/server";
 import { type CompactionConfig, parseSize, parseDuration } from "$/shared/types";
 import {
@@ -13,10 +21,27 @@ import {
 	sessionActionValidator,
 } from "$/shared/validators";
 
-export type ViewFunction = (
+/** Query type returned by view functions - supports filter, order, collect, paginate */
+type ViewQuery<TableInfo extends GenericTableInfo = GenericTableInfo> =
+	| OrderedQuery<TableInfo>
+	| Query<TableInfo>;
+
+/**
+ * View function for filtering/ordering collection queries.
+ * Receives a QueryInitializer and returns an OrderedQuery or Query.
+ *
+ * @example
+ * ```typescript
+ * view: async (ctx, q) => {
+ *   const userId = await getAuthUserId(ctx);
+ *   return q.filter(f => f.eq(f.field("ownerId"), userId)).order("desc");
+ * }
+ * ```
+ */
+export type ViewFunction<TableInfo extends GenericTableInfo = GenericTableInfo> = (
 	ctx: GenericQueryCtx<GenericDataModel>,
-	query: any,
-) => Promise<any> | any;
+	query: QueryInitializer<TableInfo>,
+) => ViewQuery<TableInfo> | Promise<ViewQuery<TableInfo>>;
 
 const BYTES_PER_MB = 1024 * 1024;
 const MS_PER_HOUR = 60 * 60 * 1000;
