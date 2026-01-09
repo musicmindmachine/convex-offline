@@ -60,7 +60,9 @@
       }
     },
     "./worker": {
-      "import": "./dist/client/persistence/sqlite/worker.js"
+      "import": {
+        "types": "./dist/client/persistence/sqlite/worker.js"
+      }
     }
   },
   "files": [
@@ -93,25 +95,27 @@
   },
   "devDependencies": {
     "@edge-runtime/vm": "5.0.0",
+    "@effect/vitest": "latest",
     "@microsoft/api-extractor": "7.55.2",
     "@tanstack/db": "0.5.15",
+    "@testing-library/jest-dom": "6.9.1",
     "@trestleinc/convex-oxlint": "0.1.0",
     "@types/node": "25.0.3",
     "@types/sql.js": "1.4.9",
     "@typescript/native-preview": "7.0.0-dev.20260103.1",
+    "@vitest/browser": "latest",
     "convex": "1.31.2",
-    "dotenv": "17.2.3",
+    "convex-test": "0.0.41",
+    "dotenv": "latest",
     "fake-indexeddb": "6.2.5",
     "lib0": "0.2.116",
     "oxfmt": "0.21.0",
     "oxlint": "1.36.0",
+    "playwright": "latest",
     "publint": "0.3.16",
     "tsdown": "0.18.2",
     "typescript": "5.9.3",
-    "wa-sqlite": "1.0.0",
-    "wrangler": "4.54.0",
-    "y-protocols": "1.0.7",
-    "yjs": "13.6.28"
+    "vitest": "4.0.16"
   },
   "main": "./dist/shared/index.js",
   "types": "./dist/shared/index.d.ts",

@@ -1,13 +1,12 @@
 import { defineConfig } from 'vitest/config';
-import { resolve } from 'node:path';
+import path from 'node:path';
 
 export default defineConfig({
   test: {
+    environment: 'edge-runtime',
     environmentMatchGlobs: [
-      // E2E tests run in edge-runtime (Convex functions)
-      ['src/test/e2e/**', 'edge-runtime'],
-      // Unit + Integration tests run in jsdom (browser simulation)
-      ['src/test/unit/**', 'jsdom'],
+      ['src/test/browser/**', 'browser'],
+      ['src/test/unit/**', 'edge-runtime'],
       ['src/test/integration/**', 'jsdom'],
     ],
     setupFiles: ['./src/test/setup.ts'],
@@ -16,7 +15,8 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      $: resolve(__dirname, './src'),
+      $: path.resolve(__dirname, './src'),
+      '$/component': path.resolve(__dirname, './src/component'),
     },
   },
 });
