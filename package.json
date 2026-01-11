@@ -60,9 +60,7 @@
       }
     },
     "./worker": {
-      "import": {
-        "types": "./dist/client/persistence/sqlite/worker.js"
-      }
+      "import": "./dist/client/persistence/sqlite/worker.js"
     }
   },
   "files": [
