@@ -11,6 +11,9 @@ import {
 } from "@tanstack/db";
 import type { SchemaDefinition } from "convex/server";
 import type { GenericValidator } from "convex/values";
+import type { VersionedSchema } from "$/server/migration";
+import type { MigrationErrorHandler, ClientMigrationMap } from "$/client/migration";
+import { runMigrations } from "$/client/migration";
 import type { DocFromSchema, TableNamesFromSchema } from "$/client/types";
 import { findProseFields } from "$/client/validators";
 import { Effect } from "effect";
@@ -980,148 +983,358 @@ interface CreateCollectionOptions<T extends object> {
 	pagination?: PaginationConfig;
 }
 
+/** Options for new versioned schema API */
+interface CreateVersionedCollectionOptions<T extends object> {
+	schema: VersionedSchema<GenericValidator>;
+	persistence: () => Promise<Persistence>;
+	config: () => {
+		convexClient: ConvexClient;
+		api: ConvexCollectionApi;
+		getKey: (doc: T) => string | number;
+		user?: () => UserIdentity | undefined;
+	};
+	clientMigrations?: ClientMigrationMap;
+	onMigrationError?: MigrationErrorHandler;
+	pagination?: PaginationConfig;
+}
+
+/**
+ * Create a collection with versioned schema support.
+ * Handles automatic client-side migrations when schema version changes.
+ */
+function createVersionedCollection<T extends object>(
+	options: CreateVersionedCollectionOptions<T>,
+): LazyCollection<T> {
+	const { schema: versionedSchema, clientMigrations, onMigrationError } = options;
+
+	let persistence: Persistence | null = null;
+	let resolvedConfig: LazyCollectionConfig<T> | null = null;
+	let material: Materialized<T> | undefined;
+	type Instance = LazyCollection<T>["get"] extends () => infer R ? R : never;
+	let instance: Instance | null = null;
+	let collectionName: string | null = null;
+
+	let paginationState: PaginationState = {
+		status: "idle",
+		count: 0,
+		cursor: null,
+	};
+	const listeners = new Set<(state: PaginationState) => void>();
+
+	const isPaginatedMaterial = (
+		mat: Materialized<T> | PaginatedMaterial<T> | undefined,
+	): mat is PaginatedMaterial<T> => {
+		return mat !== undefined && "pages" in mat && Array.isArray(mat.pages);
+	};
+
+	const convertPaginatedToMaterial = (paginated: PaginatedMaterial<T>): Materialized<T> => {
+		const allDocs = paginated.pages.flatMap(p => p.page);
+		return {
+			documents: allDocs,
+			count: allDocs.length,
+		};
+	};
+
+	return {
+		async init(mat?: Materialized<T> | PaginatedMaterial<T>) {
+			if (!persistence) {
+				persistence = await options.persistence();
+				const userConfig = options.config();
+
+				// Extract collection name from api.delta function path
+				const functionPath = getFunctionName(userConfig.api.delta);
+				collectionName = functionPath.split(":")[0] ?? "unknown";
+
+				// Convert versioned config to legacy config format
+				resolvedConfig = {
+					convexClient: userConfig.convexClient,
+					api: userConfig.api,
+					getKey: userConfig.getKey,
+					user: userConfig.user,
+				} as LazyCollectionConfig<T>;
+
+				if (isPaginatedMaterial(mat)) {
+					material = convertPaginatedToMaterial(mat);
+					paginationState = {
+						status: mat.isDone ? "done" : "idle",
+						count: mat.pages.reduce((sum, p) => sum + p.page.length, 0),
+						cursor: mat.cursor,
+					};
+				} else {
+					material = mat;
+				}
+
+				// Run migrations if SQLite persistence is available
+				if (persistence.db && collectionName) {
+					await runMigrations({
+						collection: collectionName,
+						schema: versionedSchema,
+						db: persistence.db,
+						clientMigrations,
+						onError: onMigrationError,
+						listDocuments: async () => persistence!.listDocuments(collectionName!),
+					});
+				}
+			}
+		},
+
+		get() {
+			if (!persistence || !resolvedConfig) {
+				throw new Error("Call init() before get()");
+			}
+			if (!instance) {
+				const opts = convexCollectionOptions<T, string>({
+					...resolvedConfig,
+					validator: versionedSchema.shape,
+					persistence,
+					material,
+				});
+				const baseCollection = createCollection(opts);
+				instance = Object.assign(baseCollection, opts.extensions) as Instance;
+			}
+			return instance!;
+		},
+
+		pagination: {
+			async load(): Promise<PaginatedPage<T> | null> {
+				if (!persistence || !resolvedConfig) {
+					throw new Error("Call init() before pagination.load()");
+				}
+				if (paginationState.status === "done") {
+					return null;
+				}
+				// TODO: Implement pagination for versioned collections
+				return null;
+			},
+			get status() {
+				return paginationState.status;
+			},
+			get canLoadMore() {
+				return paginationState.status !== "done" && paginationState.status !== "busy";
+			},
+			get count() {
+				return paginationState.count;
+			},
+			subscribe(callback: (state: PaginationState) => void) {
+				listeners.add(callback);
+				return () => listeners.delete(callback);
+			},
+		},
+	};
+}
+
 export namespace collection {
 	export type Infer<C> = C extends { $docType?: infer T } ? NonNullable<T> : never;
 }
 
-export const collection = {
-	create<Schema extends SchemaDefinition<any, any>, TableName extends TableNamesFromSchema<Schema>>(
+/**
+ * Create a collection with versioned schema (new API).
+ *
+ * @example
+ * ```typescript
+ * const tasks = collection.create({
+ *   schema: taskSchema,
+ *   persistence: () => persistence.web.sqlite(),
+ *   config: () => ({
+ *     convexClient: new ConvexClient(url),
+ *     api: api.tasks,
+ *     getKey: (t) => t.id,
+ *   }),
+ *   onMigrationError: async (error, ctx) => {
+ *     if (ctx.canResetSafely) return { action: "reset" };
+ *     return { action: "keep-old-schema" };
+ *   },
+ * });
+ * ```
+ */
+function createCollection_versioned<T extends object>(
+	options: CreateVersionedCollectionOptions<T>,
+): LazyCollection<T> {
+	return createVersionedCollection<T>(options);
+}
+
+/**
+ * Create a collection with Convex schema (legacy API).
+ */
+function createCollection_legacy<
+	Schema extends SchemaDefinition<any, any>,
+	TableName extends TableNamesFromSchema<Schema>,
+>(
+	schema: Schema,
+	table: TableName,
+	options: CreateCollectionOptions<DocFromSchema<Schema, TableName>>,
+): LazyCollection<DocFromSchema<Schema, TableName>> {
+	type LegacyT = DocFromSchema<Schema, TableName>;
+
+	const tableDefinition = (schema.tables as Record<string, { validator?: GenericValidator }>)[
+		table
+	];
+	if (!tableDefinition) {
+		throw new Error(`Table "${table}" not found in schema`);
+	}
+	const validator = tableDefinition.validator;
+
+	let persistence: Persistence | null = null;
+	let resolvedConfig: LazyCollectionConfig<LegacyT> | null = null;
+	let material: Materialized<LegacyT> | undefined;
+	type Instance = LazyCollection<LegacyT>["get"] extends () => infer R ? R : never;
+	let instance: Instance | null = null;
+
+	let paginationState: PaginationState = {
+		status: "idle",
+		count: 0,
+		cursor: null,
+	};
+	const listeners = new Set<(state: PaginationState) => void>();
+
+	const notify = () => listeners.forEach(cb => cb(paginationState));
+
+	const isPaginatedMaterial = (
+		mat: Materialized<LegacyT> | PaginatedMaterial<LegacyT> | undefined,
+	): mat is PaginatedMaterial<LegacyT> => {
+		return mat !== undefined && "pages" in mat && Array.isArray(mat.pages);
+	};
+
+	const convertPaginatedToMaterial = (
+		paginated: PaginatedMaterial<LegacyT>,
+	): Materialized<LegacyT> => {
+		const allDocs = paginated.pages.flatMap(p => p.page);
+		return {
+			documents: allDocs,
+			count: allDocs.length,
+		};
+	};
+
+	return {
+		async init(mat?: Materialized<LegacyT> | PaginatedMaterial<LegacyT>) {
+			if (!persistence) {
+				persistence = await options.persistence();
+				resolvedConfig = options.config();
+
+				if (isPaginatedMaterial(mat)) {
+					material = convertPaginatedToMaterial(mat);
+					paginationState = {
+						status: mat.isDone ? "done" : "idle",
+						count: mat.pages.reduce((sum, p) => sum + p.page.length, 0),
+						cursor: mat.cursor,
+					};
+				} else {
+					material = mat;
+				}
+			}
+		},
+
+		get() {
+			if (!persistence || !resolvedConfig) {
+				throw new Error("Call init() before get()");
+			}
+			if (!instance) {
+				const opts = convexCollectionOptions<LegacyT, string>({
+					...resolvedConfig,
+					validator,
+					persistence,
+					material,
+				});
+				const baseCollection = createCollection(opts);
+				instance = Object.assign(baseCollection, opts.extensions) as Instance;
+			}
+			return instance!;
+		},
+
+		pagination: {
+			async load(): Promise<PaginatedPage<LegacyT> | null> {
+				if (!resolvedConfig || paginationState.status !== "idle") {
+					return null;
+				}
+
+				paginationState = { ...paginationState, status: "busy" };
+				notify();
+
+				try {
+					const pageSize = options.pagination?.pageSize ?? 25;
+					const result = (await resolvedConfig.convexClient.query(resolvedConfig.api.material, {
+						numItems: pageSize,
+						cursor: paginationState.cursor ?? undefined,
+					})) as PaginatedPage<LegacyT>;
+
+					if (instance && result.page.length > 0) {
+						instance.insert(result.page as LegacyT[]);
+					}
+
+					paginationState = {
+						status: result.isDone ? "done" : "idle",
+						count: paginationState.count + result.page.length,
+						cursor: result.continueCursor,
+					};
+					notify();
+
+					return result;
+				} catch (err) {
+					paginationState = {
+						...paginationState,
+						status: "error",
+						error: err instanceof Error ? err : new Error(String(err)),
+					};
+					notify();
+					return null;
+				}
+			},
+
+			get status() {
+				return paginationState.status;
+			},
+
+			get canLoadMore() {
+				return paginationState.status === "idle";
+			},
+
+			get count() {
+				return paginationState.count;
+			},
+
+			subscribe(callback: (state: PaginationState) => void) {
+				listeners.add(callback);
+				callback(paginationState);
+				return () => listeners.delete(callback);
+			},
+		},
+	};
+}
+
+// Overloaded collection.create function
+interface CollectionCreateFn {
+	/** Create collection with versioned schema (new API) */
+	<T extends object>(options: CreateVersionedCollectionOptions<T>): LazyCollection<T>;
+	/** Create collection with Convex schema (legacy API) */
+	<Schema extends SchemaDefinition<any, any>, TableName extends TableNamesFromSchema<Schema>>(
 		schema: Schema,
 		table: TableName,
 		options: CreateCollectionOptions<DocFromSchema<Schema, TableName>>,
-	): LazyCollection<DocFromSchema<Schema, TableName>> {
-		type T = DocFromSchema<Schema, TableName>;
+	): LazyCollection<DocFromSchema<Schema, TableName>>;
+}
 
-		const tableDefinition = (schema.tables as Record<string, { validator?: GenericValidator }>)[
-			table
-		];
-		if (!tableDefinition) {
-			throw new Error(`Table "${table}" not found in schema`);
-		}
-		const validator = tableDefinition.validator;
+const createFn: CollectionCreateFn = <
+	T extends object,
+	Schema extends SchemaDefinition<any, any>,
+	TableName extends TableNamesFromSchema<Schema>,
+>(
+	schemaOrOptions: Schema | CreateVersionedCollectionOptions<T>,
+	table?: TableName,
+	options?: CreateCollectionOptions<DocFromSchema<Schema, TableName>>,
+): LazyCollection<T> | LazyCollection<DocFromSchema<Schema, TableName>> => {
+	// New versioned schema API
+	if (typeof schemaOrOptions === "object" && "schema" in schemaOrOptions) {
+		return createCollection_versioned(schemaOrOptions as CreateVersionedCollectionOptions<T>);
+	}
 
-		let persistence: Persistence | null = null;
-		let resolvedConfig: LazyCollectionConfig<T> | null = null;
-		let material: Materialized<T> | undefined;
-		type Instance = LazyCollection<T>["get"] extends () => infer R ? R : never;
-		let instance: Instance | null = null;
+	// Legacy API
+	return createCollection_legacy(
+		schemaOrOptions as Schema,
+		table as TableName,
+		options as CreateCollectionOptions<DocFromSchema<Schema, TableName>>,
+	);
+};
 
-		let paginationState: PaginationState = {
-			status: "idle",
-			count: 0,
-			cursor: null,
-		};
-		const listeners = new Set<(state: PaginationState) => void>();
-
-		const notify = () => listeners.forEach(cb => cb(paginationState));
-
-		const isPaginatedMaterial = (
-			mat: Materialized<T> | PaginatedMaterial<T> | undefined,
-		): mat is PaginatedMaterial<T> => {
-			return mat !== undefined && "pages" in mat && Array.isArray(mat.pages);
-		};
-
-		const convertPaginatedToMaterial = (paginated: PaginatedMaterial<T>): Materialized<T> => {
-			const allDocs = paginated.pages.flatMap(p => p.page);
-			return {
-				documents: allDocs,
-				count: allDocs.length,
-			};
-		};
-
-		return {
-			async init(mat?: Materialized<T> | PaginatedMaterial<T>) {
-				if (!persistence) {
-					persistence = await options.persistence();
-					resolvedConfig = options.config();
-
-					if (isPaginatedMaterial(mat)) {
-						material = convertPaginatedToMaterial(mat);
-						paginationState = {
-							status: mat.isDone ? "done" : "idle",
-							count: mat.pages.reduce((sum, p) => sum + p.page.length, 0),
-							cursor: mat.cursor,
-						};
-					} else {
-						material = mat;
-					}
-				}
-			},
-
-			get() {
-				if (!persistence || !resolvedConfig) {
-					throw new Error("Call init() before get()");
-				}
-				if (!instance) {
-					const opts = convexCollectionOptions<T, string>({
-						...resolvedConfig,
-						validator,
-						persistence,
-						material,
-					});
-					const baseCollection = createCollection(opts);
-					instance = Object.assign(baseCollection, opts.extensions) as Instance;
-				}
-				return instance!;
-			},
-
-			pagination: {
-				async load(): Promise<PaginatedPage<T> | null> {
-					if (!resolvedConfig || paginationState.status !== "idle") {
-						return null;
-					}
-
-					paginationState = { ...paginationState, status: "busy" };
-					notify();
-
-					try {
-						const pageSize = options.pagination?.pageSize ?? 25;
-						const result = (await resolvedConfig.convexClient.query(resolvedConfig.api.material, {
-							numItems: pageSize,
-							cursor: paginationState.cursor ?? undefined,
-						})) as PaginatedPage<T>;
-
-						if (instance && result.page.length > 0) {
-							instance.insert(result.page as T[]);
-						}
-
-						paginationState = {
-							status: result.isDone ? "done" : "idle",
-							count: paginationState.count + result.page.length,
-							cursor: result.continueCursor,
-						};
-						notify();
-
-						return result;
-					} catch (err) {
-						paginationState = {
-							...paginationState,
-							status: "error",
-							error: err instanceof Error ? err : new Error(String(err)),
-						};
-						notify();
-						return null;
-					}
-				},
-
-				get status() {
-					return paginationState.status;
-				},
-
-				get canLoadMore() {
-					return paginationState.status === "idle";
-				},
-
-				get count() {
-					return paginationState.count;
-				},
-
-				subscribe(callback: (state: PaginationState) => void) {
-					listeners.add(callback);
-					callback(paginationState);
-					return () => listeners.delete(callback);
-				},
-			},
-		};
-	},
+export const collection = {
+	create: createFn,
 };

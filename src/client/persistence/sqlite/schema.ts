@@ -1,5 +1,10 @@
 import * as Y from "yjs";
-import type { Persistence, PersistenceProvider, KeyValueStore } from "../types.js";
+import type {
+	Persistence,
+	PersistenceProvider,
+	KeyValueStore,
+	MigrationDatabase,
+} from "../types.js";
 
 export interface Executor {
 	execute(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
@@ -54,6 +59,32 @@ class SqliteKeyValueStore implements KeyValueStore {
 
 	async del(key: string): Promise<void> {
 		await this.executor.execute("DELETE FROM kv WHERE key = ?", [key]);
+	}
+}
+
+/**
+ * Adapter that wraps Executor to provide MigrationDatabase interface.
+ */
+class SqliteMigrationDatabase implements MigrationDatabase {
+	constructor(private executor: Executor) {}
+
+	async run(sql: string, params?: unknown[]): Promise<void> {
+		await this.executor.execute(sql, params);
+	}
+
+	async exec(sql: string): Promise<void> {
+		await this.executor.execute(sql);
+	}
+
+	async get<T>(sql: string, params?: unknown[]): Promise<T | undefined> {
+		const result = await this.executor.execute(sql, params);
+		if (result.rows.length === 0) return undefined;
+		return result.rows[0] as T;
+	}
+
+	async all<T>(sql: string, params?: unknown[]): Promise<T[]> {
+		const result = await this.executor.execute(sql, params);
+		return result.rows as T[];
 	}
 }
 
@@ -151,5 +182,6 @@ export function createPersistenceFromExecutor(executor: Executor): Persistence {
 			});
 		},
 		kv: new SqliteKeyValueStore(executor),
+		db: new SqliteMigrationDatabase(executor),
 	};
 }

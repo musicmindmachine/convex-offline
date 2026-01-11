@@ -39,6 +39,17 @@ export interface PersistenceProvider {
 }
 
 /**
+ * SQLite database interface for migrations.
+ * Provides direct SQL access for schema migrations.
+ */
+export interface MigrationDatabase {
+	run(sql: string, params?: unknown[]): Promise<void>;
+	exec(sql: string): Promise<void>;
+	get<T>(sql: string, params?: unknown[]): Promise<T | undefined>;
+	all<T>(sql: string, params?: unknown[]): Promise<T[]>;
+}
+
+/**
  * High-level persistence interface for collections.
  * Create via `persistence.sqlite()`, `persistence.memory()`, or `persistence.custom()`.
  */
@@ -46,6 +57,8 @@ export interface Persistence {
 	createDocPersistence(collection: string, ydoc: Y.Doc): PersistenceProvider;
 	listDocuments(prefix: string): Promise<string[]>;
 	readonly kv: KeyValueStore;
+	/** Direct SQL access for migrations (only available with SQLite persistence) */
+	readonly db?: MigrationDatabase;
 }
 
 export interface KeyValueStore {

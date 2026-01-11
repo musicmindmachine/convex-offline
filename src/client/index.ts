@@ -66,3 +66,30 @@ export {
 	type EncryptionManagerHooks,
 	type EncryptionPreference,
 } from "$/client/persistence/index";
+
+// Migration types and functions
+export type {
+	MigrationErrorCode,
+	MigrationError,
+	RecoveryContext,
+	RecoveryAction,
+	MigrationErrorHandler,
+	MigrationDatabase,
+	MigrationDoc,
+	ClientMigrationContext,
+	ClientMigrationFn,
+	ClientMigrationMap,
+	VersionedCollectionOptions,
+	VersionedCollectionConfig,
+	SchemaMetadata,
+	RunMigrationsOptions,
+	MigrationResult,
+} from "$/client/migration";
+
+export {
+	runMigrations,
+	getStoredSchemaVersion,
+	setStoredSchemaVersion,
+	runAutoMigration,
+	createMigrationError,
+} from "$/client/migration";
