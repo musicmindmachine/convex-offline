@@ -3,7 +3,7 @@ import { query } from "./_generated/server";
 import { components } from "./_generated/api";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
-import { getAuthUserId } from "./auth-utils";
+import { getAuthUserId } from "./authUtils";
 
 export const {
   material, delta, replicate, presence, session,
