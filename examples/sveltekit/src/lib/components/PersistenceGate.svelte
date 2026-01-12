@@ -7,7 +7,7 @@
   import { encryptionStore, type EncryptionState } from "$lib/encryption";
   import EncryptionDialog from "./EncryptionDialog.svelte";
   import { Button } from "$lib/components/ui/button";
-  import { authClient } from "$lib/auth-client";
+  import { getAuthClient } from "$lib/auth-client";
 
   let {
     children,
@@ -65,6 +65,7 @@
       return;
     }
 
+    const authClient = getAuthClient();
     const session = authClient.useSession();
     const unsub = session.subscribe((s) => {
       if (s.isPending) return;

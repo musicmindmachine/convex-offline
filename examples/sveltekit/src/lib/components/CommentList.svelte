@@ -1,10 +1,11 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { useLiveQuery } from "@tanstack/svelte-db";
   import { comments as commentsLazy } from "$collections/useComments";
   import CommentEditor from "./CommentEditor.svelte";
   import { Input } from "$lib/components/ui/input";
   import { Button } from "$lib/components/ui/button";
-  import { authClient } from "$lib/auth-client";
+  import { getAuthClient } from "$lib/auth-client";
 
   interface Props {
     intervalId: string;
@@ -12,7 +13,18 @@
   }
 
   let { intervalId, isPublic = true }: Props = $props();
-  const session = authClient.useSession();
+
+  // Session state - updated from auth client on mount
+  let sessionData = $state<{ user?: { id: string } } | null>(null);
+
+  onMount(() => {
+    const authClient = getAuthClient();
+    const session = authClient.useSession();
+    const unsubscribe = session.subscribe((s) => {
+      sessionData = s.data;
+    });
+    return unsubscribe;
+  });
 
   const commentsCollection = commentsLazy.get();
   const commentsQuery = useLiveQuery(commentsCollection);
@@ -30,7 +42,7 @@
 
     const id = crypto.randomUUID();
     const now = Date.now();
-    const user = $session.data?.user;
+    const user = sessionData?.user;
 
     commentsCollection.insert({
       id,

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { authClient } from "$lib/auth-client";
+  import { getAuthClient } from "$lib/auth-client";
   import * as Dialog from "$lib/components/ui/dialog";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
@@ -17,6 +17,8 @@
     e.preventDefault();
     error = null;
     loading = true;
+
+    const authClient = getAuthClient();
 
     try {
       if (mode === "signup") {

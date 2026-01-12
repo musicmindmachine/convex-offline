@@ -48,6 +48,7 @@
 		const now = Date.now();
 		collection.insert({
 			id,
+			isPublic: true,
 			title: 'New Interval',
 			description: schema.prose.empty(),
 			status: 'backlog',

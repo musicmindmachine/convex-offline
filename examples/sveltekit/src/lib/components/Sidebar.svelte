@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from "$app/state";
+  import { onMount } from "svelte";
   import { useLiveQuery } from "@tanstack/svelte-db";
   import { Plus, Search, SlidersHorizontal, Globe, Lock } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button";
@@ -9,7 +10,7 @@
   import AuthBar from "./AuthBar.svelte";
   import { intervals as intervalsCollection, type Interval } from "$collections/useIntervals";
   import { schema } from "@trestleinc/replicate/client";
-  import { authClient } from "$lib/auth-client";
+  import { getAuthClient } from "$lib/auth-client";
   import { useAuth } from "@mmailaender/convex-better-auth-svelte/svelte";
 
   interface Props {
@@ -22,8 +23,20 @@
 
   const auth = useAuth();
   const isAuthenticated = $derived(auth.isAuthenticated);
-  const session = authClient.useSession();
+
+  // Session state - updated from auth client on mount
+  let sessionData = $state<{ user?: { id: string } } | null>(null);
   const collection = intervalsCollection.get();
+
+  onMount(() => {
+    const authClient = getAuthClient();
+    const session = authClient.useSession();
+    // Subscribe to session changes
+    const unsubscribe = session.subscribe((s) => {
+      sessionData = s.data;
+    });
+    return unsubscribe;
+  });
   const intervalsQuery = useLiveQuery(collection);
 
   let editingId = $state<string | null>(null);
@@ -41,7 +54,7 @@
   function createInterval(isPublic: boolean = true) {
     const id = crypto.randomUUID();
     const now = Date.now();
-    const user = $session.data?.user;
+    const user = sessionData?.user;
     collection.insert({
       id,
       ownerId: user?.id,
@@ -111,7 +124,7 @@
       <Globe class="w-4 h-4" />
       <span>New Public</span>
     </Button>
-    {#if $session.data?.user}
+    {#if sessionData?.user}
       <Button variant="outline" class="w-full justify-start gap-2" onclick={() => createInterval(false)}>
         <Lock class="w-4 h-4" />
         <span>New Private</span>

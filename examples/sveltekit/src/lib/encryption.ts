@@ -5,7 +5,7 @@ import {
   type Persistence,
 } from "@trestleinc/replicate/client";
 import { sqlite, setEncryptedPersistence } from "./sqlite";
-import { authClient } from "./auth-client";
+import { getAuthClient } from "./auth-client";
 
 export type EncryptionState
   = | "checking"
@@ -90,6 +90,7 @@ export const encryptionStore = {
     if (initPromise) return initPromise;
 
     initPromise = (async () => {
+      const authClient = getAuthClient();
       const session = authClient.useSession();
       const sessionData = get(session);
 
