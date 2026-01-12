@@ -25,6 +25,7 @@ import { isDoc, fragmentFromJSON } from "$/client/merge";
 import { createDocumentManager, serializeDocument, extractAllDocuments } from "$/client/documents";
 import { createDeleteDelta, applyDeleteMarkerToDoc } from "$/client/deltas";
 import * as prose from "$/client/prose";
+import { getLogger } from "$/client/logger";
 import {
 	initContext,
 	getContext,
@@ -54,6 +55,8 @@ enum YjsOrigin {
 }
 
 const noop = (): void => undefined;
+
+const logger = getLogger(["replicate", "collection"]);
 
 import type { ProseFields } from "$/shared/types";
 
@@ -901,6 +904,9 @@ export function convexCollectionOptions<
 							if (newSeq !== undefined) {
 								persistence.kv.set(`cursor:${collection}`, newSeq);
 
+								// Mark presence for synced documents - fire and forget but log errors
+								// Using void to explicitly acknowledge this is intentionally not awaited
+								// as presence marking is non-critical background work
 								const markPromises = Array.from(syncedDocuments).map(document => {
 									const vector = docManager.encodeStateVector(document);
 									return convexClient
@@ -911,9 +917,15 @@ export function convexCollectionOptions<
 											seq: newSeq,
 											vector: vector.buffer as ArrayBuffer,
 										})
-										.catch(noop);
+										.catch((error: Error) => {
+											logger.warn("Failed to mark presence", {
+												document,
+												collection,
+												error: error.message,
+											});
+										});
 								});
-								Promise.all(markPromises);
+								void Promise.all(markPromises);
 							}
 						};
 
@@ -927,7 +939,13 @@ export function convexCollectionOptions<
 
 						// Note: markReady() was already called above (local-first)
 						// Subscription is background replication, not blocking
-					} catch {
+					} catch (error) {
+						// Log error before marking ready to aid debugging sync failures
+						logger.error("Sync initialization failed", {
+							collection,
+							error: error instanceof Error ? error.message : String(error),
+							stack: error instanceof Error ? error.stack : undefined,
+						});
 						markReady();
 					}
 				})();

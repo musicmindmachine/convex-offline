@@ -69,21 +69,49 @@ export function observeFragment(config: ProseObserverConfig): () => void {
 
 	const syncFn = createSyncFn(document, ydoc, ymap, collectionRef);
 
-	runWithRuntime(runtime, actorManager.register(document, ydoc, syncFn, debounceMs));
+	// Track registration state for cleanup safety
+	let isRegistered = false;
+	let registrationError: Error | null = null;
+
+	// Await actor registration - use void to explicitly acknowledge floating promise
+	// The registration must complete before local changes can be processed
+	void runWithRuntime(runtime, actorManager.register(document, ydoc, syncFn, debounceMs))
+		.then(() => {
+			isRegistered = true;
+		})
+		.catch((error: Error) => {
+			registrationError = error;
+			logger.error("Failed to register actor for fragment", {
+				collection,
+				document,
+				field,
+				error: error.message,
+			});
+		});
 
 	const observerHandler = (_events: Y.YEvent<any>[], transaction: Y.Transaction) => {
 		if (transaction.origin === SERVER_ORIGIN) {
 			return;
 		}
 
-		runWithRuntime(runtime, actorManager.onLocalChange(document));
+		// Only send local changes if registration succeeded
+		if (registrationError) {
+			logger.warn("Skipping local change - actor registration failed", { collection, document });
+			return;
+		}
+
+		// Fire-and-forget for local changes is acceptable - they are queued in the actor
+		void runWithRuntime(runtime, actorManager.onLocalChange(document));
 	};
 
 	fragment.observeDeep(observerHandler);
 
 	const cleanup = () => {
 		fragment.unobserveDeep(observerHandler);
-		runWithRuntime(runtime, actorManager.unregister(document));
+		// Only unregister if registration was attempted
+		if (isRegistered || !registrationError) {
+			void runWithRuntime(runtime, actorManager.unregister(document));
+		}
 		ctx.fragmentObservers.delete(document);
 		logger.debug("Fragment observer cleaned up", { collection, document, field });
 	};
@@ -126,27 +154,51 @@ export function subscribePending(
 	if (!ctx.actorManager || !ctx.runtime) return noop;
 
 	let fiber: Fiber.RuntimeFiber<void, never> | null = null;
+	let isCleanedUp = false;
 
-	const setupEffect = Effect.gen(function* () {
-		const actor = yield* ctx.actorManager!.get(document);
-		if (!actor) return;
+	const setupSubscription = async (): Promise<void> => {
+		try {
+			// Use runWithRuntime (async) to properly await actor readiness
+			await runWithRuntime(
+				ctx.runtime!,
+				Effect.gen(function* () {
+					const actor = yield* ctx.actorManager!.get(document);
+					if (!actor || isCleanedUp) return;
 
-		const stream = actor.pending.changes;
+					const stream = actor.pending.changes;
 
-		fiber = yield* Effect.fork(
-			Stream.runForEach(stream, (pending: boolean) => Effect.sync(() => callback(pending))),
-		);
-	});
+					fiber = yield* Effect.fork(
+						Stream.runForEach(stream, (pending: boolean) =>
+							Effect.sync(() => {
+								// Don't call callback if already cleaned up
+								if (!isCleanedUp) {
+									callback(pending);
+								}
+							}),
+						),
+					);
+				}),
+			);
+		} catch (error) {
+			logger.warn("Failed to subscribe to pending state", {
+				collection,
+				document,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	};
 
-	try {
-		Effect.runSync(Effect.provide(setupEffect, ctx.runtime.runtime));
-	} catch {
-		return noop;
-	}
+	// Start subscription asynchronously
+	void setupSubscription();
 
 	return () => {
+		isCleanedUp = true;
 		if (fiber) {
-			Effect.runPromise(Fiber.interrupt(fiber));
+			// Properly interrupt the fiber and handle the promise
+			void Effect.runPromise(Fiber.interrupt(fiber)).catch(() => {
+				// Ignore interrupt errors - fiber may already be done
+			});
+			fiber = null;
 		}
 	};
 }

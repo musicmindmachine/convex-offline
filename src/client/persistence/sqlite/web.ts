@@ -29,6 +29,7 @@ class WorkerExecutor implements Executor {
 	private worker: Worker;
 	private nextId = 0;
 	private pending = new Map<number, PendingRequest>();
+	private terminated = false;
 
 	constructor(worker: Worker) {
 		this.worker = worker;
@@ -44,10 +45,34 @@ class WorkerExecutor implements Executor {
 				handler.reject(new Error(error ?? "Unknown worker error"));
 			}
 		};
+
+		// Handle worker errors - reject all pending requests
+		this.worker.onerror = (event: ErrorEvent) => {
+			const error = new Error(`Worker error: ${event.message || "Unknown error"}`);
+			this.rejectAllPending(error);
+		};
+
+		// Handle worker message errors
+		this.worker.onmessageerror = () => {
+			const error = new Error("Worker message deserialization failed");
+			this.rejectAllPending(error);
+		};
+	}
+
+	private rejectAllPending(error: Error): void {
+		this.terminated = true;
+		for (const [, handler] of this.pending) {
+			handler.reject(error);
+		}
+		this.pending.clear();
 	}
 
 	private send(type: number, payload: Partial<Request> = {}): Promise<Record<string, unknown>[]> {
 		return new Promise((resolve, reject) => {
+			if (this.terminated) {
+				reject(new Error("Worker has been terminated"));
+				return;
+			}
 			const id = this.nextId++;
 			this.pending.set(id, { resolve, reject });
 			this.worker.postMessage({ id, type, ...payload } satisfies Request);

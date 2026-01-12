@@ -83,6 +83,36 @@ export function initContext(config: InitContextConfig): CollectionContext {
 }
 
 export function deleteContext(collection: string): void {
+	const ctx = contexts.get(collection);
+	if (ctx) {
+		// Clean up fragment observers before deleting context
+		for (const [, cleanupFn] of ctx.fragmentObservers) {
+			try {
+				cleanupFn();
+			} catch {
+				// Ignore cleanup errors during context deletion
+			}
+		}
+		ctx.fragmentObservers.clear();
+
+		// Call the cleanup function if present
+		if (ctx.cleanup) {
+			try {
+				ctx.cleanup();
+			} catch {
+				// Ignore cleanup errors during context deletion
+			}
+		}
+
+		// Clean up runtime resources
+		if (ctx.runtime) {
+			try {
+				ctx.runtime.cleanup();
+			} catch {
+				// Ignore cleanup errors during context deletion
+			}
+		}
+	}
 	contexts.delete(collection);
 }
 
