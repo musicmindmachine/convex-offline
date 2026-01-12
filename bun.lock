@@ -36,7 +36,7 @@
       "peerDependencies": {
         "@op-engineering/op-sqlite": "^9.0.0",
         "@tanstack/db": "^0.5.15",
-        "convex": "^1.31.0",
+        "convex": "1.31.2",
         "lib0": "^0.2.0",
         "wa-sqlite": "^1.0.0",
         "y-protocols": "^1.0.7",
