@@ -6,15 +6,18 @@
 	import { dev, browser } from "$app/environment";
 	import { configure, getConsoleSink } from "@logtape/logtape";
 	import { createSvelteAuthClient } from "@mmailaender/convex-better-auth-svelte/svelte";
-	import { authClient } from "$lib/auth-client";
-	import { convexClient } from "$lib/convex";
+	import { getAuthClient } from "$lib/auth-client";
+	import { getConvexClient } from "$lib/convex";
 	import PersistenceGate from "$lib/components/PersistenceGate.svelte";
 
 	let { children } = $props();
 
-	createSvelteAuthClient({ authClient, convexClient });
-
 	onMount(async () => {
+		// Initialize auth client in browser only
+		const authClient = getAuthClient();
+		const convexClient = getConvexClient();
+		createSvelteAuthClient({ authClient, convexClient });
+
 		await configure({
 			sinks: { console: getConsoleSink() },
 			loggers: [

@@ -46,12 +46,21 @@ self.addEventListener('activate', (event) => {
 	event.waitUntil(deleteOldCaches());
 });
 
+// Routes that should never be cached (auth, API endpoints)
+const UNCACHEABLE_PATHS = ['/api/'];
+
 self.addEventListener('fetch', (event) => {
 	// ignore POST requests etc
 	if (event.request.method !== 'GET') return;
 
+	const url = new URL(event.request.url);
+
+	// Never cache auth/API routes - these must always hit the network
+	if (UNCACHEABLE_PATHS.some((path) => url.pathname.startsWith(path))) {
+		return;
+	}
+
 	async function respond() {
-		const url = new URL(event.request.url);
 		const cache = await caches.open(CACHE);
 
 		// `build`/`files` can always be served from the cache
