@@ -1,9 +1,9 @@
 import {
-  type RowData,
-  type TableOptions,
-  type TableOptionsResolved,
-  type TableState,
-  createTable,
+	type RowData,
+	type TableOptions,
+	type TableOptionsResolved,
+	type TableState,
+	createTable,
 } from "@tanstack/table-core";
 
 /**
@@ -33,52 +33,54 @@ import {
  * ```
  */
 export function createSvelteTable<TData extends RowData>(options: TableOptions<TData>) {
-  const resolvedOptions: TableOptionsResolved<TData> = mergeObjects(
-    {
-      state: {},
-      onStateChange() { /* noop - overridden in updateOptions */ },
-      renderFallbackValue: null,
-      mergeOptions: (
-        defaultOptions: TableOptions<TData>,
-        options: Partial<TableOptions<TData>>
-      ) => {
-        return mergeObjects(defaultOptions, options);
-      },
-    },
-    options
-  );
+	const resolvedOptions: TableOptionsResolved<TData> = mergeObjects(
+		{
+			state: {},
+			onStateChange() {
+				/* noop - overridden in updateOptions */
+			},
+			renderFallbackValue: null,
+			mergeOptions: (
+				defaultOptions: TableOptions<TData>,
+				options: Partial<TableOptions<TData>>,
+			) => {
+				return mergeObjects(defaultOptions, options);
+			},
+		},
+		options,
+	);
 
-  const table = createTable(resolvedOptions);
-  let state = $state<Partial<TableState>>(table.initialState);
+	const table = createTable(resolvedOptions);
+	let state = $state<Partial<TableState>>(table.initialState);
 
-  function updateOptions() {
-    table.setOptions((prev) => {
-      return mergeObjects(prev, options, {
-        state: mergeObjects(state, options.state || {}),
+	function updateOptions() {
+		table.setOptions(prev => {
+			return mergeObjects(prev, options, {
+				state: mergeObjects(state, options.state || {}),
 
-        onStateChange: (updater: any) => {
-          if (updater instanceof Function) state = updater(state);
-          else state = mergeObjects(state, updater);
+				onStateChange: (updater: any) => {
+					if (updater instanceof Function) state = updater(state);
+					else state = mergeObjects(state, updater);
 
-          options.onStateChange?.(updater);
-        },
-      });
-    });
-  }
+					options.onStateChange?.(updater);
+				},
+			});
+		});
+	}
 
-  updateOptions();
+	updateOptions();
 
-  $effect.pre(() => {
-    updateOptions();
-  });
+	$effect.pre(() => {
+		updateOptions();
+	});
 
-  return table;
+	return table;
 }
 
 type MaybeThunk<T extends object> = T | (() => T | null | undefined);
 type Intersection<T extends readonly unknown[]> = (T extends [infer H, ...infer R]
-  ? H & Intersection<R>
-  : unknown) & {};
+	? H & Intersection<R>
+	: unknown) & {};
 
 /**
  * Lazily merges several objects (or thunks) while preserving
@@ -88,53 +90,53 @@ type Intersection<T extends readonly unknown[]> = (T extends [infer H, ...infer 
  */
 
 export function mergeObjects<Sources extends readonly MaybeThunk<any>[]>(
-  ...sources: Sources
+	...sources: Sources
 ): Intersection<{ [K in keyof Sources]: Sources[K] }> {
-  const resolve = <T extends object>(src: MaybeThunk<T>): T | undefined =>
-    typeof src === "function" ? (src() ?? undefined) : src;
+	const resolve = <T extends object>(src: MaybeThunk<T>): T | undefined =>
+		typeof src === "function" ? (src() ?? undefined) : src;
 
-  const findSourceWithKey = (key: PropertyKey) => {
-    for (let i = sources.length - 1; i >= 0; i--) {
-      const obj = resolve(sources[i]);
-      if (obj && key in obj) return obj;
-    }
-    return undefined;
-  };
+	const findSourceWithKey = (key: PropertyKey) => {
+		for (let i = sources.length - 1; i >= 0; i--) {
+			const obj = resolve(sources[i]);
+			if (obj && key in obj) return obj;
+		}
+		return undefined;
+	};
 
-  return new Proxy(Object.create(null), {
-    get(_, key) {
-      const src = findSourceWithKey(key);
+	return new Proxy(Object.create(null), {
+		get(_, key) {
+			const src = findSourceWithKey(key);
 
-      return src?.[key as never];
-    },
+			return src?.[key as never];
+		},
 
-    has(_, key) {
-      return !!findSourceWithKey(key);
-    },
+		has(_, key) {
+			return !!findSourceWithKey(key);
+		},
 
-    ownKeys(): (string | symbol)[] {
-      const all = new Set<string | symbol>();
-      for (const s of sources) {
-        const obj = resolve(s);
-        if (obj) {
-          for (const k of Reflect.ownKeys(obj)) {
-            all.add(k);
-          }
-        }
-      }
-      return [...all];
-    },
+		ownKeys(): (string | symbol)[] {
+			const all = new Set<string | symbol>();
+			for (const s of sources) {
+				const obj = resolve(s);
+				if (obj) {
+					for (const k of Reflect.ownKeys(obj)) {
+						all.add(k);
+					}
+				}
+			}
+			return [...all];
+		},
 
-    getOwnPropertyDescriptor(_, key) {
-      const src = findSourceWithKey(key);
-      if (!src) return undefined;
-      return {
-        configurable: true,
-        enumerable: true,
+		getOwnPropertyDescriptor(_, key) {
+			const src = findSourceWithKey(key);
+			if (!src) return undefined;
+			return {
+				configurable: true,
+				enumerable: true,
 
-        value: (src)[key],
-        writable: true,
-      };
-    },
-  }) as Intersection<{ [K in keyof Sources]: Sources[K] }>;
+				value: src[key],
+				writable: true,
+			};
+		},
+	}) as Intersection<{ [K in keyof Sources]: Sources[K] }>;
 }

@@ -28,7 +28,7 @@ Create well-formatted commit: $ARGUMENTS
 4. Performs a `git diff` to understand what changes are being committed
 5. Analyzes the diff to determine if multiple distinct logical changes are present
 6. If multiple distinct changes are detected, suggests breaking the commit into multiple smaller commits
-7. For each commit (or the single commit if not split), creates a commit message using  conventional commit format
+7. For each commit (or the single commit if not split), creates a commit message using conventional commit format
 
 ## Best Practices for Commits
 
@@ -60,6 +60,7 @@ When analyzing the diff, consider splitting commits based on these criteria:
 ## Examples
 
 Good commit messages:
+
 - Feat: add user authentication system
 - Fix: resolve memory leak in rendering process
 - Docs: update API documentation with new endpoints
@@ -78,6 +79,7 @@ Good commit messages:
 - Feat: improve form accessibility for screen readers
 
 Example of splitting commits:
+
 - First commit: feat: add new solc version type definitions
 - Second commit: docs: update documentation for new solc versions
 - Third commit: chore: update package.json dependencies

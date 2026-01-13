@@ -7,7 +7,7 @@
 // Ensures that the `$service-worker` import has proper type definitions
 /// <reference types="@sveltejs/kit" />
 
-import { build, files, version } from '$service-worker';
+import { build, files, version } from "$service-worker";
 
 // This gives `self` the correct types
 const self = globalThis.self as unknown as ServiceWorkerGlobalScope;
@@ -17,13 +17,13 @@ const CACHE = `cache-${version}`;
 
 const ASSETS = [
 	...build, // the app itself
-	...files // everything in `static`
+	...files, // everything in `static`
 ];
 
 // App shell - the root page that handles client-side routing
-const APP_SHELL = '/';
+const APP_SHELL = "/";
 
-self.addEventListener('install', (event) => {
+self.addEventListener("install", event => {
 	// Create a new cache and add all files to it
 	async function addFilesToCache() {
 		const cache = await caches.open(CACHE);
@@ -35,7 +35,7 @@ self.addEventListener('install', (event) => {
 	event.waitUntil(addFilesToCache());
 });
 
-self.addEventListener('activate', (event) => {
+self.addEventListener("activate", event => {
 	// Remove previous cached data from disk
 	async function deleteOldCaches() {
 		for (const key of await caches.keys()) {
@@ -47,16 +47,16 @@ self.addEventListener('activate', (event) => {
 });
 
 // Routes that should never be cached (auth, API endpoints)
-const UNCACHEABLE_PATHS = ['/api/'];
+const UNCACHEABLE_PATHS = ["/api/"];
 
-self.addEventListener('fetch', (event) => {
+self.addEventListener("fetch", event => {
 	// ignore POST requests etc
-	if (event.request.method !== 'GET') return;
+	if (event.request.method !== "GET") return;
 
 	const url = new URL(event.request.url);
 
 	// Never cache auth/API routes - these must always hit the network
-	if (UNCACHEABLE_PATHS.some((path) => url.pathname.startsWith(path))) {
+	if (UNCACHEABLE_PATHS.some(path => url.pathname.startsWith(path))) {
 		return;
 	}
 
@@ -80,7 +80,7 @@ self.addEventListener('fetch', (event) => {
 			// if we're offline, fetch can return a value that is not a Response
 			// instead of throwing - and we can't pass this non-Response to respondWith
 			if (!(response instanceof Response)) {
-				throw new Error('invalid response from fetch');
+				throw new Error("invalid response from fetch");
 			}
 
 			if (response.status === 200) {
@@ -97,7 +97,7 @@ self.addEventListener('fetch', (event) => {
 			}
 
 			// For navigation requests, return app shell so client-side router handles it
-			if (event.request.mode === 'navigate') {
+			if (event.request.mode === "navigate") {
 				const shell = await cache.match(APP_SHELL);
 				if (shell) {
 					return shell;

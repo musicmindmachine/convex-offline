@@ -25,7 +25,7 @@
     "convex": "^1.31.2"
   },
   "scripts": {
-    "build": "oxfmt --write src && oxlint --fix && tsdown",
+    "build": "oxfmt --write . && oxlint --fix && tsdown",
     "dev": "tsdown --watch",
     "clean": "rm -rf dist",
     "test": "vitest run",
