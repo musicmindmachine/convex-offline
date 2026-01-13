@@ -1,121 +1,23 @@
 {
-  "name": "@trestleinc/replicate",
-  "version": "1.2.0-preview.3",
-  "description": "Offline-first data replication with Yjs CRDTs and Convex",
-  "repository": "github:trestleinc/replicate",
-  "homepage": "https://github.com/trestleinc/replicate#readme",
-  "bugs": {
-    "url": "https://github.com/trestleinc/replicate/issues"
-  },
-  "license": "Apache-2.0",
-  "keywords": [
-    "convex",
-    "replicate",
-    "crdt",
-    "yjs",
-    "offline-first",
-    "tanstack"
-  ],
-  "type": "module",
-  "private": false,
-  "resolutions": {
-    "convex": "^1.31.2"
-  },
-  "overrides": {
-    "convex": "^1.31.2"
-  },
-  "scripts": {
-    "build": "oxfmt --write . && oxlint --fix && tsdown",
-    "dev": "tsdown --watch",
-    "clean": "rm -rf dist",
-    "test": "vitest run",
-    "test:watch": "vitest"
-  },
-  "exports": {
-    ".": {
-      "types": "./dist/shared/index.d.ts",
-      "import": {
-        "default": "./dist/shared/index.js"
-      }
-    },
-    "./package.json": "./package.json",
-    "./client": {
-      "types": "./dist/client/index.d.ts",
-      "import": {
-        "@convex-dev/component-source": "./src/client/index.ts",
-        "default": "./dist/client/index.js"
-      }
-    },
-    "./server": {
-      "types": "./dist/server/index.d.ts",
-      "import": {
-        "default": "./dist/server/index.js"
-      }
-    },
-    "./convex.config": {
-      "types": "./dist/component/convex.config.d.ts",
-      "import": {
-        "@convex-dev/component-source": "./src/component/convex.config.ts",
-        "default": "./dist/component/convex.config.js"
-      }
-    },
-    "./worker": {
-      "import": "./dist/client/persistence/sqlite/worker.js"
-    }
-  },
-  "files": [
-    "dist",
-    "src",
-    "README.md",
-    "LICENSE"
-  ],
-  "dependencies": {
-    "@logtape/logtape": "1.3.5"
-  },
-  "peerDependencies": {
-    "@tanstack/db": "^0.5.15",
-    "convex": "^1.31.0",
-    "lib0": "^0.2.0",
-    "y-protocols": "^1.0.7",
-    "yjs": "^13.6.0",
-    "wa-sqlite": "^1.0.0",
-    "@op-engineering/op-sqlite": "^9.0.0"
-  },
-  "peerDependenciesMeta": {
-    "wa-sqlite": {
-      "optional": true
-    },
-    "@op-engineering/op-sqlite": {
-      "optional": true
-    }
-  },
-  "devDependencies": {
-    "@edge-runtime/vm": "5.0.0",
-    "@microsoft/api-extractor": "7.55.2",
-    "@tanstack/db": "0.5.15",
-    "@testing-library/jest-dom": "6.9.1",
-    "@trestleinc/convex-oxlint": "0.1.0",
-    "@types/node": "25.0.3",
-    "@types/sql.js": "1.4.9",
-    "@typescript/native-preview": "7.0.0-dev.20260103.1",
-    "@vitest/browser": "latest",
-    "convex": "1.31.3",
-    "convex-test": "0.0.41",
-    "dotenv": "latest",
-    "fake-indexeddb": "6.2.5",
-    "lib0": "0.2.116",
-    "oxfmt": "0.21.0",
-    "oxlint": "1.36.0",
-    "playwright": "latest",
-    "publint": "0.3.16",
-    "tsdown": "0.18.2",
-    "typescript": "5.9.3",
-    "vitest": "4.0.16"
-  },
-  "main": "./dist/shared/index.js",
-  "types": "./dist/shared/index.d.ts",
-  "module": "./dist/shared/index.js",
-  "publishConfig": {
-    "access": "public"
-  }
+	"name": "replicate-monorepo",
+	"private": true,
+	"workspaces": [
+		"packages/*",
+		"examples/*"
+	],
+	"scripts": {
+		"build": "bun run --filter @trestleinc/replicate build",
+		"dev": "bun run --filter @trestleinc/replicate dev",
+		"test": "bun run --filter @trestleinc/replicate test",
+		"clean": "bun run --filter @trestleinc/replicate clean",
+		"dev:tanstack": "bun run --filter interval dev",
+		"dev:expo": "bun run --filter interval-expo start",
+		"dev:sveltekit": "bun run --filter svinterval dev"
+	},
+	"devDependencies": {
+		"typescript": "5.9.3"
+	},
+	"resolutions": {
+		"convex": "^1.31.4"
+	}
 }

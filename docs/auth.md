@@ -14,6 +14,7 @@ encryption = data protection (client-side, works offline)
 ```
 
 **Key insight**: Authentication (who you are) is separate from encryption (protecting data). This enables:
+
 - Any auth provider (Clerk, WorkOS, Google OAuth, Better Auth)
 - Passwordless encryption via biometrics (Touch ID / Face ID)
 - Offline access to encrypted data
@@ -24,13 +25,14 @@ encryption = data protection (client-side, works offline)
 
 Replicate uses consistent naming patterns across all APIs:
 
-| Pattern | Example | Usage |
-|---------|---------|-------|
-| `noun.noun` | `persistence.web.sqlite` | Namespaces |
-| `noun.verb()` | `doc.presence.join()` | Actions |
-| `noun.noun()` | `identity.color.generate()` | Utilities |
+| Pattern       | Example                     | Usage      |
+| ------------- | --------------------------- | ---------- |
+| `noun.noun`   | `persistence.web.sqlite`    | Namespaces |
+| `noun.verb()` | `doc.presence.join()`       | Actions    |
+| `noun.noun()` | `identity.color.generate()` | Utilities  |
 
 **Naming conventions:**
+
 - Tables: singular (`session`, `device`, `delta`)
 - Server exports: singular (`session`, `delta`, `presence`)
 - Hooks: short nouns (`change`, `passphrase`, `recovery`)
@@ -58,6 +60,7 @@ identity.name.anonymous(seed)    // "Swift Fox", "Calm Bear", etc.
 ```
 
 **Usage in collection:**
+
 ```typescript
 export const tasks = collection.create(schema, "tasks", {
   persistence: () => persistence.web.sqlite({ name: "tasks" }),
@@ -107,6 +110,7 @@ doc.awareness;  // Yjs Awareness instance
 ```
 
 **Collection-level sessions:**
+
 ```typescript
 coll.session.get();                // All active sessions
 coll.session.get("task-123");      // Sessions for specific doc
@@ -130,13 +134,13 @@ export const {
 
 ### API Matrix
 
-| Export | Type | Auth | Purpose |
-|--------|------|------|---------|
-| `material` | query | `view` | SSR hydration |
-| `delta` | query | `view` | Real-time sync stream |
-| `session` | query | `view` | Who's online |
-| `presence` | mutation | `view` | Join/leave/heartbeat |
-| `replicate` | mutation | `evalWrite` / `evalRemove` | Data sync |
+| Export      | Type     | Auth                       | Purpose               |
+| ----------- | -------- | -------------------------- | --------------------- |
+| `material`  | query    | `view`                     | SSR hydration         |
+| `delta`     | query    | `view`                     | Real-time sync stream |
+| `session`   | query    | `view`                     | Who's online          |
+| `presence`  | mutation | `view`                     | Join/leave/heartbeat  |
+| `replicate` | mutation | `evalWrite` / `evalRemove` | Data sync             |
 
 ---
 
@@ -177,7 +181,7 @@ collection.create<Task>(components.replicate, "tasks", {
   view: async (ctx, q) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthorized");
-    
+
     return q
       .withIndex("by_owner", q => q.eq("ownerId", identity.subject))
       .order("desc");
@@ -186,6 +190,7 @@ collection.create<Task>(components.replicate, "tasks", {
 ```
 
 If a user can't see a document via `view`, they also can't:
+
 - Fetch it via `material`
 - Sync it via `delta`
 - See who's editing via `session`
@@ -196,18 +201,18 @@ If a user can't see a document via `view`, they also can't:
 ```typescript
 collection.create<Task>(components.replicate, "tasks", {
   view: async (ctx, q) => { /* read gate */ },
-  
+
   hooks: {
     // Authorization (throw to deny)
     evalWrite: async (ctx, doc) => { /* validate writes */ },
     evalRemove: async (ctx, docId) => { /* validate deletes */ },
     evalSession: async (ctx, client) => { /* validate presence */ },
-    
+
     // Lifecycle (run after operation)
     onInsert: async (ctx, doc) => { /* after insert */ },
     onUpdate: async (ctx, doc) => { /* after update */ },
     onRemove: async (ctx, docId) => { /* after delete */ },
-    
+
     // Transform (modify query results)
     transform: async (docs) => docs.filter(d => d.isPublic),
   },
@@ -217,17 +222,18 @@ collection.create<Task>(components.replicate, "tasks", {
 ### Authorization Patterns
 
 **User-Owned Data:**
+
 ```typescript
 collection.create<Task>(components.replicate, "tasks", {
   view: async (ctx, q) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthorized");
-    
+
     return q
       .withIndex("by_owner", q => q.eq("ownerId", identity.subject))
       .order("desc");
   },
-  
+
   hooks: {
     evalWrite: async (ctx, doc) => {
       const identity = await ctx.auth.getUserIdentity();
@@ -240,6 +246,7 @@ collection.create<Task>(components.replicate, "tasks", {
 ```
 
 **Multi-Tenant:**
+
 ```typescript
 collection.create<Project>(components.replicate, "projects", {
   view: async (ctx, q) => {
@@ -247,7 +254,7 @@ collection.create<Project>(components.replicate, "projects", {
     if (!identity?.org_id) {
       throw new Error("Unauthorized: must belong to organization");
     }
-    
+
     return q
       .withIndex("by_tenant", q => q.eq("tenantId", identity.org_id))
       .order("desc");
@@ -261,11 +268,11 @@ collection.create<Project>(components.replicate, "projects", {
 
 ### Modes
 
-| Mode | Local Storage | Server Storage | Use Case |
-|------|---------------|----------------|----------|
-| **None** | Plaintext | Plaintext + Convex encryption | Standard apps |
-| **Local** | Encrypted | Plaintext + Convex encryption | Device protection |
-| **E2E** | Encrypted | Encrypted blobs | Maximum privacy |
+| Mode      | Local Storage | Server Storage                | Use Case          |
+| --------- | ------------- | ----------------------------- | ----------------- |
+| **None**  | Plaintext     | Plaintext + Convex encryption | Standard apps     |
+| **Local** | Encrypted     | Plaintext + Convex encryption | Device protection |
+| **E2E**   | Encrypted     | Encrypted blobs               | Maximum privacy   |
 
 ### Low-Level API
 
@@ -276,7 +283,7 @@ const encryption = await persistence.web.encryption({
   storage: await persistence.web.sqlite.once({ name: "app" }),
   user: userId,
   mode: "local",
-  
+
   unlock: {
     webauthn: true,
     passphrase: {
@@ -300,7 +307,7 @@ const encryption = await persistence.web.encryption.manager({
   storage: await persistence.web.sqlite.once({ name: "app" }),
   user: userId,
   preference: "webauthn",
-  
+
   hooks: {
     change: (state) => updateUI(state),
     passphrase: () => showPassphraseModal(),
@@ -338,7 +345,7 @@ const encryption = await persistence.native.encryption.manager({
   storage: await persistence.native.sqlite({ name: "app" }),
   user: userId,
   preference: "biometric",
-  
+
   hooks: {
     change: (state) => {},
     passphrase: () => {},
@@ -383,6 +390,7 @@ grant: {
 ```
 
 **Field naming conventions:**
+
 - `client` - unique browser/device ID (UUID per tab)
 - `user` - authenticated user ID (shared across devices)
 - `seen` - last activity timestamp
@@ -408,6 +416,7 @@ Touch ID / Face ID / Windows Hello
 ```
 
 **Browser Support:**
+
 - Chrome 132+, Edge 132+
 - Safari macOS 15+ / iOS 18+
 - Firefox 135+
@@ -417,13 +426,13 @@ Touch ID / Face ID / Windows Hello
 ```
 LEVEL 1: Device Keys (per device)
   Biometric --> WebAuthn PRF --> Device Key
-  
+
 LEVEL 2: User Master Key (per user)
   UMK (random 256-bit)
     |-- Wrapped for iPhone
     |-- Wrapped for MacBook
     |-- Wrapped for Android
-  
+
 LEVEL 3: Document Keys (for sharing)
   Doc Key (random 256-bit)
     |-- Wrapped for Alice's UMK
@@ -455,7 +464,7 @@ import { authClient } from "./auth";
 export function getUser() {
   const session = authClient.getSession();
   if (!session?.user) return undefined;
-  
+
   return identity.from({
     id: session.user.id,
     name: session.user.name,
@@ -470,12 +479,12 @@ import { getUser } from "./identity";
 export async function createEncryption() {
   const user = getUser();
   if (!user) throw new Error("Not authenticated");
-  
+
   return persistence.web.encryption.manager({
     storage: await persistence.web.sqlite.once({ name: "app" }),
     user: user.id,
     preference: "webauthn",
-    
+
     hooks: {
       change: (state) => encryptionStore.set({ state }),
       passphrase: () => showPassphraseModal(),
@@ -495,7 +504,7 @@ export const tasks = collection.create(schema, "tasks", {
     const { persistence } = encryption.get();
     return persistence;
   },
-  
+
   config: () => ({
     convexClient,
     api: api.tasks,
@@ -510,7 +519,7 @@ function TaskEditor({ taskId }: { taskId: string }) {
   const doc = coll.doc(taskId);
   const [remote, setRemote] = useState([]);
   const [binding, setBinding] = useState(null);
-  
+
   useEffect(() => {
     doc.presence.join();
     const unsub = doc.presence.subscribe(({ remote }) => setRemote(remote));
@@ -519,7 +528,7 @@ function TaskEditor({ taskId }: { taskId: string }) {
       doc.presence.leave();
     };
   }, [taskId]);
-  
+
   useEffect(() => {
     let b = null;
     doc.prose("description").then((binding) => {
@@ -528,7 +537,7 @@ function TaskEditor({ taskId }: { taskId: string }) {
     });
     return () => b?.destroy();
   }, [taskId]);
-  
+
   return (
     <div>
       <div className="flex gap-2">
@@ -536,7 +545,7 @@ function TaskEditor({ taskId }: { taskId: string }) {
           <Avatar key={u.client} src={u.avatar} name={u.name} color={u.color} />
         ))}
       </div>
-      
+
       {binding && (
         <TipTapEditor fragment={binding.fragment} provider={binding.provider} />
       )}
@@ -549,22 +558,22 @@ function TaskEditor({ taskId }: { taskId: string }) {
 
 ## Security Summary
 
-| Property | Local Mode | E2E Mode |
-|----------|------------|----------|
-| Local data encrypted | Yes | Yes |
-| Offline access | Yes | Yes |
-| Multi-user isolation | Yes | Yes |
-| Server can read data | Yes | **No** |
-| Server-side queries | Yes | **No** |
-| Passwordless | Yes | Yes |
-| Multi-device | Yes | Yes |
+| Property             | Local Mode | E2E Mode |
+| -------------------- | ---------- | -------- |
+| Local data encrypted | Yes        | Yes      |
+| Offline access       | Yes        | Yes      |
+| Multi-user isolation | Yes        | Yes      |
+| Server can read data | Yes        | **No**   |
+| Server-side queries  | Yes        | **No**   |
+| Passwordless         | Yes        | Yes      |
+| Multi-device         | Yes        | Yes      |
 
-| Concern | Handled By | Works Offline? |
-|---------|------------|----------------|
-| Who are you? | Auth Provider | No |
-| What can you see? | `view` function | No |
-| What can you edit? | `evalWrite` hook | No |
-| Can you decrypt? | Biometrics / Passphrase | **Yes** |
+| Concern            | Handled By              | Works Offline? |
+| ------------------ | ----------------------- | -------------- |
+| Who are you?       | Auth Provider           | No             |
+| What can you see?  | `view` function         | No             |
+| What can you edit? | `evalWrite` hook        | No             |
+| Can you decrypt?   | Biometrics / Passphrase | **Yes**        |
 
 ---
 
@@ -573,12 +582,14 @@ function TaskEditor({ taskId }: { taskId: string }) {
 Replicate uses a pre-authenticated ConvexClient:
 
 **Better Auth (SvelteKit):**
+
 ```typescript
 import { createSvelteAuthClient } from "@mmailaender/convex-better-auth-svelte/svelte";
 createSvelteAuthClient({ authClient, convexClient });
 ```
 
 **Clerk (React):**
+
 ```typescript
 <ClerkProvider>
   <ConvexProviderWithClerk client={convexClient} useAuth={useAuth}>
@@ -588,6 +599,7 @@ createSvelteAuthClient({ authClient, convexClient });
 ```
 
 **Custom:**
+
 ```typescript
 convexClient.setAuth(async ({ forceRefreshToken }) => {
   const token = await authProvider.getToken({ skipCache: forceRefreshToken });

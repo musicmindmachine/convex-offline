@@ -456,12 +456,12 @@ interface RecoveryContext {
 
 Available recovery actions:
 
-| Action | Effect |
-|--------|--------|
-| `{ action: "reset" }` | Wipe local data, resync from server |
-| `{ action: "keep-old-schema" }` | Continue with old schema (limited functionality) |
-| `{ action: "retry" }` | Retry migration with exponential backoff |
-| `{ action: "custom", handler: fn }` | Run custom recovery logic |
+| Action                              | Effect                                           |
+| ----------------------------------- | ------------------------------------------------ |
+| `{ action: "reset" }`               | Wipe local data, resync from server              |
+| `{ action: "keep-old-schema" }`     | Continue with old schema (limited functionality) |
+| `{ action: "retry" }`               | Retry migration with exponential backoff         |
+| `{ action: "custom", handler: fn }` | Run custom recovery logic                        |
 
 ---
 
@@ -491,13 +491,14 @@ defaults: {
 
 These changes are NOT backwards compatible:
 
-| Change | Problem |
-|--------|---------|
-| Removing field | Old clients will crash when accessing this field |
-| Adding required field (no default) | Old documents don't have this field |
-| Changing field type | Type mismatch will cause errors |
+| Change                             | Problem                                          |
+| ---------------------------------- | ------------------------------------------------ |
+| Removing field                     | Old clients will crash when accessing this field |
+| Adding required field (no default) | Old documents don't have this field              |
+| Changing field type                | Type mismatch will cause errors                  |
 
 **Recommendations:**
+
 1. Make new fields optional or add default
 2. Keep deprecated fields, remove in future version
 3. Add new field instead of changing type
@@ -538,15 +539,15 @@ export const taskSchema = schema.define({
 
 The diff engine detects these operations:
 
-| Change | Detection | SQL Generated |
-|--------|-----------|---------------|
-| Add field with default | `+ field` | `ALTER TABLE ADD COLUMN ... DEFAULT` |
-| Add optional field | `+ field?` | `ALTER TABLE ADD COLUMN ...` |
-| Remove field | `- field` | `ALTER TABLE DROP COLUMN` (SQLite 3.35+) |
-| Rename field | `field → newField` | `ALTER TABLE RENAME COLUMN` |
-| Change type | `field: T1 → T2` | Requires custom migration |
-| Add collection | `+ collection` | `CREATE TABLE` |
-| Remove collection | `- collection` | `DROP TABLE` |
+| Change                 | Detection          | SQL Generated                            |
+| ---------------------- | ------------------ | ---------------------------------------- |
+| Add field with default | `+ field`          | `ALTER TABLE ADD COLUMN ... DEFAULT`     |
+| Add optional field     | `+ field?`         | `ALTER TABLE ADD COLUMN ...`             |
+| Remove field           | `- field`          | `ALTER TABLE DROP COLUMN` (SQLite 3.35+) |
+| Rename field           | `field → newField` | `ALTER TABLE RENAME COLUMN`              |
+| Change type            | `field: T1 → T2`   | Requires custom migration                |
+| Add collection         | `+ collection`     | `CREATE TABLE`                           |
+| Remove collection      | `- collection`     | `DROP TABLE`                             |
 
 ### Computed Diff API
 
@@ -776,12 +777,14 @@ Check if you're dropping columns on SQLite < 3.35. Use custom migration or table
 ### "Cannot migrate: pending changes"
 
 Local changes haven't synced. Either:
+
 1. Wait for sync
 2. Use `{ action: "reset" }` to discard local changes
 
 ### "Breaking change detected"
 
 Your change isn't backwards compatible. Either:
+
 1. Make field optional/add default
 2. Use deprecation pattern
 3. Accept that old clients will error

@@ -15,6 +15,7 @@ This document outlines a comprehensive architectural enhancement to the Replicat
 5. **Priority Queue System** - Visible documents sync first, background the rest
 
 These changes will dramatically improve:
+
 - **DX** - Clean, semantic API with only 4 exports
 - **Performance** - Large datasets (1000+ documents)
 - **Reconnection** - Offline → online with priority ordering
@@ -75,28 +76,28 @@ const {
 
 ### 1.3 Export Consolidation
 
-| Old Export | New Export | Reasoning |
-|------------|------------|-----------|
-| `stream` | `delta` | Better name - it's the delta log |
-| `material` | `material` | Now paginated by default |
-| `materialPaginated` | `material` | Merged - pagination is default |
-| `insert` | `replicate` | Merged with `type: "insert"` |
-| `update` | `replicate` | Merged with `type: "update"` |
-| `remove` | `replicate` | Merged with `type: "delete"` |
-| `recovery` | Internal | Handled by actor reconciliation |
-| `mark` | `session` | Merged - now `session({ action: "mark" })` or piggybacked on `signal` |
-| `compact` | Internal | Auto-triggered on write when threshold exceeded |
-| `sessions` | `session.query` | Merged into unified session API |
-| `presence` | `session` | Merged - session manages presence + sync state |
+| Old Export          | New Export      | Reasoning                                                             |
+| ------------------- | --------------- | --------------------------------------------------------------------- |
+| `stream`            | `delta`         | Better name - it's the delta log                                      |
+| `material`          | `material`      | Now paginated by default                                              |
+| `materialPaginated` | `material`      | Merged - pagination is default                                        |
+| `insert`            | `replicate`     | Merged with `type: "insert"`                                          |
+| `update`            | `replicate`     | Merged with `type: "update"`                                          |
+| `remove`            | `replicate`     | Merged with `type: "delete"`                                          |
+| `recovery`          | Internal        | Handled by actor reconciliation                                       |
+| `mark`              | `session`       | Merged - now `session({ action: "mark" })` or piggybacked on `signal` |
+| `compact`           | Internal        | Auto-triggered on write when threshold exceeded                       |
+| `sessions`          | `session.query` | Merged into unified session API                                       |
+| `presence`          | `session`       | Merged - session manages presence + sync state                        |
 
 ### 1.4 Why These Names?
 
-| Export | Semantic Meaning |
-|--------|------------------|
-| `material` | The **materialized view** of your data |
-| `delta` | The **delta log** of CRDT changes |
-| `replicate` | The core **replication** action (matches library name!) |
-| `session` | Client **session** state (presence, sync progress, cursors) |
+| Export      | Semantic Meaning                                            |
+| ----------- | ----------------------------------------------------------- |
+| `material`  | The **materialized view** of your data                      |
+| `delta`     | The **delta log** of CRDT changes                           |
+| `replicate` | The core **replication** action (matches library name!)     |
+| `session`   | Client **session** state (presence, sync progress, cursors) |
 
 ---
 
@@ -135,14 +136,14 @@ const {
 
 ### 2.2 Problems with Current Approach
 
-| Issue | Impact | Severity |
-|-------|--------|----------|
-| 11 server exports | Confusing API, hard to learn | High |
-| Prose-only actors | Inconsistent sync behavior, special cases | High |
-| Bulk recovery | Memory spikes, slow reconnection, blocks UI | High |
-| No pagination | SSR loads entire dataset, slow first paint | High |
-| Direct mutations | No batching for field changes, excessive API calls | Medium |
-| No priority ordering | Background docs compete with visible ones | Medium |
+| Issue                | Impact                                             | Severity |
+| -------------------- | -------------------------------------------------- | -------- |
+| 11 server exports    | Confusing API, hard to learn                       | High     |
+| Prose-only actors    | Inconsistent sync behavior, special cases          | High     |
+| Bulk recovery        | Memory spikes, slow reconnection, blocks UI        | High     |
+| No pagination        | SSR loads entire dataset, slow first paint         | High     |
+| Direct mutations     | No batching for field changes, excessive API calls | Medium   |
+| No priority ordering | Background docs compete with visible ones          | Medium   |
 
 ### 2.3 Current Actor Implementation
 
@@ -296,7 +297,7 @@ createDeltaQuery(opts?: {
       if (opts?.evalRead) {
         await opts.evalRead(ctx, this.collectionName);
       }
-      
+
       return await ctx.runQuery(this.component.mutations.stream, {
         collection: this.collectionName,
         seq: args.seq,
@@ -333,12 +334,12 @@ createReplicateMutation(opts?: {
     }),
     handler: async (ctx, args) => {
       const { document, bytes, material, type } = args;
-      
+
       // Evaluate write permissions
       if (opts?.evalWrite && material) {
         await opts.evalWrite(ctx, material as T);
       }
-      
+
       // Dispatch to appropriate handler
       switch (type) {
         case "insert": {
@@ -351,7 +352,7 @@ createReplicateMutation(opts?: {
             bytes,
           });
         }
-        
+
         case "update": {
           if (opts?.onUpdate && material) {
             await opts.onUpdate(ctx, material as T);
@@ -362,7 +363,7 @@ createReplicateMutation(opts?: {
             bytes,
           });
         }
-        
+
         case "delete": {
           if (opts?.onDelete) {
             await opts.onDelete(ctx, document);
@@ -421,12 +422,12 @@ createSessionMutation(opts?: {
       if (opts?.evalWrite) {
         await opts.evalWrite(ctx, args.client);
       }
-      
+
       await ctx.runMutation(this.component.mutations.session, {
         collection: this.collectionName,
         ...args,
       });
-      
+
       return null;
     },
   });
@@ -447,7 +448,7 @@ createSessionQuery(opts?: {
       if (opts?.evalRead) {
         await opts.evalRead(ctx, this.collectionName);
       }
-      
+
       return await ctx.runQuery(this.component.mutations.sessions, {
         collection: this.collectionName,
         document: args.document,
@@ -508,6 +509,7 @@ export const _compact = internalAction({
 ```
 
 **Key behaviors:**
+
 - **Auto-triggered**: On every write, checks if delta count >= threshold
 - **Peer-aware**: Only deletes deltas that ALL tracked peers have synced
 - **Multi-week offline safe**: Sessions with vectors are retained, their needed deltas preserved
@@ -528,10 +530,10 @@ const { material, delta, replicate, session } = collection.create<T>(
 );
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `sizeThreshold` | `Size` | `"5mb"` | Trigger compaction when document delta size exceeds this |
-| `peerTimeout` | `Duration` | `"24h"` | Consider peer stale (safe to compact their data) after this duration |
+| Option          | Type       | Default | Description                                                          |
+| --------------- | ---------- | ------- | -------------------------------------------------------------------- |
+| `sizeThreshold` | `Size`     | `"5mb"` | Trigger compaction when document delta size exceeds this             |
+| `peerTimeout`   | `Duration` | `"24h"` | Consider peer stale (safe to compact their data) after this duration |
 
 ### 3.7 Server Hooks
 
@@ -547,7 +549,7 @@ const { material, delta, replicate, session } = collection.create<T>(
       evalRead: async (ctx, collection) => { /* before material/delta queries */ },
       evalWrite: async (ctx, doc) => { /* before replicate mutations */ },
       evalSession: async (ctx, client) => { /* before session mutations (replaces evalMark) */ },
-      
+
       // Lifecycle callbacks (run after operation)
       onDelta: async (ctx, result) => { /* after delta query (replaces onStream) */ },
       onReplicate: async (ctx, doc, type) => { /* after replicate mutation */ },
@@ -558,17 +560,17 @@ const { material, delta, replicate, session } = collection.create<T>(
 
 **Hook mapping from old API:**
 
-| Old Hook | New Hook | Trigger |
-|----------|----------|---------|
-| `evalRead` | `evalRead` | Before `material`, `delta`, `session.query` |
-| `evalWrite` | `evalWrite` | Before `replicate` (insert/update/delete) |
-| `evalMark` | `evalSession` | Before `session` mutations (join/leave/mark/signal) |
-| `evalCompact` | *(internal)* | Compaction is now internal, no user hook needed |
-| `onStream` | `onDelta` | After `delta` query returns |
-| `onInsert` | `onReplicate` | After `replicate` with `type: "insert"` |
-| `onUpdate` | `onReplicate` | After `replicate` with `type: "update"` |
-| `onRemove` | `onReplicate` | After `replicate` with `type: "delete"` |
-| `transform` | `transform` | Transform documents before returning from `material` |
+| Old Hook      | New Hook      | Trigger                                              |
+| ------------- | ------------- | ---------------------------------------------------- |
+| `evalRead`    | `evalRead`    | Before `material`, `delta`, `session.query`          |
+| `evalWrite`   | `evalWrite`   | Before `replicate` (insert/update/delete)            |
+| `evalMark`    | `evalSession` | Before `session` mutations (join/leave/mark/signal)  |
+| `evalCompact` | _(internal)_  | Compaction is now internal, no user hook needed      |
+| `onStream`    | `onDelta`     | After `delta` query returns                          |
+| `onInsert`    | `onReplicate` | After `replicate` with `type: "insert"`              |
+| `onUpdate`    | `onReplicate` | After `replicate` with `type: "update"`              |
+| `onRemove`    | `onReplicate` | After `replicate` with `type: "delete"`              |
+| `transform`   | `transform`   | Transform documents before returning from `material` |
 
 ### 3.8 Client Configuration API
 
@@ -578,16 +580,16 @@ const { material, delta, replicate, session } = collection.create<T>(
 export interface PaginationConfig {
   /** Number of items per page (default: 25) */
   pageSize?: number;
-  
+
   /** Initial pages to load on SSR (default: 1) */
   ssrPages?: number;
-  
+
   /** Whether to include CRDT state in SSR (default: true) */
   ssrIncludeCRDT?: boolean;
-  
+
   /** Enable infinite scroll behavior (default: true) */
   infiniteScroll?: boolean;
-  
+
   /** Preload next page when within threshold (default: 5 items) */
   preloadThreshold?: number;
 }
@@ -635,13 +637,13 @@ export const intervals = collection.create(schema, "intervals", {
 export const Route = createFileRoute("/")({
   loader: async () => {
     const convex = createConvexHttpClient(CONVEX_URL);
-    
+
     // Fetch first 2 pages with CRDT state
     const page1 = await convex.query(api.intervals.material, {
       paginationOpts: { numItems: 25, cursor: null },
       includeCRDT: true,
     });
-    
+
     const page2 = !page1.isDone
       ? await convex.query(api.intervals.material, {
           paginationOpts: { numItems: 25, cursor: page1.continueCursor },
@@ -669,29 +671,29 @@ export const Route = createFileRoute("/")({
 
 async initWithMaterial(material: PaginatedMaterial<T>): Promise<void> {
   const persistence = await this.options.persistence();
-  
+
   // 1. Apply CRDT state for all SSR documents
   for (const [docId, state] of Object.entries(material.crdt)) {
     const update = new Uint8Array(state.bytes);
     this.docManager.applyUpdate(docId, update, YjsOrigin.Server);
     this.registry.load([docId]);
   }
-  
+
   // 2. Insert documents into TanStack DB
   for (const page of material.pages) {
     this.ops.insert(page.page);
   }
-  
+
   // 3. Store pagination state
   this.paginationState = {
     cursor: material.cursor,
     isDone: material.isDone,
     loadedPages: material.pages.length,
   };
-  
+
   // 4. Start delta subscription from SSR seq (skip already-loaded deltas)
   this.startDeltaSubscription(material.seq);
-  
+
   // 5. Ready immediately - no loading state for SSR docs!
   this.markReady();
 }
@@ -705,22 +707,22 @@ async initWithMaterial(material: PaginatedMaterial<T>): Promise<void> {
 function IntervalList() {
   const collection = useIntervals();
   const { status, load, canLoadMore } = collection.pagination;
-  
+
   const parentRef = useRef<HTMLDivElement>(null);
   const documents = collection.get().query().toArray();
-  
+
   const virtualizer = useVirtualizer({
     count: documents.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 80,
     overscan: 5,
   });
-  
+
   // Preload when near bottom
   useEffect(() => {
     const items = virtualizer.getVirtualItems();
     const lastItem = items[items.length - 1];
-    
+
     if (
       lastItem &&
       lastItem.index >= documents.length - 5 &&
@@ -730,7 +732,7 @@ function IntervalList() {
       load();
     }
   }, [virtualizer.getVirtualItems(), canLoadMore, status]);
-  
+
   return (
     <div ref={parentRef} style={{ height: "100vh", overflow: "auto" }}>
       <div style={{ height: virtualizer.getTotalSize() }}>
@@ -765,7 +767,7 @@ export type DocumentMessage =
   | { readonly _tag: "LocalChange" }
   | { readonly _tag: "ExternalUpdate" }
   | { readonly _tag: "Shutdown"; readonly done: Deferred.Deferred<void, never> }
-  
+
   // New
   | { readonly _tag: "Reconcile"; readonly done: Deferred.Deferred<ReconcileResult, SyncError> }
   | { readonly _tag: "SetPriority"; readonly priority: ActorPriority };
@@ -787,7 +789,7 @@ interface ActorState {
   readonly vector: Uint8Array;
   readonly lastError: SyncError | null;
   readonly retryCount: number;
-  
+
   // New
   readonly status: ActorStatus;
   readonly priority: ActorPriority;
@@ -816,22 +818,22 @@ type ActorPriority =
 
 const performSync = Effect.gen(function* () {
   const state = yield* Ref.get(stateRef);
-  
+
   // Compute delta from last known vector
   const delta = Y.encodeStateAsUpdateV2(ydoc, state.vector);
-  
+
   // Skip if no actual changes
   if (delta.length <= 2) {
     return;
   }
-  
+
   // Serialize full document for material sync
   const material = serializeYMapValue(ymap);
   const bytes = delta.buffer as ArrayBuffer;
-  
+
   // Determine operation type
   const type = state.isNew ? "insert" : state.isDeleted ? "delete" : "update";
-  
+
   // Single mutation handles everything via `replicate`
   yield* Effect.tryPromise({
     try: () => replicateFn({ document: documentId, bytes, material, type }),
@@ -841,7 +843,7 @@ const performSync = Effect.gen(function* () {
       retriable: isRetriable(e),
     }),
   });
-  
+
   // Update vector after successful sync
   const newVector = Y.encodeStateVector(ydoc);
   yield* Ref.update(stateRef, (s) => ({
@@ -870,20 +872,20 @@ export function observeDocument(
   runtime: ReplicateRuntime,
 ): () => void {
   const ymap = ydoc.getMap("content");
-  
+
   // Observe ALL changes to the document
   const handler = (events: Y.YEvent<any>[], transaction: Y.Transaction) => {
     // Skip server-originated changes
     if (transaction.origin === YjsOrigin.Server) {
       return;
     }
-    
+
     // Notify actor of local change
     runWithRuntime(runtime, actorManager.onLocalChange(documentId));
   };
-  
+
   ymap.observeDeep(handler);
-  
+
   return () => {
     ymap.unobserveDeep(handler);
   };
@@ -904,44 +906,44 @@ const createMutationHandlers = <T extends object>(
     const docId = mutation.key as string;
     const ydoc = docManager.getOrCreate(docId);
     const ymap = ydoc.getMap("content");
-    
+
     // Apply insert to Yjs doc
     ydoc.transact(() => {
       for (const [key, value] of Object.entries(mutation.modified)) {
         ymap.set(key, value);
       }
     }, YjsOrigin.Local);
-    
+
     // Register actor for this document (marks as new)
     const replicateFn = createReplicateFn(docId, ydoc, ymap, collection);
     await runWithRuntime(runtime, actorManager.register(docId, ydoc, replicateFn, { isNew: true }));
-    
+
     // Actor will handle sync via observer
   },
-  
+
   onUpdate: async (mutation: CollectionMutation<T>) => {
     const docId = mutation.key as string;
     const ydoc = docManager.get(docId);
     if (!ydoc) return;
-    
+
     const ymap = ydoc.getMap("content");
-    
+
     // Apply changes to Yjs doc
     ydoc.transact(() => {
       for (const [key, value] of Object.entries(mutation.changes ?? {})) {
         ymap.set(key, value);
       }
     }, YjsOrigin.Local);
-    
+
     // Actor observer will trigger sync automatically
   },
-  
+
   onDelete: async (mutation: CollectionMutation<T>) => {
     const docId = mutation.key as string;
-    
+
     // Mark document as deleted in actor state
     await runWithRuntime(runtime, actorManager.markDeleted(docId));
-    
+
     // Actor will sync the delete
   },
 });
@@ -961,12 +963,12 @@ const recoverFromServer = async () => {
     seq: lastCursor,
     limit: 10000,  // Potentially huge!
   });
-  
+
   // 2. Apply ALL at once
   for (const change of result.changes) {
     docManager.applyUpdate(change.document, change.bytes);
   }
-  
+
   // Problems:
   // - Memory spike for large delta sets
   // - Blocks UI during application
@@ -984,10 +986,10 @@ const recoverFromServer = async () => {
 
 const handleReconcile = Effect.gen(function* () {
   yield* Ref.update(stateRef, (s) => ({ ...s, status: "reconciling" }));
-  
+
   const state = yield* Ref.get(stateRef);
   const localVector = Y.encodeStateVector(ydoc);
-  
+
   // 1. Query server for our specific document's state
   const response = yield* Effect.tryPromise({
     try: () => recoveryFn({
@@ -996,25 +998,25 @@ const handleReconcile = Effect.gen(function* () {
     }),
     catch: (e) => new SyncError({ documentId, cause: e, retriable: true }),
   });
-  
+
   let remoteChanges = 0;
   let localChanges = 0;
-  
+
   // 2. Apply server diff if we're behind
   if (response.diff && response.diff.byteLength > 0) {
     Y.applyUpdateV2(ydoc, new Uint8Array(response.diff), YjsOrigin.Server);
     remoteChanges = 1;
   }
-  
+
   // 3. Push local changes if server is behind
   const serverVector = new Uint8Array(response.vector);
   const localDelta = Y.encodeStateAsUpdateV2(ydoc, serverVector);
-  
+
   if (localDelta.length > 2) {
     yield* performSync;  // Reuse existing sync logic
     localChanges = 1;
   }
-  
+
   // 4. Update state
   yield* Ref.update(stateRef, (s) => ({
     ...s,
@@ -1022,7 +1024,7 @@ const handleReconcile = Effect.gen(function* () {
     status: "idle",
     lastSyncAt: Date.now(),
   }));
-  
+
   return { localChanges, remoteChanges, conflicts: 0 };
 });
 ```
@@ -1035,14 +1037,14 @@ const handleReconcile = Effect.gen(function* () {
 const handleReconnection = async () => {
   const ctx = getContext(collectionName);
   const { actorManager, runtime, registry } = ctx;
-  
+
   // 1. Get list of all loaded documents
   const loadedDocs = Array.from(registry.loaded);
-  
+
   // 2. Partition by visibility/priority
   const visibleDocs = loadedDocs.filter(isDocumentVisible);
   const backgroundDocs = loadedDocs.filter((d) => !isDocumentVisible(d));
-  
+
   // 3. Reconcile visible documents first (in parallel, limited concurrency)
   const visibleResults = await runWithRuntime(
     runtime,
@@ -1051,10 +1053,10 @@ const handleReconnection = async () => {
       { concurrency: 5 },
     ),
   );
-  
+
   // 4. Mark UI as ready after visible docs synced
   markReady();
-  
+
   // 5. Reconcile background documents with lower priority
   for (const batch of chunk(backgroundDocs, 10)) {
     await runWithRuntime(
@@ -1064,7 +1066,7 @@ const handleReconnection = async () => {
         { concurrency: 3 },
       ),
     );
-    
+
     // Yield to main thread between batches
     await new Promise((r) => setTimeout(r, 50));
   }
@@ -1073,14 +1075,14 @@ const handleReconnection = async () => {
 
 ### 5.4 Benefits of Actor-Based Recovery
 
-| Aspect | Bulk Recovery | Actor Recovery |
-|--------|---------------|----------------|
-| Memory | Spikes (all deltas at once) | Constant (per-doc) |
-| UI Blocking | Yes (entire recovery) | No (incremental) |
-| Priority | None | Visible first |
-| Failure | All-or-nothing | Per-document retry |
-| Resume | Restart from beginning | Continue where left off |
-| Bandwidth | Redundant (re-fetch known) | Minimal (vector diff) |
+| Aspect      | Bulk Recovery               | Actor Recovery          |
+| ----------- | --------------------------- | ----------------------- |
+| Memory      | Spikes (all deltas at once) | Constant (per-doc)      |
+| UI Blocking | Yes (entire recovery)       | No (incremental)        |
+| Priority    | None                        | Visible first           |
+| Failure     | All-or-nothing              | Per-document retry      |
+| Resume      | Restart from beginning      | Continue where left off |
+| Bandwidth   | Redundant (re-fetch known)  | Minimal (vector diff)   |
 
 ---
 
@@ -1117,10 +1119,10 @@ const handleReconnection = async () => {
 export interface PriorityConfig {
   /** Callback to determine if document is visible */
   isVisible?: (documentId: string) => boolean;
-  
+
   /** Time threshold for "recent" edit (ms) */
   recentThreshold?: number;  // default: 5000
-  
+
   /** Custom priority override */
   getPriority?: (documentId: string) => ActorPriority;
 }
@@ -1134,18 +1136,18 @@ export const determinePriority = (
   if (config.getPriority) {
     return config.getPriority(documentId);
   }
-  
+
   // Visible documents are critical
   if (config.isVisible?.(documentId)) {
     return "critical";
   }
-  
+
   // Recently edited documents are high priority
   const recentThreshold = config.recentThreshold ?? 5000;
   if (state.lastSyncAt && Date.now() - state.lastSyncAt < recentThreshold) {
     return "high";
   }
-  
+
   // Default to normal
   return "normal";
 };
@@ -1172,13 +1174,13 @@ export const createPriorityQueue = (
     const highQueue = yield* Queue.unbounded<QueuedSync>();
     const normalQueue = yield* Queue.unbounded<QueuedSync>();
     const lowQueue = yield* Queue.unbounded<QueuedSync>();
-    
+
     // Processors with different concurrency
     yield* Effect.forkScoped(processQueue(criticalQueue, config.critical));
     yield* Effect.forkScoped(processQueue(highQueue, config.high));
     yield* Effect.forkScoped(processQueue(normalQueue, config.normal));
     yield* Effect.forkScoped(processQueue(lowQueue, config.low));
-    
+
     return {
       enqueue: (sync: QueuedSync) => {
         switch (sync.priority) {
@@ -1188,7 +1190,7 @@ export const createPriorityQueue = (
           case "low": return Queue.offer(lowQueue, sync);
         }
       },
-      
+
       promote: (documentId: string, priority: ActorPriority) =>
         Effect.gen(function* () {
           // Move from current queue to target queue
@@ -1205,7 +1207,7 @@ export const createPriorityQueue = (
 export const createVisibilityTracker = (): VisibilityTracker => {
   const visibleDocs = new Set<string>();
   const observers = new Map<string, IntersectionObserver>();
-  
+
   return {
     observe: (documentId: string, element: HTMLElement) => {
       const observer = new IntersectionObserver(
@@ -1220,17 +1222,17 @@ export const createVisibilityTracker = (): VisibilityTracker => {
         },
         { threshold: 0.1 },
       );
-      
+
       observer.observe(element);
       observers.set(documentId, observer);
-      
+
       return () => {
         observer.disconnect();
         observers.delete(documentId);
         visibleDocs.delete(documentId);
       };
     },
-    
+
     isVisible: (documentId: string) => visibleDocs.has(documentId),
     getVisible: () => Array.from(visibleDocs),
   };
@@ -1312,7 +1314,7 @@ session(args: {
   // For join/signal - user identity
   user?: string;
   profile?: { name?: string; color?: string; avatar?: string };
-  // For join/signal - cursor position  
+  // For join/signal - cursor position
   cursor?: { anchor: any; head: any; field?: string };
   // For mark/signal - replication progress
   vector?: ArrayBuffer;
@@ -1328,6 +1330,7 @@ session.query(args: {
 ```
 
 **Action semantics:**
+
 - `join` - Connect to document, set `connected=true`, optionally set user/profile/cursor
 - `leave` - Disconnect from document, set `connected=false`, clear cursor
 - `mark` - Mark replication progress (vector + seq) after applying deltas from server
@@ -1355,7 +1358,7 @@ type Interval = collection.Doc<typeof intervals>;
 interface LazyCollection<T> {
   init(material?: PaginatedMaterial<T>): Promise<void>;
   get(): Collection<T>;
-  
+
   pagination: {
     load(): Promise<PaginatedPage<T>>;
     status: PaginationStatus;  // "idle" | "busy" | "done" | "error"
@@ -1363,7 +1366,7 @@ interface LazyCollection<T> {
     count: number;
     subscribe(cb: (state: PaginationState) => void): () => void;
   };
-  
+
   actors: {
     getPending(documentId: string): boolean;
     onPendingChange(documentId: string, cb: (pending: boolean) => void): () => void;
@@ -1371,7 +1374,7 @@ interface LazyCollection<T> {
     reconcileAll(): Promise<ReconcileResult[]>;
     markVisible(documentId: string, element: HTMLElement): () => void;
   };
-  
+
   session: {
     join(documentId: string, opts?: SessionJoinOptions): Promise<void>;
     leave(documentId: string): Promise<void>;
@@ -1451,6 +1454,7 @@ Each phase is **contained and testable** - the system works after each phase com
    - Files: `src/component/mutations.ts`, `src/server/replicate.ts`
 
 **Files to modify:**
+
 - `src/server/replicate.ts` - Add new methods, keep old as deprecated
 - `src/server/collection.ts` - Update factory to export both old and new
 - `src/component/mutations.ts` - Add internal compact trigger
@@ -1568,11 +1572,11 @@ Each phase is **contained and testable** - the system works after each phase com
 
 ### Estimated Timeline
 
-| Phase | Duration | Cumulative |
-|-------|----------|------------|
-| Phase 1: New Server API | 2-3 days | 2-3 days |
-| Phase 2: Client Migration | 2-3 days | 4-6 days |
-| Phase 3: Pagination | 2-3 days | 6-9 days |
+| Phase                        | Duration | Cumulative |
+| ---------------------------- | -------- | ---------- |
+| Phase 1: New Server API      | 2-3 days | 2-3 days   |
+| Phase 2: Client Migration    | 2-3 days | 4-6 days   |
+| Phase 3: Pagination          | 2-3 days | 6-9 days   |
 | Phase 4: Unified Actor Model | 4-5 days | 10-14 days |
 
 **Total: ~2 weeks**
@@ -1649,15 +1653,15 @@ await convex.mutation(api.intervals.replicate, { document, bytes, type: "delete"
 
 ### 9.5 Breaking Changes
 
-| Change | Migration |
-|--------|-----------|
-| `stream` → `delta` | Rename import |
-| `insert`/`update`/`remove` → `replicate` | Add `type` field |
-| `sessions` → `session.query` | Update to unified session API |
-| `presence` → `session` | Rename + use `action` field |
-| `mark` → `session` | Now via `action: "mark"` or `action: "signal"` |
-| `compact` → internal | No longer called by client; auto-triggered on write |
-| `material` now paginated | Add `paginationOpts` |
+| Change                                   | Migration                                           |
+| ---------------------------------------- | --------------------------------------------------- |
+| `stream` → `delta`                       | Rename import                                       |
+| `insert`/`update`/`remove` → `replicate` | Add `type` field                                    |
+| `sessions` → `session.query`             | Update to unified session API                       |
+| `presence` → `session`                   | Rename + use `action` field                         |
+| `mark` → `session`                       | Now via `action: "mark"` or `action: "signal"`      |
+| `compact` → internal                     | No longer called by client; auto-triggered on write |
+| `material` now paginated                 | Add `paginationOpts`                                |
 
 ---
 

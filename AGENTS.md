@@ -1,11 +1,13 @@
 # AGENTS.md - Development Guide
 
 ## Commands
+
 - **Build:** `bun run build` (uses tsdown, outputs to `dist/`)
 - **Lint & Format:** `bun run lint:fix` (ESLint + Stylistic) - **ALWAYS RUN BEFORE COMMITTING**
 - **Type Check:** Build includes type checking via tsdown
 
 ## Code Style & Conventions
+
 - **Formatting:** 2 spaces, double quotes, semicolons (enforced by ESLint Stylistic)
 - **Imports:** Use `import type` for types. Use `node:` protocol for Node built-ins
 - **Logging:** Use `LogTape`. Avoid `console.*` (warns in ESLint)
@@ -19,17 +21,17 @@
 
 The sync system uses Effect.ts per-document actors:
 
-| File | Purpose |
-|------|---------|
-| `actor.ts` | DocumentActor - per-document sync with Queue batching |
-| `manager.ts` | ActorManager - manages actor lifecycle via HashMap |
-| `runtime.ts` | ReplicateRuntime - Effect runtime factory (per-collection or singleton) |
-| `errors.ts` | Effect TaggedError types (SyncError, ActorShutdownError, etc.) |
-| `engine.ts` | Barrel file re-exporting actor system |
-| `context.ts` | CollectionContext - consolidated collection state |
-| `seq.ts` | SeqService - cursor/sequence number tracking |
-| `session.ts` | Session management helpers |
-| `awareness.ts` | Yjs awareness/presence |
+| File           | Purpose                                                                 |
+| -------------- | ----------------------------------------------------------------------- |
+| `actor.ts`     | DocumentActor - per-document sync with Queue batching                   |
+| `manager.ts`   | ActorManager - manages actor lifecycle via HashMap                      |
+| `runtime.ts`   | ReplicateRuntime - Effect runtime factory (per-collection or singleton) |
+| `errors.ts`    | Effect TaggedError types (SyncError, ActorShutdownError, etc.)          |
+| `engine.ts`    | Barrel file re-exporting actor system                                   |
+| `context.ts`   | CollectionContext - consolidated collection state                       |
+| `seq.ts`       | SeqService - cursor/sequence number tracking                            |
+| `session.ts`   | Session management helpers                                              |
+| `awareness.ts` | Yjs awareness/presence                                                  |
 
 ### Actor Model
 
@@ -40,6 +42,7 @@ Shutdown → interrupt debounce → signal done via Deferred
 ```
 
 Key patterns:
+
 - `Queue.takeAll` batches rapid local changes into single sync
 - `SubscriptionRef` for reactive pending state
 - `Schedule.exponential` with jitter for retry
@@ -48,6 +51,7 @@ Key patterns:
 ## Public API
 
 ### Server (`@trestleinc/replicate/server`)
+
 ```typescript
 replicate()              // Factory to create bound replicate function
 schema.table()           // Define replicated table schema (injects timestamp)
@@ -55,6 +59,7 @@ schema.prose()           // Validator for prose fields
 ```
 
 ### Client (`@trestleinc/replicate/client`)
+
 ```typescript
 collection.create()              // Main entry point - create lazy-initialized collections
 persistence.web.sqlite()         // Browser wa-sqlite Web Worker + OPFSCoopSyncVFS
@@ -70,6 +75,7 @@ schema.prose.empty()         // Create empty prose value
 ```
 
 ## Critical Rules
+
 - NEVER use WebSearch for library documentation; use Context7
 - Examples use `bun` and link to root via `file:../..`
 - Use `table()` helper for schemas to inject version/timestamp

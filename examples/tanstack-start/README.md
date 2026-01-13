@@ -26,15 +26,15 @@ bun run dev
 
 ## Key Implementation Files
 
-| Pattern | File |
-|---------|------|
-| PGlite Persistence Setup | [`src/collections/useIntervals.ts`](src/collections/useIntervals.ts) |
-| Convex Schema | [`convex/schema.ts`](convex/schema.ts) |
-| Replicate Functions | [`convex/intervals.ts`](convex/intervals.ts) |
-| Rich Text Editor Binding | [`src/components/IntervalEditor.tsx`](src/components/IntervalEditor.tsx) |
+| Pattern                   | File                                                                     |
+| ------------------------- | ------------------------------------------------------------------------ |
+| PGlite Persistence Setup  | [`src/collections/useIntervals.ts`](src/collections/useIntervals.ts)     |
+| Convex Schema             | [`convex/schema.ts`](convex/schema.ts)                                   |
+| Replicate Functions       | [`convex/intervals.ts`](convex/intervals.ts)                             |
+| Rich Text Editor Binding  | [`src/components/IntervalEditor.tsx`](src/components/IntervalEditor.tsx) |
 | Context + PersistenceGate | [`src/contexts/IntervalsContext.tsx`](src/contexts/IntervalsContext.tsx) |
-| PWA Service Worker | [`src/sw.ts`](src/sw.ts) |
-| CRUD Hook | [`src/hooks/useCreateInterval.ts`](src/hooks/useCreateInterval.ts) |
+| PWA Service Worker        | [`src/sw.ts`](src/sw.ts)                                                 |
+| CRUD Hook                 | [`src/hooks/useCreateInterval.ts`](src/hooks/useCreateInterval.ts)       |
 
 ## Patterns Worth Noting
 

@@ -6,20 +6,20 @@ This document outlines the testing strategy for the Replicate sync library.
 
 Replicate requires testing across multiple layers:
 
-| Layer | Location | What to Test |
-|-------|----------|--------------|
-| **Component** | `src/component/` | Convex mutations, compaction, scheduling |
-| **Server** | `src/server/` | Replicate class, collection factory, hooks |
-| **Client** | `src/client/` | Effect.ts actors, persistence, sync flow |
+| Layer         | Location         | What to Test                               |
+| ------------- | ---------------- | ------------------------------------------ |
+| **Component** | `src/component/` | Convex mutations, compaction, scheduling   |
+| **Server**    | `src/server/`    | Replicate class, collection factory, hooks |
+| **Client**    | `src/client/`    | Effect.ts actors, persistence, sync flow   |
 
 ## Test Categories & Environments
 
-| Category | Environment | Purpose | Tools |
-|----------|-------------|---------|-------|
-| **Unit** | jsdom | Actor logic, validators, Yjs ops | Vitest + @effect/vitest |
-| **Integration** | jsdom | Collection sync, offline→online | fake-indexeddb + Yjs |
-| **E2E (Convex)** | edge-runtime | Component mutations, compaction | convex-test |
-| **Browser** | Playwright | SQLite persistence, OPFS, Workers | @vitest/browser |
+| Category         | Environment  | Purpose                           | Tools                   |
+| ---------------- | ------------ | --------------------------------- | ----------------------- |
+| **Unit**         | jsdom        | Actor logic, validators, Yjs ops  | Vitest + @effect/vitest |
+| **Integration**  | jsdom        | Collection sync, offline→online   | fake-indexeddb + Yjs    |
+| **E2E (Convex)** | edge-runtime | Component mutations, compaction   | convex-test             |
+| **Browser**      | Playwright   | SQLite persistence, OPFS, Workers | @vitest/browser         |
 
 ## Dependencies
 
@@ -102,13 +102,13 @@ import schema from "$/component/schema";
 
 test("insertDocument creates delta with seq", async () => {
   const t = convexTest(schema);
-  
+
   const result = await t.mutation(api.mutations.insertDocument, {
     collection: "tasks",
     document: "task-1",
     bytes: new Uint8Array([1, 2, 3]),
   });
-  
+
   expect(result.success).toBe(true);
   expect(result.seq).toBe(1);
 });
@@ -122,7 +122,7 @@ For `scheduleCompaction` and `runCompaction`:
 test("compaction job executes after scheduling", async () => {
   vi.useFakeTimers();
   const t = convexTest(schema);
-  
+
   // Insert enough deltas to trigger threshold
   for (let i = 0; i < 500; i++) {
     await t.mutation(api.mutations.insertDocument, {
@@ -131,28 +131,28 @@ test("compaction job executes after scheduling", async () => {
       bytes: new Uint8Array([i]),
     });
   }
-  
+
   // Schedule compaction
   const result = await t.mutation(api.mutations.scheduleCompaction, {
     collection: "test",
     document: "doc-1",
   });
-  
+
   expect(result.status).toBe("scheduled");
-  
+
   // Trigger scheduled function
   vi.runAllTimers();
   await t.finishInProgressScheduledFunctions();
-  
+
   // Verify job completed
   const job = await t.run(async (ctx) => {
     return await ctx.db.query("compaction")
-      .withIndex("by_document", (q) => 
+      .withIndex("by_document", (q) =>
         q.eq("collection", "test").eq("document", "doc-1").eq("status", "done")
       )
       .first();
   });
-  
+
   expect(job).not.toBeNull();
   vi.useRealTimers();
 });
@@ -164,7 +164,7 @@ test("compaction job executes after scheduling", async () => {
 test("runCompaction retries on failure", async () => {
   vi.useFakeTimers();
   const t = convexTest(schema);
-  
+
   // Create job with bad data that will fail
   const jobId = await t.run(async (ctx) => {
     return await ctx.db.insert("compaction", {
@@ -175,13 +175,13 @@ test("runCompaction retries on failure", async () => {
       retries: 0,
     });
   });
-  
+
   // Run and expect retry
   vi.runAllTimers();
   await t.finishInProgressScheduledFunctions();
-  
+
   const job = await t.run(async (ctx) => ctx.db.get(jobId));
-  
+
   expect(job?.retries).toBeGreaterThan(0);
   vi.useRealTimers();
 });
@@ -242,17 +242,17 @@ import * as Y from "yjs";
 test("merges concurrent inserts", () => {
   const doc1 = new Y.Doc();
   const doc2 = new Y.Doc();
-  
+
   const array1 = doc1.getArray("items");
   const array2 = doc2.getArray("items");
-  
+
   // Concurrent inserts
   array1.insert(0, ["A"]);
   array2.insert(0, ["B"]);
-  
+
   // Merge
   Y.applyUpdate(doc2, Y.encodeStateAsUpdate(doc1));
-  
+
   expect(array2.toArray()).toContain("A");
   expect(array2.toArray()).toContain("B");
 });
@@ -260,12 +260,12 @@ test("merges concurrent inserts", () => {
 test("extracts prose text", () => {
   const doc = new Y.Doc();
   const fragment = doc.getXmlFragment("content");
-  
+
   // Insert text
   const text = new Y.XmlText();
   text.insert(0, "Hello world");
   fragment.insert(0, [text]);
-  
+
   const extracted = schema.prose.extract(fragment.toJSON());
   expect(extracted).toBe("Hello world");
 });
@@ -294,7 +294,7 @@ describe("SQLite Persistence", () => {
   test("persists and retrieves data", async () => {
     await db.kv.set("key", new Uint8Array([1, 2, 3]));
     const result = await db.kv.get("key");
-    
+
     expect(result).toEqual(new Uint8Array([1, 2, 3]));
   });
 
@@ -353,7 +353,7 @@ export const createTestYDoc = (fields: Record<string, unknown> = {}) => {
 export const createMockSyncFn = (opts: { failCount?: number } = {}) => {
   let callCount = 0;
   const { failCount = 0 } = opts;
-  
+
   return {
     fn: async () => {
       callCount++;
@@ -395,21 +395,17 @@ export const createDocWithFields = (fields: Record<string, unknown>): Y.Doc => {
 1. **Component mutations** - Core CRDT storage
    - `insertDocument`, `updateDocument`, `deleteDocument`
    - Delta creation with seq numbers
-   
 2. **Compaction flow** - Job scheduling and execution
    - `scheduleCompaction` deduplication
    - `runCompaction` with retries
    - Peer-aware delta deletion
-   
 3. **Effect actors** - Sync management
    - Queue batching
    - Debounce timing
    - Retry with exponential backoff
-   
 4. **Collection sync** - End-to-end flow
    - Client → server → other clients
    - Offline accumulation → online sync
-   
 5. **Browser persistence** - Real browser APIs
    - wa-sqlite + OPFS
    - Web Worker communication
@@ -447,7 +443,7 @@ jobs:
       - run: bun install
       - run: bun run build
       - run: bun run test
-      
+
   browser-test:
     runs-on: ubuntu-latest
     steps:
@@ -635,13 +631,13 @@ Don't write tests for:
 
 Rather than writing 100+ trivial tests, aim for:
 
-| Category | Target Count | Focus |
-|----------|--------------|--------|
-| **Component mutations** | 5-8 tests | Seq numbers, peer awareness, compaction trigger |
-| **Compaction flow** | 3-5 tests | Scheduling, retry, peer safety, retain logic |
-| **Effect actors** | 4-6 tests | Batching, debounce, retry, shutdown cleanup |
-| **Integration sync** | 3-5 tests | Full client→server→client cycle, offline→online |
-| **Browser persistence** | 2-4 tests | SQLite write/read, OPFS access |
+| Category                | Target Count | Focus                                           |
+| ----------------------- | ------------ | ----------------------------------------------- |
+| **Component mutations** | 5-8 tests    | Seq numbers, peer awareness, compaction trigger |
+| **Compaction flow**     | 3-5 tests    | Scheduling, retry, peer safety, retain logic    |
+| **Effect actors**       | 4-6 tests    | Batching, debounce, retry, shutdown cleanup     |
+| **Integration sync**    | 3-5 tests    | Full client→server→client cycle, offline→online |
+| **Browser persistence** | 2-4 tests    | SQLite write/read, OPFS access                  |
 
 **Total: ~17-28 deep tests** (not 50+ shallow ones)
 

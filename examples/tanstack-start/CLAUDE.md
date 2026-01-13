@@ -40,6 +40,7 @@ A Linear-style issue tracker built with TanStack Router + Convex + TipTap, using
 **SQLite Persistence**: Uses sql.js instead of default IndexedDB. The `PersistenceGate` component in `IntervalsContext` blocks rendering until persistence is initialized.
 
 **Replicate Fragments for Rich Text**: TipTap content is stored as Y.XmlFragment via Replicate's prose binding:
+
 ```typescript
 const binding = await collection.utils.prose(intervalId, 'description');
 const editor = useEditor({

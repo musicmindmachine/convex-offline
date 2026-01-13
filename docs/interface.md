@@ -31,8 +31,8 @@ Bridge uses a different pattern that avoids destructuring:
 
 ```typescript
 // Bridge: convex/bridge.ts
-const b = bridge(components.bridge)({ 
-  hooks: { read: authCheck } 
+const b = bridge(components.bridge)({
+  hooks: { read: authCheck }
 });
 
 // Access via nested object
@@ -50,13 +50,13 @@ b.api.procedure.submit
 
 ### Key Difference
 
-| Aspect | Bridge | Replicate |
-|--------|--------|-----------|
-| Component exports | Final functions (cardGet, etc.) | Internal functions |
-| Function generation | None - uses component functions directly | Wraps with hooks |
-| User exports | None needed | Required for Convex |
-| Hooks | On high-level operations only | On every function |
-| Client access | Indirect (via user's wrapper functions) | Direct (api.intervals.stream) |
+| Aspect              | Bridge                                   | Replicate                     |
+| ------------------- | ---------------------------------------- | ----------------------------- |
+| Component exports   | Final functions (cardGet, etc.)          | Internal functions            |
+| Function generation | None - uses component functions directly | Wraps with hooks              |
+| User exports        | None needed                              | Required for Convex           |
+| Hooks               | On high-level operations only            | On every function             |
+| Client access       | Indirect (via user's wrapper functions)  | Direct (api.intervals.stream) |
 
 ## Constraints
 
@@ -79,6 +79,7 @@ export const rp = {
 ### Hooks Requirement
 
 Replicate needs hooks on core functions for:
+
 - **evalRead** - Authorization before read operations
 - **evalWrite** - Authorization/validation before writes
 - **evalRemove** - Authorization before deletes
@@ -145,19 +146,19 @@ export const stream = withHooks(component.stream, { evalRead: authorize });
 
 ### Server Exports (from collection.create)
 
-| Export | Type | Purpose |
-|--------|------|---------|
-| `stream` | query | Real-time CRDT stream (cursor-based) |
-| `material` | query | SSR hydration |
-| `recovery` | query | State vector sync |
-| `insert` | mutation | Insert document |
-| `update` | mutation | Update document |
-| `remove` | mutation | Delete document |
-| `mark` | mutation | Peer sync tracking |
-| `compact` | mutation | Manual compaction |
-| `sessions` | query | Connected sessions (presence) |
-| `cursors` | query | Cursor positions |
-| `leave` | mutation | Explicit disconnect |
+| Export     | Type     | Purpose                              |
+| ---------- | -------- | ------------------------------------ |
+| `stream`   | query    | Real-time CRDT stream (cursor-based) |
+| `material` | query    | SSR hydration                        |
+| `recovery` | query    | State vector sync                    |
+| `insert`   | mutation | Insert document                      |
+| `update`   | mutation | Update document                      |
+| `remove`   | mutation | Delete document                      |
+| `mark`     | mutation | Peer sync tracking                   |
+| `compact`  | mutation | Manual compaction                    |
+| `sessions` | query    | Connected sessions (presence)        |
+| `cursors`  | query    | Cursor positions                     |
+| `leave`    | mutation | Explicit disconnect                  |
 
 ### Client Usage
 
@@ -193,6 +194,7 @@ await intervals.init(material);
 ## Future Consideration: Rename for Clarity
 
 Consider renaming session-related exports for clarity:
+
 - `sessions` → keep (presence query)
 - `cursors` → keep (cursor positions)
 - `leave` → `sessionsLeave` or `disconnect` (explicit disconnect)

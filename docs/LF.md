@@ -93,7 +93,7 @@ collection.insert({ id: '123', title: 'New task' });
 // → Main table: insert row
 // → Deltas table: log synthetic insert delta (side effect)
 
-// UPDATE  
+// UPDATE
 collection.update('123', { title: 'Updated' });
 // → Main table: patch row
 // → Deltas table: log Yjs delta (side effect)
@@ -157,7 +157,7 @@ function createInsertDelta(docId: string, data: Record<string, unknown>): Uint8A
   const doc = new Y.Doc();
   const fields = doc.getMap('fields');
   const meta = doc.getMap('_meta');
-  
+
   // Set all fields
   for (const [key, value] of Object.entries(data)) {
     if (isProseField(key, value)) {
@@ -168,11 +168,11 @@ function createInsertDelta(docId: string, data: Record<string, unknown>): Uint8A
       fields.set(key, value);
     }
   }
-  
+
   // Mark as insert
   meta.set('_created', true);
   meta.set('_createdAt', Date.now());
-  
+
   return Y.encodeStateAsUpdate(doc);
 }
 ```
@@ -183,11 +183,11 @@ function createInsertDelta(docId: string, data: Record<string, unknown>): Uint8A
 function createDeleteDelta(docId: string): Uint8Array {
   const doc = new Y.Doc();
   const meta = doc.getMap('_meta');
-  
+
   // Mark as deleted
   meta.set('_deleted', true);
   meta.set('_deletedAt', Date.now());
-  
+
   return Y.encodeStateAsUpdate(doc);
 }
 ```
@@ -199,7 +199,7 @@ function createUpdateDelta(docId: string, changes: Record<string, unknown>): Uin
   const doc = getOrCreateDoc(docId);
   const fields = doc.getMap('fields');
   const beforeVector = Y.encodeStateVector(doc);
-  
+
   doc.transact(() => {
     for (const [key, value] of Object.entries(changes)) {
       if (!isProseField(key)) {
@@ -208,7 +208,7 @@ function createUpdateDelta(docId: string, changes: Record<string, unknown>): Uin
       // Prose fields are handled separately via prose binding
     }
   });
-  
+
   return Y.encodeStateAsUpdate(doc, beforeVector);
 }
 ```
@@ -219,10 +219,10 @@ function createUpdateDelta(docId: string, changes: Record<string, unknown>): Uin
 function applyDelta(docId: string, bytes: Uint8Array, seq: number) {
   const doc = getOrCreateDoc(docId);
   Y.applyUpdate(doc, bytes);
-  
+
   // Check for markers
   const meta = doc.getMap('_meta');
-  
+
   if (meta.get('_deleted') === true) {
     // Delete marker - check seq for conflict resolution
     const localSeq = getLocalSeq(docId);
@@ -235,13 +235,13 @@ function applyDelta(docId: string, bytes: Uint8Array, seq: number) {
     }
     return;
   }
-  
+
   if (meta.get('_created') === true) {
     // Insert marker - new document
     const fields = doc.getMap('fields');
     localDocs.set(docId, serializeFields(fields));
   }
-  
+
   // Regular update - extract fields and update local state
   const fields = doc.getMap('fields');
   localDocs.set(docId, serializeFields(fields));
@@ -255,18 +255,18 @@ function applyDelta(docId: string, bytes: Uint8Array, seq: number) {
 
 ### Delete vs Update
 
-| Scenario | Delete Seq | Update Seq | Result |
-|----------|------------|------------|--------|
-| Delete newer | 8 | 5 | **Delete wins** - Document removed |
-| Update newer | 5 | 8 | **Update wins** - Document kept/resurrected |
-| Tie | 5 | 5 | **Keep** - Tie goes to existence |
+| Scenario     | Delete Seq | Update Seq | Result                                      |
+| ------------ | ---------- | ---------- | ------------------------------------------- |
+| Delete newer | 8          | 5          | **Delete wins** - Document removed          |
+| Update newer | 5          | 8          | **Update wins** - Document kept/resurrected |
+| Tie          | 5          | 5          | **Keep** - Tie goes to existence            |
 
 **Resolution happens client-side when applying deltas:**
 
 ```typescript
 function handleDeleteConflict(docId: string, deleteSeq: number) {
   const localSeq = getLocalSeq(docId);
-  
+
   if (deleteSeq > localSeq) {
     // Delete wins - remove locally
     localDocs.delete(docId);
@@ -282,6 +282,7 @@ function handleDeleteConflict(docId: string, deleteSeq: number) {
 ### Content Conflicts
 
 Handled by Yjs automatically when applying updates:
+
 - Concurrent text edits → merged
 - Concurrent field updates → last-write-wins (Yjs default) or merged
 
@@ -296,19 +297,19 @@ Handled by Yjs automatically when applying updates:
 export const {
   // Main Table (standard Convex operations)
   material,      // Query: Get all documents (SSR/initial load)
-  
+
   // Mutations (write to Main + log to Deltas)
   insert,        // Mutation: Insert doc + log synthetic delta
-  update,        // Mutation: Update doc + log Yjs delta  
+  update,        // Mutation: Update doc + log Yjs delta
   remove,        // Mutation: Delete doc + log synthetic delta
-  
+
   // Recovery (read from Deltas)
   deltas,        // Query: Get deltas since seq
-  
+
   // Sync Coordination
   mark,          // Mutation: Report client sync position
   compact,       // Mutation: Compact old deltas (peer-aware)
-  
+
   // Presence (optional)
   sessions,      // Query: Get active sessions
   presence,      // Mutation: Update presence
@@ -326,14 +327,14 @@ async function insert(ctx, { document, bytes, material }) {
     ...material,
     timestamp: Date.now(),
   });
-  
+
   // 2. Log to deltas table (side effect)
   const seq = await ctx.runMutation(component.mutations.appendDelta, {
     collection,
     document,
     bytes,  // Synthetic insert delta with _created marker
   });
-  
+
   return { success: true, seq };
 }
 
@@ -344,21 +345,21 @@ async function update(ctx, { document, bytes, material }) {
     .query(collection)
     .withIndex("by_doc_id", q => q.eq("id", document))
     .first();
-    
+
   if (existing) {
     await ctx.db.patch(existing._id, {
       ...material,
       timestamp: Date.now(),
     });
   }
-  
+
   // 2. Log to deltas table (side effect)
   const seq = await ctx.runMutation(component.mutations.appendDelta, {
     collection,
     document,
     bytes,  // Real Yjs delta
   });
-  
+
   return { success: true, seq };
 }
 
@@ -369,18 +370,18 @@ async function remove(ctx, { document, bytes }) {
     .query(collection)
     .withIndex("by_doc_id", q => q.eq("id", document))
     .first();
-    
+
   if (existing) {
     await ctx.db.delete(existing._id);
   }
-  
+
   // 2. Log to deltas table (side effect)
   const seq = await ctx.runMutation(component.mutations.appendDelta, {
     collection,
     document,
     bytes,  // Synthetic delete delta with _deleted marker
   });
-  
+
   return { success: true, seq };
 }
 ```
@@ -424,16 +425,16 @@ async function recover() {
   // 1. Get current server state from Main table
   const serverDocs = await convex.query(api.material);
   const serverDocMap = new Map(serverDocs.map(d => [d.id, d]));
-  
+
   // 2. Categorize local documents
   const toFetch: string[] = [];   // Server ahead, need deltas
   const toPush: string[] = [];    // We're ahead, push our changes
   const toDelete: string[] = [];  // Server deleted, accept it
   const toCreate: string[] = [];  // We created offline, push to server
-  
+
   for (const [docId, localDoc] of localDocs) {
     const serverDoc = serverDocMap.get(docId);
-    
+
     if (!serverDoc) {
       // Document doesn't exist on server
       if (localDoc.pendingCreate) {
@@ -447,7 +448,7 @@ async function recover() {
           type: 'delete',
           limit: 1,
         });
-        
+
         if (deleteInfo && deleteInfo.seq > localDoc.seq) {
           toDelete.push(docId);
         } else {
@@ -462,53 +463,53 @@ async function recover() {
     }
     // If equal, we're in sync
   }
-  
+
   // Check for new docs on server we don't have locally
   for (const serverDoc of serverDocs) {
     if (!localDocs.has(serverDoc.id)) {
       toFetch.push(serverDoc.id);
     }
   }
-  
+
   // 3. Fetch and apply deltas for out-of-sync docs
   for (const docId of toFetch) {
     const localSeq = getLocalSeq(docId);
-    const deltas = await convex.query(api.deltas, { 
-      document: docId, 
-      since: localSeq 
+    const deltas = await convex.query(api.deltas, {
+      document: docId,
+      since: localSeq
     });
-    
+
     for (const delta of deltas) {
       applyDelta(docId, new Uint8Array(delta.bytes), delta.seq);
     }
   }
-  
+
   // 4. Push local changes to server
   for (const docId of toCreate) {
     const doc = ydocs.get(docId);
     const bytes = Y.encodeStateAsUpdate(doc);
     const material = serializeDoc(doc);
-    
+
     await convex.mutation(api.insert, {
       document: docId,
       bytes,
       material,
     });
   }
-  
+
   for (const docId of toPush) {
     const doc = ydocs.get(docId);
     const localVector = getLocalVector(docId);
     const bytes = Y.encodeStateAsUpdate(doc, localVector);
     const material = serializeDoc(doc);
-    
+
     await convex.mutation(api.update, {
       document: docId,
       bytes,
       material,
     });
   }
-  
+
   // 5. Apply local deletes (server deleted while we were offline)
   for (const docId of toDelete) {
     localDocs.delete(docId);
@@ -516,7 +517,7 @@ async function recover() {
     ydocs.delete(docId);
     await persistence.delete(docId);
   }
-  
+
   // 6. Switch to online mode - subscribe to Main table
   startMainTableSubscription();
 }
@@ -535,17 +536,17 @@ interface DocumentManager {
   getOrCreate(id: string): Y.Doc;
   has(id: string): boolean;
   delete(id: string): void;
-  
+
   // Content access
   getFields(id: string): Y.Map<unknown> | null;
   getFragment(id: string, field: string): Y.XmlFragment | null;
-  
+
   // Sync helpers
   applyUpdate(id: string, update: Uint8Array): void;
   encodeState(id: string): Uint8Array;
   encodeStateVector(id: string): Uint8Array;
   transactWithDelta(id: string, fn: (fields: Y.Map) => void): Uint8Array;
-  
+
   // Lifecycle
   documents(): string[];
   destroy(): void;
@@ -553,12 +554,12 @@ interface DocumentManager {
 
 function createDocumentManager(collection: string): DocumentManager {
   const docs = new Map<string, Y.Doc>();
-  
+
   return {
     get(id) {
       return docs.get(id);
     },
-    
+
     getOrCreate(id) {
       let doc = docs.get(id);
       if (!doc) {
@@ -567,11 +568,11 @@ function createDocumentManager(collection: string): DocumentManager {
       }
       return doc;
     },
-    
+
     has(id) {
       return docs.has(id);
     },
-    
+
     delete(id) {
       const doc = docs.get(id);
       if (doc) {
@@ -579,48 +580,48 @@ function createDocumentManager(collection: string): DocumentManager {
         docs.delete(id);
       }
     },
-    
+
     getFields(id) {
       const doc = docs.get(id);
       return doc ? doc.getMap('fields') : null;
     },
-    
+
     getFragment(id, field) {
       const fields = this.getFields(id);
       if (!fields) return null;
       const fragment = fields.get(field);
       return fragment instanceof Y.XmlFragment ? fragment : null;
     },
-    
+
     applyUpdate(id, update) {
       const doc = this.getOrCreate(id);
       Y.applyUpdate(doc, update);
     },
-    
+
     encodeState(id) {
       const doc = docs.get(id);
       return doc ? Y.encodeStateAsUpdate(doc) : new Uint8Array();
     },
-    
+
     encodeStateVector(id) {
       const doc = docs.get(id);
       return doc ? Y.encodeStateVector(doc) : new Uint8Array();
     },
-    
+
     transactWithDelta(id, fn) {
       const doc = this.getOrCreate(id);
       const fields = doc.getMap('fields');
       const beforeVector = Y.encodeStateVector(doc);
-      
+
       doc.transact(() => fn(fields));
-      
+
       return Y.encodeStateAsUpdate(doc, beforeVector);
     },
-    
+
     documents() {
       return Array.from(docs.keys());
     },
-    
+
     destroy() {
       for (const doc of docs.values()) {
         doc.destroy();
@@ -639,30 +640,30 @@ Outbound operations use Effect.ts actors for batching (from main branch pattern)
 
 ```typescript
 // Actor mailbox pattern for batching outbound deltas
-LocalChange 
-  → Queue.offer 
-  → debounce (200ms) 
-  → Queue.takeAll (batch) 
+LocalChange
+  → Queue.offer
+  → debounce (200ms)
+  → Queue.takeAll (batch)
   → push to server
 
 // Each document has its own actor
 const documentActor = Effect.gen(function* () {
   const queue = yield* Queue.unbounded<LocalChange>();
-  
+
   while (true) {
     // Wait for first change
     const first = yield* Queue.take(queue);
-    
+
     // Debounce - collect more changes
     yield* Effect.sleep(Duration.millis(200));
-    
+
     // Take all pending changes
     const rest = yield* Queue.takeAll(queue);
     const batch = [first, ...rest];
-    
+
     // Encode combined delta
     const delta = encodeBatchedChanges(batch);
-    
+
     // Push to server
     yield* pushDelta(delta);
   }
@@ -681,7 +682,7 @@ Y.Doc { guid: 'tasks:doc-123' }
   │     └── _created, _deleted, etc.
   └── Y.Map('fields')
         ├── title: "My Task"
-        ├── status: "open"  
+        ├── status: "open"
         └── content: Y.XmlFragment  ← Prose field (NOT a subdoc)
 ```
 
@@ -701,6 +702,7 @@ const awarenessProvider = createAwarenessProvider({
 ```
 
 **Distinguishing delta types**:
+
 ```typescript
 // Synthetic deltas only touch _meta
 { _meta: { _deleted: true } }           // Delete marker
@@ -712,6 +714,7 @@ const awarenessProvider = createAwarenessProvider({
 ```
 
 **Client detection**:
+
 ```typescript
 const meta = doc.getMap('_meta');
 if (meta.has('_deleted') || meta.has('_created')) {
@@ -725,13 +728,13 @@ if (meta.has('_deleted') || meta.has('_created')) {
 
 ## Resolved Design Decisions
 
-| Topic | Decision |
-|-------|----------|
-| **State vector storage** | `Y.encodeStateVector(doc)` stored per-doc in persistence |
-| **Pending create tracking** | Local metadata flag: `{ pendingCreate: true }` |
-| **Compaction strategy** | Existing `mark` system - compact when all peers past a seq |
-| **Offline queue** | Y.Doc state IS the queue - pending changes in doc, push on reconnect |
-| **Prose serialization** | Existing `fragmentToJSON` / `fragmentFromJSON` utilities |
+| Topic                       | Decision                                                             |
+| --------------------------- | -------------------------------------------------------------------- |
+| **State vector storage**    | `Y.encodeStateVector(doc)` stored per-doc in persistence             |
+| **Pending create tracking** | Local metadata flag: `{ pendingCreate: true }`                       |
+| **Compaction strategy**     | Existing `mark` system - compact when all peers past a seq           |
+| **Offline queue**           | Y.Doc state IS the queue - pending changes in doc, push on reconnect |
+| **Prose serialization**     | Existing `fragmentToJSON` / `fragmentFromJSON` utilities             |
 
 ---
 

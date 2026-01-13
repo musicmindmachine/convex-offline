@@ -30,11 +30,11 @@ Compaction merges individual Yjs deltas into snapshots and safely deletes old de
 
 Compaction runs exclusively on the server (Convex). Clients never compact locally.
 
-| Location | Compaction | Rationale |
-|----------|------------|-----------|
-| Server | ✅ Yes | Single source of truth, has all peer state |
-| Client (online) | ❌ No | Server handles after sync |
-| Client (offline) | ❌ No | Accumulate deltas, sync on reconnect |
+| Location         | Compaction | Rationale                                  |
+| ---------------- | ---------- | ------------------------------------------ |
+| Server           | ✅ Yes     | Single source of truth, has all peer state |
+| Client (online)  | ❌ No      | Server handles after sync                  |
+| Client (offline) | ❌ No      | Accumulate deltas, sync on reconnect       |
 
 ### 2. Peer-Safe Deletion
 
@@ -129,6 +129,7 @@ const mergedVector = Y.encodeStateVectorFromUpdateV2(merged);
 ### Phase 2: Identify Active Peers
 
 A peer is "active" if:
+
 - Currently connected (`session.connected === true`), OR
 - Disconnected within `timeout` window
 
@@ -154,7 +155,7 @@ for (const session of activeSessions) {
     canDeleteAll = false;
     break;
   }
-  
+
   const diff = Y.diffUpdateV2(merged, session.vector);
   if (diff.byteLength > 2) {
     // Non-empty diff means peer is missing data
@@ -194,7 +195,7 @@ if (canDeleteAll) {
 Remove sessions that are disconnected beyond `timeout`:
 
 ```typescript
-const staleSessions = sessions.filter(s => 
+const staleSessions = sessions.filter(s =>
   !s.connected && (now - s.seen) > timeout
 );
 
@@ -441,7 +442,7 @@ interface CompactionConfig {
 ```typescript
 import { collection } from "@trestleinc/replicate/server";
 
-export const { material, delta, replicate, presence, session } = 
+export const { material, delta, replicate, presence, session } =
   collection.create<Doc<"tasks">>(components.replicate, "tasks", {
     compaction: {
       threshold: 500,   // Trigger at 500 deltas
@@ -453,12 +454,12 @@ export const { material, delta, replicate, presence, session } =
 
 ### Common Configurations
 
-| Use Case | timeout | threshold | Notes |
-|----------|---------|-----------|-------|
-| Real-time collaboration | `"1d"` | 500 | Fast cleanup, active users |
-| Mobile app (occasional sync) | `"30d"` | 1000 | Users may be offline for weeks |
-| Enterprise (compliance) | `"90d"` | 2000 | Long retention for audit |
-| Development/Testing | `"1h"` | 100 | Fast iteration |
+| Use Case                     | timeout | threshold | Notes                          |
+| ---------------------------- | ------- | --------- | ------------------------------ |
+| Real-time collaboration      | `"1d"`  | 500       | Fast cleanup, active users     |
+| Mobile app (occasional sync) | `"30d"` | 1000      | Users may be offline for weeks |
+| Enterprise (compliance)      | `"90d"` | 2000      | Long retention for audit       |
+| Development/Testing          | `"1h"`  | 100       | Fast iteration                 |
 
 ## Trigger Conditions
 
@@ -479,6 +480,7 @@ if (deltas.length >= (config.threshold ?? 500)) {
 ```
 
 The scheduler handles:
+
 - **Deduplication**: Only one job per document runs at a time
 - **Retry**: Failed jobs retry with exponential backoff (2s, 4s, 8s)
 - **Tracking**: Job status visible in `compaction` table
@@ -515,11 +517,11 @@ The snapshot always contains the full document state, so recovery is always poss
 
 With proper compaction, storage is bounded:
 
-| Table | Bound | Notes |
-|-------|-------|-------|
-| snapshots | O(documents) | One per document |
-| deltas | O(documents × threshold) | Bounded by compaction |
-| sessions | O(active peers) | Cleaned up after timeout |
+| Table     | Bound                    | Notes                    |
+| --------- | ------------------------ | ------------------------ |
+| snapshots | O(documents)             | One per document         |
+| deltas    | O(documents × threshold) | Bounded by compaction    |
+| sessions  | O(active peers)          | Cleaned up after timeout |
 
 Without compaction, deltas grow unbounded: O(documents × operations).
 
@@ -545,12 +547,12 @@ const jobs = await ctx.db
   .collect();
 ```
 
-| Status | Meaning |
-|--------|---------|
+| Status    | Meaning                   |
+| --------- | ------------------------- |
 | `pending` | Scheduled, waiting to run |
-| `running` | Currently executing |
-| `done` | Completed successfully |
-| `failed` | Failed after 3 retries |
+| `running` | Currently executing       |
+| `done`    | Completed successfully    |
+| `failed`  | Failed after 3 retries    |
 
 ### Document Health
 

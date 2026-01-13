@@ -3,6 +3,7 @@
 ## Overview
 
 This migration addresses two major improvements:
+
 1. **Schema Normalization** - Consistent, single-word field names across all tables
 2. **Effect.ts Adoption** - Replace ad-hoc async patterns with composable Effect services
 3. **Architecture Cleanup** - Consolidate module-level state, mandatory vectors
@@ -14,32 +15,36 @@ This migration addresses two major improvements:
 ### Current → New Field Names
 
 #### `documents` table
-| Current | New | Reason |
-|---------|-----|--------|
+
+| Current      | New        | Reason                        |
+| ------------ | ---------- | ----------------------------- |
 | `documentId` | `document` | Match sessions table, shorter |
-| `crdtBytes` | `bytes` | Table name provides context |
+| `crdtBytes`  | `bytes`    | Table name provides context   |
 
 #### `snapshots` table
-| Current | New | Reason |
-|---------|-----|--------|
-| `documentId` | `document` | Consistency |
-| `snapshotBytes` | `bytes` | Redundant prefix |
-| `stateVector` | `vector` | Match sessions table |
-| `snapshotSeq` | `seq` | Redundant prefix |
-| `createdAt` | `created` | Shorter |
+
+| Current         | New        | Reason               |
+| --------------- | ---------- | -------------------- |
+| `documentId`    | `document` | Consistency          |
+| `snapshotBytes` | `bytes`    | Redundant prefix     |
+| `stateVector`   | `vector`   | Match sessions table |
+| `snapshotSeq`   | `seq`      | Redundant prefix     |
+| `createdAt`     | `created`  | Shorter              |
 
 #### `sessions` table
-| Current | New | Reason |
-|---------|-----|--------|
+
+| Current     | New       | Reason  |
+| ----------- | --------- | ------- |
 | `timeoutId` | `timeout` | Shorter |
 
 #### Index names (consistency)
-| Current | New |
-|---------|-----|
+
+| Current      | New             |
+| ------------ | --------------- |
 | `collection` | `by_collection` |
-| `document` | `by_document` |
-| `client` | `by_client` |
-| `connected` | `by_connected` |
+| `document`   | `by_document`   |
+| `client`     | `by_client`     |
+| `connected`  | `by_connected`  |
 
 ### New Schema
 
@@ -220,7 +225,7 @@ export function createPresenceLayer(config: PresenceConfig) {
       // Vector is ALWAYS available - subdocManager is injected
       const getVector = () => {
         const subdoc = config.subdocManager.get(config.document);
-        return subdoc 
+        return subdoc
           ? Y.encodeStateVector(subdoc).buffer as ArrayBuffer
           : undefined;
       };
@@ -283,7 +288,7 @@ export function createSyncLayer(config: SyncConfig) {
           Effect.gen(function* () {
             // Convex subscription with retry
             yield* Effect.acquireRelease(
-              Effect.tryPromise(() => 
+              Effect.tryPromise(() =>
                 config.convexClient.onUpdate(config.api.stream, ...)
               ).pipe(Effect.retry(retryPolicy)),
               (unsub) => Effect.sync(() => unsub())
@@ -362,6 +367,7 @@ export function initContext(config: CollectionConfig): CollectionContext {
 ### 3.1 Remove `CursorTracker` class, replace with `PresenceService`
 
 **Current (class-based, optional vector):**
+
 ```typescript
 // src/client/cursor-tracker.ts
 export class CursorTracker {
@@ -373,6 +379,7 @@ export class CursorTracker {
 ```
 
 **New (Effect service, mandatory vector):**
+
 ```typescript
 // src/client/services/presence.ts
 // PresenceService has direct SubdocManager access
@@ -382,6 +389,7 @@ export class CursorTracker {
 ### 3.2 Break up the 400-line sync IIFE in `collection.ts`
 
 **Current structure:**
+
 ```typescript
 // collection.ts lines 650-950
 sync: {
@@ -399,6 +407,7 @@ sync: {
 ```
 
 **New structure:**
+
 ```typescript
 // collection.ts
 sync: {
@@ -407,7 +416,7 @@ sync: {
       const ctx = yield* CollectionContext;
       const sync = yield* SyncService;
       const presence = yield* PresenceService;
-      
+
       yield* sync.recover();
       yield* sync.subscribe();
       yield* presence.connect();
@@ -428,17 +437,20 @@ sync: {
 ## Phase 4: Implementation Order
 
 ### Step 1: Schema Changes (Breaking)
+
 - [ ] Update `src/component/schema.ts`
 - [ ] Update `src/component/public.ts` (all field references)
 - [ ] Update `src/server/storage.ts`
 - [ ] Run build, fix any remaining references
 
 ### Step 2: CollectionContext Consolidation
+
 - [ ] Create `src/client/services/context.ts`
 - [ ] Migrate module-level Maps to CollectionContext
 - [ ] Update `collection.ts` to use context
 
 ### Step 3: PresenceService (replaces CursorTracker)
+
 - [ ] Create `src/client/services/presence.ts`
 - [ ] Implement with direct SubdocManager access
 - [ ] Mandatory vector in heartbeats
@@ -446,12 +458,14 @@ sync: {
 - [ ] Remove `src/client/cursor-tracker.ts`
 
 ### Step 4: SyncService
+
 - [ ] Create `src/client/services/sync.ts`
 - [ ] Extract recovery logic
-- [ ] Extract subscription logic  
+- [ ] Extract subscription logic
 - [ ] Add composable retry policies
 
 ### Step 5: Refactor collection.ts sync IIFE
+
 - [ ] Replace inline async with Effect.gen
 - [ ] Compose services via Layer
 - [ ] Remove cleanup functions Map (Effect handles cleanup)
@@ -461,12 +475,14 @@ sync: {
 ## Files Changed Summary
 
 ### New Files
+
 - `src/client/services/context.ts` - CollectionContext
 - `src/client/services/presence.ts` - PresenceService (replaces CursorTracker)
 - `src/client/services/sync.ts` - SyncService
 - `src/client/services/heartbeat.ts` - HeartbeatService (optional, can be part of presence)
 
 ### Modified Files
+
 - `src/component/schema.ts` - Field renames
 - `src/component/public.ts` - Field renames + index name updates
 - `src/server/storage.ts` - Field renames
@@ -474,19 +490,20 @@ sync: {
 - `src/client/index.ts` - Export changes
 
 ### Deleted Files
+
 - `src/client/cursor-tracker.ts` - Replaced by PresenceService
 
 ---
 
 ## Unix Philosophy Alignment
 
-| Principle | Implementation |
-|-----------|----------------|
-| Do one thing well | Each service has single responsibility |
-| Compose simple parts | Effect.gen + Layer composition |
-| One obvious way | Mandatory vectors, no optional callbacks |
-| Resource safety | Effect.acquireRelease for all cleanup |
-| Predictable naming | Single-word fields, `by_*` indexes |
+| Principle            | Implementation                           |
+| -------------------- | ---------------------------------------- |
+| Do one thing well    | Each service has single responsibility   |
+| Compose simple parts | Effect.gen + Layer composition           |
+| One obvious way      | Mandatory vectors, no optional callbacks |
+| Resource safety      | Effect.acquireRelease for all cleanup    |
+| Predictable naming   | Single-word fields, `by_*` indexes       |
 
 ---
 
@@ -501,6 +518,7 @@ sync: {
 ## Rollback Plan
 
 If issues arise:
+
 1. Schema changes can be reverted by restoring old field names
 2. Effect services are additive - old code paths can remain as fallback
 3. CursorTracker can be kept alongside PresenceService during transition
@@ -510,7 +528,9 @@ If issues arise:
 ## Phase 5: Parameter Naming Consistency
 
 ### Goal
+
 All function parameters should follow the same single-word noun pattern as the public API:
+
 ```typescript
 // Public API (gold standard)
 mark({ collection, document, client, vector, cursor })
@@ -522,53 +542,54 @@ stream({ collection, cursor, limit })
 
 #### Category A: ID Parameters (79 occurrences)
 
-| File | Current | New |
-|------|---------|-----|
+| File            | Current      | New        |
+| --------------- | ------------ | ---------- |
 | `collection.ts` | `documentId` | `document` |
-| `subdocs.ts` | `documentId` | `document` |
-| `prose.ts` | `documentId` | `document` |
-| `storage.ts` | `documentId` | `document` |
-| `public.ts` | `documentId` | `document` |
-| `merge.ts` | `documentId` | `document` |
+| `subdocs.ts`    | `documentId` | `document` |
+| `prose.ts`      | `documentId` | `document` |
+| `storage.ts`    | `documentId` | `document` |
+| `public.ts`     | `documentId` | `document` |
+| `merge.ts`      | `documentId` | `document` |
 
 #### Category B: Bytes Parameters (20 occurrences)
 
-| File | Current | New |
-|------|---------|-----|
-| `collection.ts` | `crdtBytes` | `bytes` |
-| `storage.ts` | `crdtBytes` | `bytes` |
-| `public.ts` | `crdtBytes` | `bytes` |
-| `storage.ts` | `snapshotBytes` | `snapshot` |
-| `public.ts` | `snapshotBytes` | `snapshot` |
+| File            | Current         | New        |
+| --------------- | --------------- | ---------- |
+| `collection.ts` | `crdtBytes`     | `bytes`    |
+| `storage.ts`    | `crdtBytes`     | `bytes`    |
+| `public.ts`     | `crdtBytes`     | `bytes`    |
+| `storage.ts`    | `snapshotBytes` | `snapshot` |
+| `public.ts`     | `snapshotBytes` | `snapshot` |
 
 #### Category C: Vector Parameters (6 occurrences)
 
-| File | Current | New | Notes |
-|------|---------|-----|-------|
+| File            | Current             | New      | Notes          |
+| --------------- | ------------------- | -------- | -------------- |
 | `collection.ts` | `clientStateVector` | `vector` | Recovery input |
-| `storage.ts` | `clientStateVector` | `vector` | Recovery input |
-| `public.ts` | `clientStateVector` | `vector` | Recovery input |
-| `storage.ts` | `stateVector` | `vector` | Compaction |
+| `storage.ts`    | `clientStateVector` | `vector` | Recovery input |
+| `public.ts`     | `clientStateVector` | `vector` | Recovery input |
+| `storage.ts`    | `stateVector`       | `vector` | Compaction     |
 
 #### Category D: Config Parameters (4 occurrences)
 
-| File | Current | New |
-|------|---------|-----|
-| `collection.ts` | `undoCaptureTimeout` | `timeout` |
-| `cursor-tracker.ts` | `heartbeatInterval` | `interval` |
-| `prose.ts` | `debounceMs` | `debounce` |
-| `storage.ts` | `peerTimeout` | `timeout` |
+| File                | Current              | New        |
+| ------------------- | -------------------- | ---------- |
+| `collection.ts`     | `undoCaptureTimeout` | `timeout`  |
+| `cursor-tracker.ts` | `heartbeatInterval`  | `interval` |
+| `prose.ts`          | `debounceMs`         | `debounce` |
+| `storage.ts`        | `peerTimeout`        | `timeout`  |
 
 #### Category E: Material Parameters (4 occurrences)
 
-| File | Current | New |
-|------|---------|-----|
+| File            | Current           | New        |
+| --------------- | ----------------- | ---------- |
 | `collection.ts` | `materializedDoc` | `material` |
-| `storage.ts` | `materializedDoc` | `material` |
+| `storage.ts`    | `materializedDoc` | `material` |
 
 ### Edge Cases
 
 #### Multiple Vectors (Recovery)
+
 ```typescript
 // Input param is `vector` (client sends theirs)
 // Output is also `vector` (server returns theirs)
@@ -576,7 +597,9 @@ recovery({ vector }) → { vector, diff, cursor }
 ```
 
 #### Config Object Properties
+
 Flat single-word unless collision:
+
 ```typescript
 // Simple (no collision)
 { timeout: 500, interval: 10000, debounce: 1000 }
@@ -587,14 +610,14 @@ Flat single-word unless collision:
 
 ### Summary
 
-| Category | Count | Effort |
-|----------|-------|--------|
-| `documentId` → `document` | 79 | Medium |
-| `crdtBytes` → `bytes` | 20 | Low |
-| Vector params | 6 | Low |
-| Config properties | 4 | Low |
-| `materializedDoc` → `material` | 4 | Low |
-| **Total** | **113** | **Medium** |
+| Category                       | Count   | Effort     |
+| ------------------------------ | ------- | ---------- |
+| `documentId` → `document`      | 79      | Medium     |
+| `crdtBytes` → `bytes`          | 20      | Low        |
+| Vector params                  | 6       | Low        |
+| Config properties              | 4       | Low        |
+| `materializedDoc` → `material` | 4       | Low        |
+| **Total**                      | **113** | **Medium** |
 
 ---
 
@@ -602,42 +625,42 @@ Flat single-word unless collision:
 
 ### Functions
 
-| Pattern | Convention | Examples |
-|---------|------------|----------|
-| Factories | `<noun>()` | `subdocs()`, `mutex()`, `layer()` |
-| Accessors | `<noun>()` | `cursor()`, `seq()`, `logger()` |
-| Transforms | `<verb>()` | `encode()`, `decode()`, `serialize()` |
-| Predicates | `is<Noun>()` | `isProse()`, `isDoc()`, `isFragment()` |
-| Actions | `<verb>()` | `apply()`, `merge()`, `observe()` |
-| Handlers | `on<Event>()` | `onSnapshot()`, `onDelta()`, `onUpdate()` |
-| Internal | `_<name>()` | `_serialize()`, `_reset()` |
+| Pattern    | Convention    | Examples                                  |
+| ---------- | ------------- | ----------------------------------------- |
+| Factories  | `<noun>()`    | `subdocs()`, `mutex()`, `layer()`         |
+| Accessors  | `<noun>()`    | `cursor()`, `seq()`, `logger()`           |
+| Transforms | `<verb>()`    | `encode()`, `decode()`, `serialize()`     |
+| Predicates | `is<Noun>()`  | `isProse()`, `isDoc()`, `isFragment()`    |
+| Actions    | `<verb>()`    | `apply()`, `merge()`, `observe()`         |
+| Handlers   | `on<Event>()` | `onSnapshot()`, `onDelta()`, `onUpdate()` |
+| Internal   | `_<name>()`   | `_serialize()`, `_reset()`                |
 
 ### Classes
 
-| Pattern | Convention | Examples |
-|---------|------------|----------|
-| Managers | `<Nouns>` (plural) | `Subdocs`, `Cursors` |
-| Services | `<Noun>` | `Cursor`, `Storage`, `Sync` |
-| Stores | `<Backend>Store` | `SqliteStore`, `MemoryStore` |
-| Errors | `<Noun>Error` | `WriteError`, `SyncError`, `ProseError` |
+| Pattern  | Convention         | Examples                                |
+| -------- | ------------------ | --------------------------------------- |
+| Managers | `<Nouns>` (plural) | `Subdocs`, `Cursors`                    |
+| Services | `<Noun>`           | `Cursor`, `Storage`, `Sync`             |
+| Stores   | `<Backend>Store`   | `SqliteStore`, `MemoryStore`            |
+| Errors   | `<Noun>Error`      | `WriteError`, `SyncError`, `ProseError` |
 
 ### Types/Interfaces
 
-| Pattern | Convention | Examples |
-|---------|------------|----------|
-| Config | `<Noun>Config` | `CollectionConfig`, `CursorConfig` |
-| Options | `<Noun>Options` | `SyncOptions`, `CompactOptions` |
-| State | Plain noun | `Cursor`, `Position`, `Profile` |
-| Operations | `<Noun>Ops` | `CursorOps`, `SyncOps` |
+| Pattern    | Convention      | Examples                           |
+| ---------- | --------------- | ---------------------------------- |
+| Config     | `<Noun>Config`  | `CollectionConfig`, `CursorConfig` |
+| Options    | `<Noun>Options` | `SyncOptions`, `CompactOptions`    |
+| State      | Plain noun      | `Cursor`, `Position`, `Profile`    |
+| Operations | `<Noun>Ops`     | `CursorOps`, `SyncOps`             |
 
 ### Parameters
 
-| Pattern | Convention | Examples |
-|---------|------------|----------|
-| IDs | Single noun | `document`, `client`, `collection` |
-| Data | Single noun | `bytes`, `vector`, `cursor` |
-| Counts | Single noun | `limit`, `offset`, `seq` |
-| Config | Single noun | `timeout`, `interval`, `debounce` |
+| Pattern | Convention  | Examples                           |
+| ------- | ----------- | ---------------------------------- |
+| IDs     | Single noun | `document`, `client`, `collection` |
+| Data    | Single noun | `bytes`, `vector`, `cursor`        |
+| Counts  | Single noun | `limit`, `offset`, `seq`           |
+| Config  | Single noun | `timeout`, `interval`, `debounce`  |
 
 ### Effect.ts Specific
 
@@ -660,36 +683,40 @@ function cursorLayer(kv: KV): Layer.Layer<Cursor> { ... }
 ## Implementation Checklist
 
 ### Phase 1: Schema Fields
+
 - [ ] `src/component/schema.ts` - Rename fields
 - [ ] `src/component/public.ts` - Update all field references
 - [ ] `src/server/storage.ts` - Update field references
 
 ### Phase 2: Function/Class Renames
+
 - [ ] `src/client/cursor-tracker.ts` → Delete (replaced by PresenceService)
 - [ ] `src/client/subdocs.ts` - Rename `createSubdocManager` → `subdocs`
 - [ ] `src/client/services/cursor.ts` - Rename `CursorService` → `Cursor`
 - [ ] `src/client/collection.ts` - Update all references
 
 ### Phase 3: Parameter Renames
+
 - [ ] `documentId` → `document` (all files)
 - [ ] `crdtBytes` → `bytes` (all files)
 - [ ] `clientStateVector` → `vector` (all files)
 - [ ] Config properties (timeout, interval, debounce)
 
 ### Phase 4: Effect.ts Services
+
 - [ ] Create `src/client/services/presence.ts`
 - [ ] Create `src/client/services/sync.ts`
 - [ ] Create `src/client/services/context.ts`
 - [ ] Refactor `collection.ts` sync IIFE
 
 ### Phase 5: Cleanup
+
 - [ ] Run `bun run build`
 - [ ] Run `bun run lint:fix`
 - [ ] Run `bun run test`
 - [ ] Update examples if needed
 
 ---
-
 
 ---
 
@@ -716,20 +743,20 @@ src/component/
 ├── public.ts            # ❌ vague → mutations.ts
 
 src/server/
-├── builder.ts           # ❌ vague → collection.ts  
+├── builder.ts           # ❌ vague → collection.ts
 ├── storage.ts           # ❌ vague → replicate.ts
 ```
 
 ### File Changes
 
-| Action | Old | New | Reason |
-|--------|-----|-----|--------|
-| DELETE | `client/cursor-tracker.ts` | - | Replaced by `services/presence.ts` |
-| MERGE | `client/prose-schema.ts` | Into `client/prose.ts` | Same concern |
-| RENAME | `client/replicate.ts` | `client/ops.ts` | Clearer |
-| RENAME | `component/public.ts` | `component/mutations.ts` | Descriptive |
-| RENAME | `server/builder.ts` | `server/collection.ts` | Matches export |
-| RENAME | `server/storage.ts` | `server/replicate.ts` | Matches export |
+| Action | Old                        | New                      | Reason                             |
+| ------ | -------------------------- | ------------------------ | ---------------------------------- |
+| DELETE | `client/cursor-tracker.ts` | -                        | Replaced by `services/presence.ts` |
+| MERGE  | `client/prose-schema.ts`   | Into `client/prose.ts`   | Same concern                       |
+| RENAME | `client/replicate.ts`      | `client/ops.ts`          | Clearer                            |
+| RENAME | `component/public.ts`      | `component/mutations.ts` | Descriptive                        |
+| RENAME | `server/builder.ts`        | `server/collection.ts`   | Matches export                     |
+| RENAME | `server/storage.ts`        | `server/replicate.ts`    | Matches export                     |
 
 ### Files That Stay (Already Correct)
 
@@ -825,12 +852,12 @@ src/
 ### Summary
 
 | Change | Count |
-|--------|-------|
-| DELETE | 1 |
-| MERGE | 1 |
-| RENAME | 4 |
-| SPLIT | 1 → 5 |
-| NEW | 3 |
+| ------ | ----- |
+| DELETE | 1     |
+| MERGE  | 1     |
+| RENAME | 4     |
+| SPLIT  | 1 → 5 |
+| NEW    | 3     |
 
 ### The Pattern
 
@@ -847,6 +874,7 @@ No PascalCase. No camelCase. No hyphens. Just lowercase words.
 ## Status: Completed Items
 
 ### ✅ Completed
+
 - Phase 1: Schema field renames (`document`, `bytes`, `vector`, `seq`, `created`)
 - Phase 2: Effect.ts services (`context.ts`, `cursor.ts`, `presence.ts`)
 - Phase 3: Architecture cleanup (`CollectionContext` integration)
@@ -863,6 +891,7 @@ No PascalCase. No camelCase. No hyphens. Just lowercase words.
 ### 🔄 Deferred: SyncService Integration
 
 `services/sync.ts` is implemented with Effect-based `Sync` service providing:
+
 - `subscribe()` - Convex subscription with retry policies
 - `recover()` - Recovery logic with vector comparison
 - `compact()` - Compaction trigger
@@ -871,6 +900,7 @@ No PascalCase. No camelCase. No hyphens. Just lowercase words.
 **Current state**: The file exists but is not yet integrated into `collection.ts`. The inline async sync logic works correctly; Effect-based refactoring is deferred to avoid risk.
 
 **To integrate later**:
+
 1. Replace the ~300-line async IIFE in `collection.ts` with `Effect.gen`
 2. Compose `SyncService` via Layer
 3. Use `Effect.acquireRelease` for cleanup

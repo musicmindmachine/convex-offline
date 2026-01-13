@@ -4,7 +4,6 @@
 
 Replicate provides a dual-storage architecture for building offline-capable applications with automatic conflict resolution. It combines Yjs CRDTs with TanStack DB's reactive state management and Convex's reactive backend for real-time synchronization and efficient querying.
 
-
 ## Architecture
 
 ### Data Flow
@@ -57,6 +56,7 @@ graph TB
 ```
 
 **Why dual storage?**
+
 - **Event Log (Component)**: Append-only CRDT deltas for conflict resolution and history
 - **Main Table**: Materialized current state for efficient queries and indexes
 - Similar to CQRS: event log = write model, main table = read model
@@ -118,10 +118,12 @@ export default defineSchema({
 ```
 
 **What `schema.table()` does:**
+
 - Automatically injects `timestamp: v.number()` (for incremental sync)
 - You only define your business logic fields
 
 **Required indexes:**
+
 - `by_doc_id` on `['id']` - Enables fast document lookups during updates
 - `by_timestamp` on `['timestamp']` - Enables efficient incremental synchronization
 
@@ -193,6 +195,7 @@ export type Task = NonNullable<typeof tasks.$docType>;
 ```
 
 **Key points:**
+
 - `collection.create(schema, tableName, options)` - pass Convex schema and table name
 - Types are automatically inferred from the Convex schema - no Zod required
 - `$docType` phantom property exposes the document type for extraction
@@ -268,6 +271,7 @@ export function TaskList() {
 ```
 
 **Lifecycle:**
+
 1. `collection.create()` - Define collection (module-level, SSR-safe)
 2. `await tasks.init()` - Initialize persistence and config (browser only, call once)
 3. `tasks.get()` - Get the TanStack DB collection instance (after init)
@@ -277,6 +281,7 @@ export function TaskList() {
 For frameworks that support SSR (TanStack Start, Next.js, Remix, SvelteKit), preloading data on the server enables instant page loads.
 
 **Why SSR is recommended:**
+
 - **Instant page loads** - No loading spinners on first render
 - **Better SEO** - Content visible to search engines
 - **Reduced client work** - Data already available on hydration
@@ -365,6 +370,7 @@ The primary sync mechanism uses monotonically increasing sequence numbers (`seq`
 5. Subscription stays open for live updates
 
 This approach enables:
+
 - **Safe compaction**: Server knows which deltas each peer has synced
 - **Peer tracking**: Active peers are tracked via `mark` calls
 - **No data loss**: Compaction only removes deltas all active peers have received
@@ -382,6 +388,7 @@ await convexClient.mutation(api.tasks.mark, {
 ```
 
 The server tracks:
+
 - Which peers are actively syncing
 - Each peer's last synced `seq` number
 - Peer timeout for cleanup (configurable via `peerTimeout`)
@@ -395,6 +402,7 @@ Compaction is safe because it respects peer sync state:
 3. Ensures no active peer loses data they haven't synced
 
 **Compaction triggers:**
+
 - **Automatic**: When document deltas exceed `sizeThreshold`
 - **Manual**: Via `compact` mutation
 
@@ -409,6 +417,7 @@ Used on startup to reconcile client and server state using Yjs state vectors:
 5. Client applies the diff to catch up
 
 **When recovery is used:**
+
 - App startup (before stream subscription begins)
 - After extended offline periods
 - When cursor-based sync can't satisfy the request (deltas compacted)
@@ -418,6 +427,7 @@ Used on startup to reconcile client and server state using Yjs state vectors:
 Replicate uses **hard deletes** where items are physically removed from the main table, while the internal component preserves complete event history.
 
 **Why hard delete?**
+
 - Clean main table (no filtering required)
 - Standard TanStack DB operations
 - Complete audit trail preserved in component event log
@@ -445,6 +455,7 @@ export const Route = createFileRoute('/')({
 ```
 
 **How it works:**
+
 1. Client calls `collection.delete(id)`
 2. `onRemove` handler captures Yjs deletion delta
 3. Delta appended to component event log (history preserved)
@@ -546,12 +557,12 @@ const binding = await collection.utils.prose(notebookId, 'content');
 // React: Use useEffect with cleanup
 useEffect(() => {
   let binding: EditorBinding | null = null;
-  
+
   collection.utils.prose(docId, 'content').then((b) => {
     binding = b;
     // Initialize your editor with binding.fragment and binding.provider
   });
-  
+
   return () => binding?.destroy();
 }, [docId]);
 
@@ -559,7 +570,7 @@ useEffect(() => {
 onMount(async () => {
   binding = await collection.utils.prose(docId, 'content');
   // Initialize TipTap with binding.fragment
-  
+
   return () => binding?.destroy();
 });
 ```
@@ -742,6 +753,7 @@ await configure({
 Creates a lazy-initialized collection with automatic type inference from Convex schema.
 
 **Parameters:**
+
 - `schema` - Your Convex schema (import from `convex/schema`)
 - `tableName` - Table name (must exist in schema)
 - `options.persistence` - Async factory returning a `Persistence` instance
@@ -750,6 +762,7 @@ Creates a lazy-initialized collection with automatic type inference from Convex 
 **Returns:** `LazyCollection<T>` with `init(material?)`, `get()`, and `$docType` for type extraction
 
 **Example:**
+
 ```typescript
 import { collection, persistence } from '@trestleinc/replicate/client';
 import { ConvexClient } from 'convex/browser';
@@ -778,6 +791,7 @@ const collection = tasks.get();
 ```
 
 **SSR Prefetch (server-side):**
+
 ```typescript
 // SvelteKit: +layout.server.ts
 import { ConvexHttpClient } from 'convex/browser';
@@ -811,6 +825,7 @@ interface CollectionConfig<T> {
 ```
 
 **Example:**
+
 ```typescript
 import schema from '../../convex/schema';
 
@@ -836,11 +851,13 @@ export type Task = NonNullable<typeof tasks.$docType>;
 Extract plain text from ProseMirror JSON.
 
 **Parameters:**
+
 - `proseJson` - ProseMirror JSON structure (XmlFragmentJSON)
 
 **Returns:** `string` - Plain text content
 
 **Example:**
+
 ```typescript
 import { schema } from '@trestleinc/replicate/client';
 
@@ -914,11 +931,13 @@ errors.NonRetriable      // Errors that should not be retried (auth, validation)
 Creates server-side collection functions that mirror the client-side collection.
 
 **Parameters:**
+
 - `component` - Your Convex component reference (`components.replicate`)
 - `name` - Collection name (e.g., `'tasks'`)
 - `options` - Optional configuration for compaction and hooks
 
 **Example:**
+
 ```typescript
 import { collection } from '@trestleinc/replicate/server';
 import { components } from './_generated/api';
@@ -933,6 +952,7 @@ export const {
 Optional configuration for `collection.create()`.
 
 **Config:**
+
 ```typescript
 interface CollectionOptions<T> {
   // Optional: Compaction settings
@@ -963,10 +983,12 @@ interface CollectionOptions<T> {
 ```
 
 **Type-safe values:**
+
 - `Size`: `"100kb"`, `"5mb"`, `"1gb"`, etc.
 - `Duration`: `"30m"`, `"24h"`, `"7d"`, etc.
 
 **Returns:** Object with generated functions:
+
 - `stream` - Real-time CRDT stream query (cursor-based with `seq` numbers)
 - `material` - SSR-friendly query for hydration
 - `recovery` - State vector sync query (for startup reconciliation)
@@ -983,12 +1005,14 @@ interface CollectionOptions<T> {
 Automatically inject `timestamp` field for incremental sync.
 
 **Parameters:**
+
 - `userFields` - User's business logic fields
 - `applyIndexes` - Optional callback to add indexes
 
 **Returns:** TableDefinition with replication fields injected
 
 **Example:**
+
 ```typescript
 import { schema } from '@trestleinc/replicate/server';
 
@@ -1010,6 +1034,7 @@ Validator for ProseMirror-compatible JSON fields.
 **Returns:** Convex validator for prose fields
 
 **Example:**
+
 ```typescript
 content: schema.prose()  // Validates ProseMirror JSON structure
 ```
@@ -1042,6 +1067,7 @@ import "react-native-random-uuid";
 ```
 
 This provides:
+
 - `crypto.getRandomValues()` - Required by Yjs for CRDT operations
 - `crypto.randomUUID()` - Used for generating document and peer IDs
 
@@ -1056,11 +1082,13 @@ A full-featured offline-first issue tracker built with Replicate, demonstrating 
 **Live Demo:** [interval.robelest.com](https://interval.robelest.com)
 
 **Source Code:** Available in three framework variants:
+
 - [`examples/tanstack-start/`](./examples/tanstack-start/) - TanStack Start (React, web)
 - [`examples/sveltekit/`](./examples/sveltekit/) - SvelteKit (Svelte, web)
 - [`examples/expo/`](./examples/expo/) - Expo (React Native, mobile)
 
 **Web features demonstrated:**
+
 - Offline-first with PGlite persistence (PostgreSQL in IndexedDB)
 - Rich text editing with TipTap + Yjs collaboration
 - PWA with custom service worker
@@ -1068,6 +1096,7 @@ A full-featured offline-first issue tracker built with Replicate, demonstrating 
 - Search with client-side text extraction (`schema.prose.extract()`)
 
 **Mobile features demonstrated (Expo):**
+
 - Native SQLite persistence (op-sqlite)
 - Plain TextInput prose binding via `useProseField` hook
 - Crypto polyfills for React Native

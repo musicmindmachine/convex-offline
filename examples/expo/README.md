@@ -47,14 +47,14 @@ bun run android
 
 ## Key Implementation Files
 
-| File | Purpose |
-|------|---------|
-| `src/collections/useIntervals.ts` | Native SQLite setup with `persistence.sqlite.native()` |
-| `src/hooks/useProseField.ts` | Y.XmlFragment to TextInput binding with debounced sync |
-| `src/contexts/IntervalsContext.tsx` | Collection initialization with `PersistenceGate` pattern |
-| `app/_layout.tsx` | Crypto polyfill imports (must be first) |
-| `metro.config.js` | Yjs/lib0 deduplication to prevent duplicate module errors |
-| `src/types/interval.ts` | Zod schema with `prose()` field type |
+| File                                | Purpose                                                   |
+| ----------------------------------- | --------------------------------------------------------- |
+| `src/collections/useIntervals.ts`   | Native SQLite setup with `persistence.sqlite.native()`    |
+| `src/hooks/useProseField.ts`        | Y.XmlFragment to TextInput binding with debounced sync    |
+| `src/contexts/IntervalsContext.tsx` | Collection initialization with `PersistenceGate` pattern  |
+| `app/_layout.tsx`                   | Crypto polyfill imports (must be first)                   |
+| `metro.config.js`                   | Yjs/lib0 deduplication to prevent duplicate module errors |
+| `src/types/interval.ts`             | Zod schema with `prose()` field type                      |
 
 ## The useProseField Pattern
 
@@ -80,13 +80,13 @@ This approach sacrifices rich text formatting but maintains full CRDT sync compa
 
 ## Differences from Web Examples
 
-| Aspect | Web (TanStack Start/SvelteKit) | React Native (Expo) |
-|--------|-------------------------------|---------------------|
-| Persistence | `sql.js` WASM + OPFS | `op-sqlite` (native SQLite) |
-| Rich Text | TipTap editor with ProseMirror | Plain TextInput + `useProseField` |
-| Crypto | Browser native | `react-native-get-random-values` polyfill |
-| Bundler | Vite | Metro with yjs/lib0 deduplication |
-| SSR | Server-side hydration via `material` | N/A - client-only |
+| Aspect      | Web (TanStack Start/SvelteKit)       | React Native (Expo)                       |
+| ----------- | ------------------------------------ | ----------------------------------------- |
+| Persistence | `sql.js` WASM + OPFS                 | `op-sqlite` (native SQLite)               |
+| Rich Text   | TipTap editor with ProseMirror       | Plain TextInput + `useProseField`         |
+| Crypto      | Browser native                       | `react-native-get-random-values` polyfill |
+| Bundler     | Vite                                 | Metro with yjs/lib0 deduplication         |
+| SSR         | Server-side hydration via `material` | N/A - client-only                         |
 
 ## Native SQLite Setup
 

@@ -5,6 +5,7 @@
 **Goal**: Remove Zod as a dependency and use Convex schema as the single source of truth for both server and client.
 
 **Key Changes**:
+
 - Users define schema ONCE in Convex (`convex/schema.ts`)
 - Client collections reference the schema directly - no duplicate Zod definitions
 - Prose fields are auto-detected by introspecting Convex validators
@@ -167,7 +168,7 @@ export type CollectionDoc<C> = C extends LazyCollection<infer T> ? T : never;
 
 ### Updated `collection.create()` Signature
 
-```typescript
+````typescript
 // src/client/collection.ts
 
 export interface CreateCollectionOptions<T extends object> {
@@ -182,15 +183,15 @@ export interface CreateCollectionOptions<T extends object> {
 export const collection = {
   /**
    * Create a lazy-initialized collection with automatic type inference.
-   * 
+   *
    * @param schema - The Convex schema object (import from convex/schema.ts)
    * @param table - The table name (must be a key in schema.tables)
    * @param options - Persistence and config factories
-   * 
+   *
    * @example
    * ```typescript
    * import schema from "../convex/schema";
-   * 
+   *
    * export const intervals = collection.create(schema, "intervals", {
    *   persistence: pglite,
    *   config: () => ({
@@ -210,7 +211,7 @@ export const collection = {
     options: CreateCollectionOptions<DocFromSchema<Schema, TableName>>
   ): LazyCollection<DocFromSchema<Schema, TableName>>;
 };
-```
+````
 
 ---
 
@@ -252,52 +253,52 @@ import type { GenericValidator } from "convex/values";
  */
 export function isProseValidator(validator: GenericValidator): boolean {
   const v = validator as any;
-  
+
   // Must be an object validator
   if (v.kind !== "object" || !v.fields) return false;
-  
+
   const { type, content } = v.fields;
-  
+
   // Must have "type" field that is v.literal("doc")
   if (!type || type.kind !== "literal" || type.value !== "doc") {
     return false;
   }
-  
+
   // Must have "content" field that is an array (optional or required)
   if (!content) return false;
-  
+
   // Handle optional wrapper
   const contentInner = content.isOptional === "optional" ? content : content;
   if (contentInner.kind !== "array") return false;
-  
+
   return true;
 }
 
 /**
  * Find all prose field names in a table validator.
- * 
+ *
  * @param validator - The table's validator (schema.tables.X.validator)
  * @returns Array of field names that are prose fields
  */
 export function findProseFields(validator: GenericValidator): string[] {
   const v = validator as any;
-  
+
   if (v.kind !== "object" || !v.fields) return [];
-  
+
   const proseFields: string[] = [];
-  
+
   for (const [fieldName, fieldValidator] of Object.entries(v.fields)) {
     // Handle optional wrapper
     let inner = fieldValidator as any;
     if (inner.isOptional === "optional" && inner.kind === "object") {
       // Optional prose field
     }
-    
+
     if (isProseValidator(inner)) {
       proseFields.push(fieldName);
     }
   }
-  
+
   return proseFields;
 }
 
@@ -315,16 +316,17 @@ export function emptyProse(): { type: "doc"; content: never[] } {
 
 ### Files to Create
 
-| File | Purpose |
-|------|---------|
+| File                       | Purpose                                                   |
+| -------------------------- | --------------------------------------------------------- |
 | `src/client/validators.ts` | `findProseFields()`, `isProseValidator()`, `emptyProse()` |
-| `src/client/types.ts` | `DocFromSchema`, `TableNamesFromSchema`, `CollectionDoc` |
+| `src/client/types.ts`      | `DocFromSchema`, `TableNamesFromSchema`, `CollectionDoc`  |
 
 ### Files to Modify
 
 #### `src/client/collection.ts`
 
 **Remove:**
+
 ```typescript
 // Line 12 - Remove StandardSchemaV1 import
 import type { StandardSchemaV1 } from "@standard-schema/spec";
@@ -352,7 +354,7 @@ export function convexCollectionOptions<
 >
 
 // Lines 213-214 - Replace Zod extractProseFields with Convex validator version
-const proseFields = schema && schema instanceof z.ZodObject 
+const proseFields = schema && schema instanceof z.ZodObject
   ? extractProseFields(schema) : [];  // REPLACE
 
 // Lines 843-846, 856, 862-863 - Update type constraints
@@ -362,6 +364,7 @@ create<TSchema extends z.ZodObject<z.ZodRawShape>>  // CHANGE
 ```
 
 **Add:**
+
 ```typescript
 // New imports
 import type { SchemaDefinition } from "convex/server";
@@ -383,10 +386,10 @@ export const collection = {
     if (!tableDefinition) {
       throw new Error(`Table "${table}" not found in schema`);
     }
-    
+
     const validator = tableDefinition.validator;
     const proseFields = findProseFields(validator);
-    
+
     // ... rest of implementation
   }
 };
@@ -395,6 +398,7 @@ export const collection = {
 #### `src/client/prose.ts`
 
 **Remove (lines 185-236):**
+
 ```typescript
 // Remove all Zod-related code
 const PROSE_MARKER = Symbol.for("replicate:prose");
@@ -407,6 +411,7 @@ export function extractProseFields(schema: z.ZodObject<z.ZodRawShape>): string[]
 ```
 
 **Keep:**
+
 - `observeFragment()` - collaborative editing
 - `isPending()` - pending state
 - `subscribePending()` - pending subscription
@@ -415,6 +420,7 @@ export function extractProseFields(schema: z.ZodObject<z.ZodRawShape>): string[]
 #### `src/client/index.ts`
 
 **Before:**
+
 ```typescript
 import { extract } from "$/client/merge";
 import { prose as proseSchema } from "$/client/prose";
@@ -428,6 +434,7 @@ export const schema = {
 ```
 
 **After:**
+
 ```typescript
 import { extract } from "$/client/merge";
 import { emptyProse } from "$/client/validators";
@@ -446,6 +453,7 @@ export type { DocFromSchema, TableNamesFromSchema, CollectionDoc } from "$/clien
 #### `src/shared/types.ts`
 
 **Before:**
+
 ```typescript
 declare const PROSE_BRAND: unique symbol;
 
@@ -455,6 +463,7 @@ export interface ProseValue extends XmlFragmentJSON {
 ```
 
 **After:**
+
 ```typescript
 // Remove branding - just use structural type
 export type ProseValue = XmlFragmentJSON;
@@ -507,22 +516,22 @@ None - all files have non-Zod code worth keeping.
 
 ### `@trestleinc/replicate/client` Exports
 
-| v1 Export | v2 Export | Notes |
-|-----------|-----------|-------|
-| `collection.create({ config: () => ({ schema, ... }) })` | `collection.create(schema, "table", { ... })` | **Breaking**: New signature |
-| `schema.prose()` | ❌ **Removed** | Use `schema.prose()` from server only |
-| `schema.prose.empty` | `schema.prose.empty` | Same API, returns plain object |
-| `schema.prose.extract(content)` | `schema.prose.extract(content)` | Unchanged |
-| - | `DocFromSchema<S, T>` | **New**: Type utility |
-| - | `TableNamesFromSchema<S>` | **New**: Type utility |
-| - | `CollectionDoc<C>` | **New**: Type utility |
+| v1 Export                                                | v2 Export                                     | Notes                                 |
+| -------------------------------------------------------- | --------------------------------------------- | ------------------------------------- |
+| `collection.create({ config: () => ({ schema, ... }) })` | `collection.create(schema, "table", { ... })` | **Breaking**: New signature           |
+| `schema.prose()`                                         | ❌ **Removed**                                | Use `schema.prose()` from server only |
+| `schema.prose.empty`                                     | `schema.prose.empty`                          | Same API, returns plain object        |
+| `schema.prose.extract(content)`                          | `schema.prose.extract(content)`               | Unchanged                             |
+| -                                                        | `DocFromSchema<S, T>`                         | **New**: Type utility                 |
+| -                                                        | `TableNamesFromSchema<S>`                     | **New**: Type utility                 |
+| -                                                        | `CollectionDoc<C>`                            | **New**: Type utility                 |
 
 ### `@trestleinc/replicate/server` Exports
 
-| v1 Export | v2 Export | Notes |
-|-----------|-----------|-------|
-| `schema.prose()` | `schema.prose()` | Unchanged |
-| `schema.table()` | `schema.table()` | Unchanged |
+| v1 Export             | v2 Export             | Notes     |
+| --------------------- | --------------------- | --------- |
+| `schema.prose()`      | `schema.prose()`      | Unchanged |
+| `schema.table()`      | `schema.table()`      | Unchanged |
 | `collection.create()` | `collection.create()` | Unchanged |
 
 ---
@@ -532,6 +541,7 @@ None - all files have non-Zod code worth keeping.
 ### Example 1: Basic Collection
 
 **Before (v1):**
+
 ```typescript
 // src/types/task.ts
 import { z } from "zod";
@@ -562,6 +572,7 @@ export type { Task };
 ```
 
 **After (v2):**
+
 ```typescript
 // src/collections/tasks.ts
 import schema from "../../convex/schema";
@@ -584,6 +595,7 @@ export type { Doc } from "../../convex/_generated/dataModel";
 ### Example 2: Collection with Prose Fields
 
 **Before (v1):**
+
 ```typescript
 // src/types/note.ts
 import { z } from "zod";
@@ -613,6 +625,7 @@ export const notes = collection.create({
 ```
 
 **After (v2):**
+
 ```typescript
 // src/collections/notes.ts
 import schema from "../../convex/schema";
@@ -633,6 +646,7 @@ export const notes = collection.create(schema, "notes", {
 ### Example 3: Using Types in Components
 
 **Before (v1):**
+
 ```typescript
 import type { Interval } from "../types/interval";
 
@@ -642,6 +656,7 @@ function IntervalCard({ interval }: { interval: Interval }) {
 ```
 
 **After (v2):**
+
 ```typescript
 import type { Doc } from "../convex/_generated/dataModel";
 
@@ -854,7 +869,7 @@ describe("findProseFields", () => {
         content: v.optional(v.array(v.any())),
       }),
     });
-    
+
     expect(findProseFields(tableValidator)).toEqual(["content", "description"]);
   });
 
@@ -863,7 +878,7 @@ describe("findProseFields", () => {
       id: v.string(),
       name: v.string(),
     });
-    
+
     expect(findProseFields(tableValidator)).toEqual([]);
   });
 });
@@ -897,7 +912,7 @@ describe("collection.create", () => {
         getKey: (note) => note.id,  // Should be typed!
       }),
     });
-    
+
     expect(notes).toBeDefined();
   });
 

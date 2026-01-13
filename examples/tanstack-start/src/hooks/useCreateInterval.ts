@@ -5,24 +5,24 @@ import { useIntervalsContext } from "../contexts/IntervalsContext";
 import { Status, Priority, type Interval } from "../types/interval";
 
 export function useCreateInterval() {
-  const { collection } = useIntervalsContext();
-  const navigate = useNavigate();
+	const { collection } = useIntervalsContext();
+	const navigate = useNavigate();
 
-  return useCallback(async () => {
-    const id = crypto.randomUUID();
-    const now = Date.now();
+	return useCallback(async () => {
+		const id = crypto.randomUUID();
+		const now = Date.now();
 
-    collection.insert({
-      id,
-      title: "Untitled",
-      description: schema.prose.empty(),
-      status: Status.BACKLOG,
-      priority: Priority.NONE,
-      createdAt: now,
-      updatedAt: now,
-    } as Interval);
+		collection.insert({
+			id,
+			title: "Untitled",
+			description: schema.prose.empty(),
+			status: Status.BACKLOG,
+			priority: Priority.NONE,
+			createdAt: now,
+			updatedAt: now,
+		} as Interval);
 
-    await new Promise(r => setTimeout(r, 100));
-    navigate({ to: "/intervals/$intervalId", params: { intervalId: id } });
-  }, [collection, navigate]);
+		await new Promise(r => setTimeout(r, 100));
+		navigate({ to: "/intervals/$intervalId", params: { intervalId: id } });
+	}, [collection, navigate]);
 }

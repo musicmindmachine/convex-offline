@@ -4,11 +4,11 @@ This guide explains how to set up your own CDN for wa-sqlite to maximize perform
 
 ## Why Self-Host?
 
-| Benefit | Description |
-|---------|-------------|
-| **Performance** | Cloudflare's edge network (300+ locations) vs jsdelivr |
-| **Reliability** | No dependency on third-party CDN uptime |
-| **Control** | Pin versions, custom cache headers, monitoring |
+| Benefit          | Description                                                 |
+| ---------------- | ----------------------------------------------------------- |
+| **Performance**  | Cloudflare's edge network (300+ locations) vs jsdelivr      |
+| **Reliability**  | No dependency on third-party CDN uptime                     |
+| **Control**      | Pin versions, custom cache headers, monitoring              |
 | **Native users** | wa-sqlite only loaded for web, not bundled for React Native |
 
 ## Current Architecture
@@ -70,27 +70,27 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const key = url.pathname.slice(1); // Remove leading slash
-    
+
     const object = await env.WA_SQLITE_BUCKET.get(key);
-    
+
     if (!object) {
       return new Response("Not Found", { status: 404 });
     }
-    
+
     const headers = new Headers();
-    
+
     // Set content type
     if (key.endsWith(".wasm")) {
       headers.set("Content-Type", "application/wasm");
     } else if (key.endsWith(".js") || key.endsWith(".mjs")) {
       headers.set("Content-Type", "application/javascript");
     }
-    
+
     // Cache headers - immutable for versioned paths
     headers.set("Cache-Control", "public, max-age=31536000, immutable");
     headers.set("Access-Control-Allow-Origin", "*");
     headers.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-    
+
     return new Response(object.body, { headers });
   },
 };
@@ -129,23 +129,23 @@ export default {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const upstreamUrl = `${UPSTREAM}${url.pathname}`;
-    
+
     // Check cache first
     const cache = caches.default;
     let response = await cache.match(request);
-    
+
     if (!response) {
       response = await fetch(upstreamUrl);
-      
+
       // Clone and add cache headers
       response = new Response(response.body, response);
       response.headers.set("Cache-Control", `public, max-age=${CACHE_TTL}`);
       response.headers.set("Access-Control-Allow-Origin", "*");
-      
+
       // Store in cache
       await cache.put(request, response.clone());
     }
-    
+
     return response;
   },
 };
@@ -251,6 +251,7 @@ echo "Uploaded wa-sqlite $VERSION to CDN"
 ### 1. Brotli Compression
 
 Cloudflare automatically applies Brotli for supported browsers:
+
 - `wa-sqlite-async.wasm`: 400KB → ~150KB (62% reduction)
 - JS files: ~43KB → ~12KB (72% reduction)
 
@@ -275,6 +276,7 @@ Cache TTL: 1 year (immutable versioned content)
 ### R2 Analytics
 
 View in Cloudflare Dashboard → R2 → Analytics:
+
 - Request count by file
 - Bandwidth usage
 - Cache hit ratio
@@ -295,12 +297,12 @@ View logs: `wrangler tail wa-sqlite-cdn`
 
 ## Cost Estimate
 
-| Resource | Free Tier | Estimated Cost |
-|----------|-----------|----------------|
-| R2 Storage | 10GB | ~$0.015/GB/month |
-| R2 Egress | 10GB/month | Free (no egress fees!) |
-| Workers | 100K req/day | Free |
-| **Total** | - | **~$0-5/month** for most apps |
+| Resource   | Free Tier    | Estimated Cost                |
+| ---------- | ------------ | ----------------------------- |
+| R2 Storage | 10GB         | ~$0.015/GB/month              |
+| R2 Egress  | 10GB/month   | Free (no egress fees!)        |
+| Workers    | 100K req/day | Free                          |
+| **Total**  | -            | **~$0-5/month** for most apps |
 
 ## Checklist
 

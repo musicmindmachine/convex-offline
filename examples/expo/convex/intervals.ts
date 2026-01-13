@@ -4,33 +4,33 @@ import { components } from "./_generated/api";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 
-export const {
-  material, delta, replicate, presence, session,
-} = collection.create<Doc<"intervals">>(components.replicate, "intervals");
+export const { material, delta, replicate, presence, session } = collection.create<
+	Doc<"intervals">
+>(components.replicate, "intervals");
 
 export const get = query({
-  args: { id: v.string() },
-  handler: async (ctx, { id }) => {
-    return await ctx.db
-      .query("intervals")
-      .withIndex("by_doc_id", q => q.eq("id", id))
-      .first();
-  },
+	args: { id: v.string() },
+	handler: async (ctx, { id }) => {
+		return await ctx.db
+			.query("intervals")
+			.withIndex("by_doc_id", q => q.eq("id", id))
+			.first();
+	},
 });
 
 export const list = query({
-  args: {},
-  handler: async (ctx) => {
-    return await ctx.db.query("intervals").withIndex("by_updated").order("desc").collect();
-  },
+	args: {},
+	handler: async ctx => {
+		return await ctx.db.query("intervals").withIndex("by_updated").order("desc").collect();
+	},
 });
 
 export const listByStatus = query({
-  args: { status: v.string() },
-  handler: async (ctx, { status }) => {
-    return await ctx.db
-      .query("intervals")
-      .withIndex("by_status", q => q.eq("status", status))
-      .collect();
-  },
+	args: { status: v.string() },
+	handler: async (ctx, { status }) => {
+		return await ctx.db
+			.query("intervals")
+			.withIndex("by_status", q => q.eq("status", status))
+			.collect();
+	},
 });

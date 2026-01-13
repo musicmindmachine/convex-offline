@@ -5,6 +5,7 @@
 Add real-time session tracking and cursor positions to Replicate by extending the existing sync infrastructure. This enables collaborative features like "who's online" and live cursor positions in editors.
 
 **Important Discoveries:**
+
 1. Current session tracking is per-collection but should be per-document (compaction bug)
 2. Current Y.Doc architecture (one doc per collection) doesn't support per-document cursors properly
 3. Need Yjs subdocuments pattern for correct per-document clientID and cursor isolation
@@ -22,6 +23,7 @@ Since Replicate already handles Y.Doc sync internally, it makes architectural se
 ### Research Sources
 
 This plan is informed by deep research into production sync engines:
+
 - **[Linear Sync Engine](https://github.com/wzhudev/reverse-linear-sync-engine)** - Reverse engineering endorsed by Linear's CTO
 - **[Liveblocks Yjs](https://github.com/liveblocks/liveblocks/tree/main/packages/liveblocks-yjs)** - Awareness integration patterns
 - **[Hocuspocus](https://github.com/ueberdosis/hocuspocus)** - Server awareness handling
@@ -35,6 +37,7 @@ This plan is informed by deep research into production sync engines:
 ### Problem 1: Collection-Level Sessions, Document-Level Compaction
 
 **Current Schema:**
+
 ```typescript
 peers: defineTable({
   collection: v.string(),
@@ -47,6 +50,7 @@ peers: defineTable({
 ```
 
 **Compaction is per-document:**
+
 ```typescript
 compact({
   collection: v.string(),
@@ -58,6 +62,7 @@ compact({
 **But sessions are tracked per-collection.** This causes incorrect compaction behavior:
 
 **Scenario:**
+
 1. Alice opens `interval_123` only, syncs to seq=50
 2. Bob opens `interval_456` only, syncs to seq=100
 3. Both are tracked in the same collection-level table
@@ -70,6 +75,7 @@ compact({
 ### Problem 2: Single Y.Doc Prevents Per-Document Cursors
 
 **Current Architecture:**
+
 ```typescript
 // One Y.Doc per collection, all documents share it
 const ydoc = new Y.Doc({ guid: collection });
@@ -79,6 +85,7 @@ ymap.set('doc_b', {...});  // Same clientID for all!
 ```
 
 **Why this breaks cursor tracking:**
+
 - Each Y.Doc has a single `clientID`
 - If one Y.Doc contains all documents, all documents share the same `clientID`
 - Per-document cursor isolation becomes impossible
@@ -91,30 +98,30 @@ ymap.set('doc_b', {...});  // Same clientID for all!
 
 ### Scope Clarification
 
-| Concern | Scope | Purpose |
-|---------|-------|---------|
-| **Sessions (sync)** | ALL documents | Compaction safety (`client`, `seq`, `seen` fields) |
-| **Sessions (identity)** | ALL documents | Who's online (`user`, `profile` fields) |
-| **Cursors** | Prose fields only | Cursor positions in editors (`cursor`, `active` fields) |
+| Concern                 | Scope             | Purpose                                                 |
+| ----------------------- | ----------------- | ------------------------------------------------------- |
+| **Sessions (sync)**     | ALL documents     | Compaction safety (`client`, `seq`, `seen` fields)      |
+| **Sessions (identity)** | ALL documents     | Who's online (`user`, `profile` fields)                 |
+| **Cursors**             | Prose fields only | Cursor positions in editors (`cursor`, `active` fields) |
 
 A document without prose fields still needs session tracking for compaction, just no cursor tracking.
 
 ### Client vs User Identity
 
-| Concept | Yjs Term | Our Term | Description |
-|---------|----------|----------|-------------|
-| **Client** | `clientID` | `client` | Unique per Y.Doc instance (per browser tab) |
-| **User** | `user.id` in awareness state | `user` | Authenticated user (can have multiple clients) |
+| Concept    | Yjs Term                     | Our Term | Description                                    |
+| ---------- | ---------------------------- | -------- | ---------------------------------------------- |
+| **Client** | `clientID`                   | `client` | Unique per Y.Doc instance (per browser tab)    |
+| **User**   | `user.id` in awareness state | `user`   | Authenticated user (can have multiple clients) |
 
 **Same user on 2 devices = 2 clients but 1 user**
 
 ### Session States
 
-| State | Meaning | Use Case |
-|-------|---------|----------|
-| **Active (cursor)** | User has cursor in this document | Show cursor, typing indicator |
-| **Connected (sync)** | User has this document open | Show in "online" list, safe compaction |
-| **Disconnected** | User closed this document | Can compact their deltas |
+| State                | Meaning                          | Use Case                               |
+| -------------------- | -------------------------------- | -------------------------------------- |
+| **Active (cursor)**  | User has cursor in this document | Show cursor, typing indicator          |
+| **Connected (sync)** | User has this document open      | Show in "online" list, safe compaction |
+| **Disconnected**     | User closed this document        | Can compact their deltas               |
 
 Transitions are instant via `visibilitychange` and `beforeunload` handlers (see Instant Disconnect section).
 
@@ -168,6 +175,7 @@ Collection (workspace)
 ```
 
 **Benefits:**
+
 - Each document has unique `clientID` (proper Yjs semantics)
 - Per-document awareness isolation (only sync within document)
 - More efficient (only sync what user is viewing)
@@ -265,6 +273,7 @@ function getAwareness(documentId: string): Awareness {
 ### API Structure
 
 **User-facing export is minimal:**
+
 ```typescript
 // convex/intervals.ts
 import { Replicate } from "@trestleinc/replicate/server";
@@ -277,12 +286,13 @@ export const comments = replicate<Comment>({ collection: "comments" });
 ```
 
 **Generated API shape:**
+
 ```typescript
 // Public (user may call directly)
 api.intervals.stream     // real-time sync subscription
 api.intervals.material   // SSR prefetch
 api.intervals.insert     // create document
-api.intervals.update     // update document  
+api.intervals.update     // update document
 api.intervals.remove     // delete document
 api.intervals.sessions   // who's online (NEW)
 api.intervals.cursors    // cursor positions (NEW)
@@ -295,6 +305,7 @@ api.intervals.internal.leave     // disconnect cleanup (NEW)
 ```
 
 **Client usage unchanged:**
+
 ```typescript
 const intervals = collection.create({
   config: () => ({
@@ -317,7 +328,7 @@ sessions: defineTable({
   client: v.string(),         // Unique client identifier (browser tab/device)
   seq: v.number(),            // Their sync position for THIS document
   seen: v.number(),           // Last heartbeat timestamp
-  
+
   // Identity (optional, set by app)
   user: v.optional(v.string()),              // Authenticated user ID
   profile: v.optional(v.object({             // User display info
@@ -325,7 +336,7 @@ sessions: defineTable({
     color: v.optional(v.string()),
     avatar: v.optional(v.string()),
   })),
-  
+
   // Cursor (optional, only for prose bindings)
   cursor: v.optional(v.object({
     anchor: v.number(),
@@ -360,22 +371,22 @@ documents: defineTable({
 
 ### Field Name Mapping
 
-| Old Name | New Name | Rationale |
-|----------|----------|-----------|
-| `peers` (table) | `sessions` | Table tracks client sessions per document |
-| `peerId` | `client` | Clearer - it's a client/device ID |
-| `documentId` | `document` | Shorter, context is clear |
-| `lastSyncedSeq` | `seq` | Their sync position |
-| `lastSeenAt` | `seen` | Last heartbeat |
-| `userId` | `user` | Authenticated user ID |
-| `userData` | `profile` | Display info |
-| `awareness.user.*` | ❌ removed | Duplicate of `profile` |
-| `awareness.cursor.*` | `cursor.*` | Flattened - cursor IS awareness |
-| `awarenessUpdatedAt` | `active` | Cursor freshness |
-| `snapshotBytes` | `bytes` | Context clear from table |
-| `stateVector` | `vector` | Shorter |
-| `createdAt` | `created` | Shorter |
-| `crdtBytes` | `bytes` | Context clear from table |
+| Old Name             | New Name   | Rationale                                 |
+| -------------------- | ---------- | ----------------------------------------- |
+| `peers` (table)      | `sessions` | Table tracks client sessions per document |
+| `peerId`             | `client`   | Clearer - it's a client/device ID         |
+| `documentId`         | `document` | Shorter, context is clear                 |
+| `lastSyncedSeq`      | `seq`      | Their sync position                       |
+| `lastSeenAt`         | `seen`     | Last heartbeat                            |
+| `userId`             | `user`     | Authenticated user ID                     |
+| `userData`           | `profile`  | Display info                              |
+| `awareness.user.*`   | ❌ removed | Duplicate of `profile`                    |
+| `awareness.cursor.*` | `cursor.*` | Flattened - cursor IS awareness           |
+| `awarenessUpdatedAt` | `active`   | Cursor freshness                          |
+| `snapshotBytes`      | `bytes`    | Context clear from table                  |
+| `stateVector`        | `vector`   | Shorter                                   |
+| `createdAt`          | `created`  | Shorter                                   |
+| `crdtBytes`          | `bytes`    | Context clear from table                  |
 
 ### Separation of Concerns
 
@@ -397,14 +408,14 @@ sessions table
 
 ### Why JSON for Cursor (Not Binary)?
 
-| Aspect | Binary (`y-protocols`) | JSON |
-|--------|------------------------|------|
-| **Wire size** | Slightly smaller | Slightly larger |
-| **Convex storage** | Needs `v.bytes()` | Native `v.object()` |
-| **Debugging** | Opaque binary | Human-readable in dashboard |
-| **Compatibility** | Must match y-protocols version | No version coupling |
-| **Parsing** | Client must decode | Direct use |
-| **Client compute** | Encode/decode overhead | Zero overhead |
+| Aspect             | Binary (`y-protocols`)         | JSON                        |
+| ------------------ | ------------------------------ | --------------------------- |
+| **Wire size**      | Slightly smaller               | Slightly larger             |
+| **Convex storage** | Needs `v.bytes()`              | Native `v.object()`         |
+| **Debugging**      | Opaque binary                  | Human-readable in dashboard |
+| **Compatibility**  | Must match y-protocols version | No version coupling         |
+| **Parsing**        | Client must decode             | Direct use                  |
+| **Client compute** | Encode/decode overhead         | Zero overhead               |
 
 The binary format was designed for **incremental WebSocket updates**. In our Convex model, we store **full cursor state per client** and use reactive queries - JSON is simpler and just as effective.
 
@@ -457,10 +468,10 @@ Deleting session records based on inactivity causes data loss:
 
 #### How It Works
 
-| Event | Trigger | Mechanism | Purpose |
-|-------|---------|-----------|---------|
+| Event              | Trigger             | Mechanism                 | Purpose                                   |
+| ------------------ | ------------------- | ------------------------- | ----------------------------------------- |
 | `visibilitychange` | Tab hidden/switched | Normal WebSocket mutation | Cursor disappears when user switches tabs |
-| `beforeunload` | Tab closing | HTTP via `sendBeacon` | Cursor disappears instantly on tab close |
+| `beforeunload`     | Tab closing         | HTTP via `sendBeacon`     | Cursor disappears instantly on tab close  |
 
 #### Client-Side (Automatic)
 
@@ -508,6 +519,7 @@ class CursorTracker {
 ```
 
 **User code is unchanged:**
+
 ```typescript
 const binding = await collection.utils.prose(docId, 'content');
 // beforeunload handler registered automatically
@@ -548,13 +560,13 @@ export const leave = mutation({
   handler: async (ctx, args) => {
     const record = await ctx.db
       .query("sessions")
-      .withIndex("client", q => 
+      .withIndex("client", q =>
         q.eq("collection", args.collection)
          .eq("document", args.document)
          .eq("client", args.client)
       )
       .first();
-    
+
     if (record) {
       // Clear cursor but keep session record for sync tracking
       await ctx.db.patch(record._id, {
@@ -568,13 +580,14 @@ export const leave = mutation({
 
 #### Why sendBeacon?
 
-| Approach | Works on Tab Close | Supports Auth | Complexity |
-|----------|-------------------|---------------|------------|
-| Normal mutation | ❌ WebSocket dies | ✅ | Low |
-| `sendBeacon` | ✅ Fire-and-forget | ❌ | Low |
-| `fetch` + `keepalive` | ✅ | ✅ | Medium |
+| Approach              | Works on Tab Close | Supports Auth | Complexity |
+| --------------------- | ------------------ | ------------- | ---------- |
+| Normal mutation       | ❌ WebSocket dies  | ✅            | Low        |
+| `sendBeacon`          | ✅ Fire-and-forget | ❌            | Low        |
+| `fetch` + `keepalive` | ✅                 | ✅            | Medium     |
 
 We use `sendBeacon` because:
+
 - Cursor clearing doesn't need auth (uses `client` ID already in session record)
 - Simplest API for fire-and-forget
 - Browser guarantees delivery even after page closes
@@ -596,6 +609,7 @@ When a client returns after being offline:
 ```
 
 This works even if deltas were compacted while offline, because:
+
 - Compaction creates a snapshot containing all prior state
 - Recovery uses state vectors, not sequential deltas
 - The snapshot + any post-compaction deltas = full state
@@ -628,7 +642,7 @@ export const mark = mutation({
     document: v.string(),              // NEW: Required
     client: v.string(),
     seq: v.optional(v.number()),       // Optional: only sync loop provides this
-    
+
     // Identity (optional, for any document)
     user: v.optional(v.string()),
     profile: v.optional(v.object({
@@ -636,7 +650,7 @@ export const mark = mutation({
       color: v.optional(v.string()),
       avatar: v.optional(v.string()),
     })),
-    
+
     // Cursor (optional, only for prose bindings)
     cursor: v.optional(v.object({
       anchor: v.number(),
@@ -658,14 +672,14 @@ export const mark = mutation({
     const updates: any = {
       seen: now,
     };
-    
+
     // Only update seq if provided (sync loop calls)
     if (args.seq !== undefined) {
-      updates.seq = existing 
+      updates.seq = existing
         ? Math.max(existing.seq, args.seq)
         : args.seq;
     }
-    
+
     // Only update these if provided
     if (args.user !== undefined) updates.user = args.user;
     if (args.profile !== undefined) updates.profile = args.profile;
@@ -738,7 +752,7 @@ export const leave = mutation({
          .eq("client", args.client)
       )
       .first();
-    
+
     if (existing) {
       // Clear cursor but keep the session record for sync tracking
       await ctx.db.patch(existing._id, {
@@ -800,7 +814,7 @@ export const sessions = query({
          .eq("document", args.document)
       )
       .collect();
-    
+
     let results = records.map(p => ({
       client: p.client,
       document: p.document,
@@ -808,7 +822,7 @@ export const sessions = query({
       profile: p.profile,
       seen: p.seen,
     }));
-    
+
     if (args.group) {
       const byUser = new Map();
       for (const p of results) {
@@ -820,7 +834,7 @@ export const sessions = query({
       }
       results = Array.from(byUser.values());
     }
-    
+
     return results;
   },
 });
@@ -857,7 +871,7 @@ export const cursors = query({
          .eq("document", args.document)
       )
       .collect();
-    
+
     return records
       .filter(p => p.client !== args.exclude)
       .filter(p => p.cursor)
@@ -880,6 +894,7 @@ export const cursors = query({
 Current code calls `mark` without document. Need to track which documents the user has open.
 
 **Option A: Mark per-document as deltas arrive**
+
 ```typescript
 const seenDocuments = new Set<string>();
 for (const change of changes) {
@@ -895,6 +910,7 @@ for (const doc of seenDocuments) {
 ```
 
 **Option B: Track "active document" client-side (Recommended)**
+
 - Only mark documents the user has actually opened via `utils.prose()`
 - More efficient, matches user intent
 
@@ -910,6 +926,7 @@ binding.cursor.update({ anchor: 5, head: 10 });
 ```
 
 **Interface:**
+
 ```typescript
 interface CursorPosition {
   anchor: number;
@@ -927,25 +944,26 @@ interface ClientCursor {
 interface CursorTracker {
   /** Get local cursor position */
   get(): CursorPosition | null;
-  
+
   /** Update local cursor position (syncs to server) */
   update(position: CursorPosition): void;
-  
+
   /** Get all other clients' cursors (excludes self) */
   others(): Map<string, ClientCursor>;
-  
+
   /** Subscribe to changes */
   on(event: 'change', cb: () => void): void;
-  
+
   /** Unsubscribe from changes */
   off(event: 'change', cb: () => void): void;
-  
+
   /** Cleanup and notify server */
   destroy(): void;
 }
 ```
 
 **Usage:**
+
 ```typescript
 const binding = await collection.utils.prose(docId, 'content');
 
@@ -969,6 +987,7 @@ binding.cursor.destroy();
 ```
 
 **Internal implementation (JSON-based, no y-protocols):**
+
 ```typescript
 // src/client/cursor.ts
 
@@ -983,7 +1002,7 @@ export class CursorTracker {
   private field: string;
   private unsubscribe?: () => void;
   private listeners: Set<() => void> = new Set();
-  
+
   constructor(config: {
     convexClient: ConvexClient;
     api: ConvexCollectionApi;
@@ -1000,46 +1019,46 @@ export class CursorTracker {
     this.document = config.document;
     this.client = config.client;
     this.field = config.field;
-    
+
     // Subscribe to server cursors
     this.subscribeToServer();
   }
-  
+
   /** Get local cursor position */
   get(): CursorPosition | null {
     return this.position;
   }
-  
+
   /** Update local cursor (syncs to server) */
   update(position: Omit<CursorPosition, 'field'>): void {
     this.position = { ...position, field: this.field };
     this.syncToServer();
   }
-  
+
   /** Get all other clients' cursors (excludes self) */
   others(): Map<string, ClientCursor> {
     return new Map(this.remoteClients);
   }
-  
+
   /** Subscribe to changes */
   on(event: 'change', cb: () => void): void {
     if (event === 'change') {
       this.listeners.add(cb);
     }
   }
-  
+
   /** Unsubscribe from changes */
   off(event: 'change', cb: () => void): void {
     if (event === 'change') {
       this.listeners.delete(cb);
     }
   }
-  
+
   /** Cleanup */
   destroy(): void {
     this.unsubscribe?.();
     this.listeners.clear();
-    
+
     // Notify server (clear cursor)
     this.convexClient.mutation(this.api.internal.leave, {
       collection: this.collection,
@@ -1047,12 +1066,12 @@ export class CursorTracker {
       client: this.client,
     }).catch(() => {});
   }
-  
+
   // --- Private ---
-  
+
   private syncToServer = debounce(async () => {
     if (!this.position) return;
-    
+
     await this.convexClient.mutation(this.api.internal.mark, {
       collection: this.collection,
       document: this.document,
@@ -1060,12 +1079,12 @@ export class CursorTracker {
       cursor: this.position,  // Plain JSON!
     });
   }, 200);
-  
+
   private subscribeToServer(): void {
     this.unsubscribe = this.convexClient.onUpdate(
       this.api.cursors,
-      { 
-        collection: this.collection, 
+      {
+        collection: this.collection,
         document: this.document,
         exclude: this.client,
       },
@@ -1084,6 +1103,7 @@ export class CursorTracker {
 ```
 
 **Key simplification:** No `y-protocols` encoding/decoding. Cursor state is plain JSON all the way through:
+
 - Client → `mark({ cursor: {...} })` → Convex stores JSON → `cursors()` returns JSON → Client uses directly
 
 ### 3. Update `EditorBinding`
@@ -1113,7 +1133,7 @@ async prose(document: string, field: ProseFields<DataType>): Promise<EditorBindi
   // 1. Get or create subdocument (lazy loading)
   const rootDoc = this.getRootDoc();
   const documentsMap = rootDoc.getMap<Y.Doc>('documents');
-  
+
   let subdoc = documentsMap.get(document);
   if (!subdoc) {
     // Create new subdocument with unique guid
@@ -1121,10 +1141,10 @@ async prose(document: string, field: ProseFields<DataType>): Promise<EditorBindi
     documentsMap.set(document, subdoc);
   }
   subdoc.load();  // Yjs lazy loading
-  
+
   // 2. Get the fragment from subdocument
   const fragment = subdoc.getXmlFragment(field);
-  
+
   // 3. Create per-document cursor tracker (JSON-based)
   const cursor = new CursorTracker({
     convexClient: this.convexClient,
@@ -1136,11 +1156,11 @@ async prose(document: string, field: ProseFields<DataType>): Promise<EditorBindi
     user: this.config.user,
     profile: this.config.profile,
   });
-  
+
   // 4. Track this binding for cleanup
   const bindingKey = `${document}:${field}`;
   this.activeBindings.set(bindingKey, { subdoc, cursor });
-  
+
   return {
     fragment,
     cursor,
@@ -1154,6 +1174,7 @@ async prose(document: string, field: ProseFields<DataType>): Promise<EditorBindi
 ```
 
 **Key change:** Each document is now a separate Y.Doc (subdocument), not a map entry in a shared Y.Doc. This enables:
+
 - Unique clientID per document (correct Yjs semantics)
 - Per-document cursor isolation
 - Lazy loading of document content
@@ -1170,12 +1191,14 @@ Device B (phone):  client="xyz", document="interval_123", user="user_alice"
 ```
 
 **`sessions({ document: "interval_123", group: true })`**:
+
 ```typescript
 [{ user: "user_alice", profile: { name: "Alice" }, online: true }]
 // One session entry (grouped by user)
 ```
 
 **`cursors({ document: "interval_123" })`**:
+
 ```typescript
 [
   { client: "abc", cursor: { anchor: 10, head: 10 } },  // laptop cursor
@@ -1192,12 +1215,14 @@ Device B: client="xyz", document="interval_456", user="user_alice"
 ```
 
 **`sessions({ document: "interval_123" })`**:
+
 ```typescript
 [{ user: "user_alice", online: true }]
 // Only Alice's laptop
 ```
 
 **`sessions({ document: "interval_456" })`**:
+
 ```typescript
 [{ user: "user_alice", online: true }]
 // Only Alice's phone
@@ -1211,7 +1236,7 @@ Device B: client="xyz", document="interval_456", user="user_alice"
 // Update via mark with user
 await mark({
   collection: "intervals",
-  document: "doc_1", 
+  document: "doc_1",
   client: "abc",
   seq: currentSeq,
   user: "user_alice",
@@ -1226,7 +1251,7 @@ await mark({
 await mark({
   collection: "intervals",
   document: "doc_1",
-  client: "abc", 
+  client: "abc",
   seq: currentSeq,
   user: null,     // Clear
   profile: null,  // Clear
@@ -1241,12 +1266,12 @@ Research into [Linear's sync engine](https://github.com/wzhudev/reverse-linear-s
 
 ### What We Already Have (Same as Linear)
 
-| Pattern | Linear | Replicate |
-|---------|--------|-----------|
-| **Global version number** | `lastSyncId` | `seq` in deltas |
-| **Delta-based sync** | Broadcast changes | Stream subscription |
-| **Cursor-based sync** | Track position | Client tracks cursor |
-| **Recovery sync** | Full bootstrap | State vectors |
+| Pattern                   | Linear            | Replicate            |
+| ------------------------- | ----------------- | -------------------- |
+| **Global version number** | `lastSyncId`      | `seq` in deltas      |
+| **Delta-based sync**      | Broadcast changes | Stream subscription  |
+| **Cursor-based sync**     | Track position    | Client tracks cursor |
+| **Recovery sync**         | Full bootstrap    | State vectors        |
 
 ### Key Linear Patterns We're Adopting
 
@@ -1264,6 +1289,7 @@ Linear uses **total ordering** (OT-like) with last-writer-wins. We use **Yjs CRD
 ## Implementation Phases
 
 ### Phase 1: Subdocuments Refactor (Foundation)
+
 - [ ] Change Y.Doc structure to one subdoc per document
 - [ ] Update `utils.prose()` to lazy-load subdocuments
 - [ ] Ensure subdocuments have unique `guid` (use document ID)
@@ -1271,6 +1297,7 @@ Linear uses **total ordering** (OT-like) with last-writer-wins. We use **Yjs CRD
 - [ ] Test sync still works with new structure
 
 ### Phase 2: Per-Document Session Tracking (Bug Fix)
+
 - [ ] Rename `peers` table to `sessions`
 - [ ] Update schema with new field names (`document`, `client`, `seq`, `seen`)
 - [ ] Update `mark` to require `document`
@@ -1280,6 +1307,7 @@ Linear uses **total ordering** (OT-like) with last-writer-wins. We use **Yjs CRD
 - [ ] Add migration note to CHANGELOG
 
 ### Phase 3: Identity & Cursors (JSON-based)
+
 - [ ] Add `user`, `profile`, `cursor`, `active` fields to sessions schema
 - [ ] Add `sessions` query (who's online)
 - [ ] Add `cursors` query (cursor positions for prose)
@@ -1288,18 +1316,21 @@ Linear uses **total ordering** (OT-like) with last-writer-wins. We use **Yjs CRD
 - [ ] Test cursor sync with multiple users
 
 ### Phase 4: Client Integration
+
 - [ ] Update `EditorBinding` interface to include `cursor`
 - [ ] Update `utils.prose()` to create cursor tracker
 - [ ] Handle cleanup on unmount/document change
 - [ ] Integrate sessions query
 
 ### Phase 5: React Hooks & Examples
+
 - [ ] `useSessions(collection, document)` hook
 - [ ] `useCursors(collection, document)` hook
 - [ ] Update TanStack Start example with cursors
 - [ ] Add cursor rendering to TipTap
 
 ### Phase 6: React Native
+
 - [ ] Ensure cursor tracking works without TipTap
 - [ ] Plain cursor position tracking for native editors
 - [ ] Test on Expo example
@@ -1309,56 +1340,66 @@ Linear uses **total ordering** (OT-like) with last-writer-wins. We use **Yjs CRD
 ## Design Decisions
 
 ### Why session tracking for ALL docs, but cursors only for prose?
+
 - **Session tracking (sync):** Required for compaction safety on ANY document
 - **Cursor tracking:** Only makes sense for prose fields with editor bindings
 - Documents without prose still need `seq` tracking to avoid delta growth
 
 ### Why subdocuments instead of single Y.Doc?
+
 - **Correct Yjs semantics:** Each Y.Doc has unique clientID
 - **Per-document cursor isolation:** Cursors isolated to document being viewed
 - **Efficiency:** Only sync/load documents user is viewing
 - **Future-proof:** Foundation for per-document permissions, selective offline
 
 ### Why JSON cursors instead of y-protocols binary?
+
 - **Human-readable:** Debug in Convex dashboard
 - **Less compute:** No encoding/decoding on client
 - **No dependency:** Don't need `y-protocols` for cursor state
 - **Native Convex:** `v.object()` instead of `v.bytes()`
 
 ### Why lazy-load subdocuments?
+
 - **Performance:** Don't load all documents on startup
 - **Memory:** Only hold open documents in memory
 - **Network:** Fetch data only when needed
 - **Natural fit:** `utils.prose(doc, field)` is the access point
 
 ### Why single-word field names?
+
 - Matches existing pattern: `stream`, `mark`, `compact`, `insert`, `remove`
 - Easier to remember and discover
 - Cleaner schema: `seq` vs `lastSyncedSeq`, `client` vs `peerId`
 
 ### Why extend `mark` instead of new function?
+
 - `mark` already updates the sessions table
 - Reduces API surface area
 - Natural extension: "mark my position" now includes cursor position
 
 ### Why per-document sessions instead of per-collection?
+
 - **Correctness:** Compaction is per-document, so session tracking must match
 - **Efficiency:** Don't retain deltas for documents a client hasn't opened
 - **Session accuracy:** Show who's in THIS document, not just the collection
 
 ### Why separate `seen` and `active`?
+
 - **`seen`:** Updated on sync heartbeat (for compaction decisions)
 - **`active`:** Updated on cursor move (for cursor tracking)
 - A user can move their cursor without syncing (reading, not editing)
 - Cursor updates shouldn't block compaction
 
 ### Why `leave` instead of deleting session?
+
 - Preserves `seq` for safe compaction
 - Allows "last seen X ago" feature
 - Only clears `cursor` (cursor disappears from UI)
 - Session record remains for when they return
 
 ### Why clean slate migration?
+
 - Existing records lack `document` and can't be backfilled accurately
 - Recovery sync ensures no data loss - clients will catch up
 - Simpler than complex migration logic
@@ -1368,16 +1409,17 @@ Linear uses **total ordering** (OT-like) with last-writer-wins. We use **Yjs CRD
 
 ## Summary of Key Parameters
 
-| Parameter | Field | Purpose |
-|-----------|-------|---------|
-| **Cursor debounce** | — | 200ms batch for rapid cursor movements |
-| **Max clients per document** | — | Unlimited (records are small) |
+| Parameter                    | Field | Purpose                                |
+| ---------------------------- | ----- | -------------------------------------- |
+| **Cursor debounce**          | —     | 200ms batch for rapid cursor movements |
+| **Max clients per document** | —     | Unlimited (records are small)          |
 
 ---
 
 ## Open Questions
 
 **Resolved:**
+
 - ~~Y.Doc architecture~~ → Subdocuments (Option B)
 - ~~Cursor format~~ → JSON (Liveblocks pattern)
 - ~~Migration strategy~~ → Clean slate

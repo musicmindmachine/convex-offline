@@ -15,47 +15,47 @@ import "../global.css";
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
-  const theme = colorScheme === "dark" ? NAV_THEME.dark : NAV_THEME.light;
+	const colorScheme = useColorScheme();
+	const theme = colorScheme === "dark" ? NAV_THEME.dark : NAV_THEME.light;
 
-  useEffect(() => {
-    SplashScreen.hideAsync();
-  }, []);
+	useEffect(() => {
+		SplashScreen.hideAsync();
+	}, []);
 
-  return (
-    <ThemeProvider value={theme}>
-      <FilterProvider>
-        <IntervalsProvider>
-          <Stack
-            screenOptions={{
-              headerStyle: {
-                backgroundColor: theme.colors.card,
-              },
-              headerTintColor: theme.colors.text,
-              headerTitleStyle: {
-                fontWeight: "600",
-              },
-              contentStyle: {
-                backgroundColor: theme.colors.background,
-              },
-            }}
-          >
-            <Stack.Screen
-              name="index"
-              options={{
-                title: "Intervals",
-              }}
-            />
-            <Stack.Screen
-              name="interval/[id]"
-              options={{
-                title: "Interval",
-              }}
-            />
-          </Stack>
-        </IntervalsProvider>
-      </FilterProvider>
-      <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
-    </ThemeProvider>
-  );
+	return (
+		<ThemeProvider value={theme}>
+			<FilterProvider>
+				<IntervalsProvider>
+					<Stack
+						screenOptions={{
+							headerStyle: {
+								backgroundColor: theme.colors.card,
+							},
+							headerTintColor: theme.colors.text,
+							headerTitleStyle: {
+								fontWeight: "600",
+							},
+							contentStyle: {
+								backgroundColor: theme.colors.background,
+							},
+						}}
+					>
+						<Stack.Screen
+							name="index"
+							options={{
+								title: "Intervals",
+							}}
+						/>
+						<Stack.Screen
+							name="interval/[id]"
+							options={{
+								title: "Interval",
+							}}
+						/>
+					</Stack>
+				</IntervalsProvider>
+			</FilterProvider>
+			<StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
+		</ThemeProvider>
+	);
 }

@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **CRITICAL**: When looking up documentation for any library (Yjs, Convex, TanStack, etc.), ALWAYS use the Context7 MCP tool. NEVER use WebSearch for library documentation.
 
 **Usage pattern:**
+
 1. First resolve the library ID: `mcp__context7__resolve-library-id` with library name
 2. Then fetch docs: `mcp__context7__get-library-docs` with the resolved ID and topic
 
@@ -15,6 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Replicate** (`@trestleinc/replicate`) - Offline-first data replication using Yjs CRDTs and Convex for automatic conflict resolution and real-time synchronization.
 
 Single package with exports:
+
 - `@trestleinc/replicate/client` - Client utilities (browser/React/Svelte)
 - `@trestleinc/replicate/server` - Server helpers (Convex functions)
 - `@trestleinc/replicate/shared` - Shared types (ProseFields, XmlFragmentJSON, OperationType)
@@ -37,6 +39,7 @@ bun run lint:fix     # Auto-fix lint errors
 ## Architecture
 
 ### Package Structure
+
 ```
 src/
 ├── client/                  # Client-side (browser)
@@ -89,17 +92,20 @@ services/
 #### Sync Manager Design
 
 **DocumentSync** (`sync.ts`):
+
 - One sync handler per document (prose field)
 - Simple `setTimeout` debouncing (default 200ms)
 - Pending state with listener subscriptions
 - Methods: `onLocalChange()`, `onServerUpdate()`, `isPending()`, `onPendingChange()`, `destroy()`
 
 **SyncManager** (`sync.ts`):
+
 - Per-collection sync managers to avoid cross-collection conflicts
 - Methods: `register`, `get`, `unregister`, `destroy`
 - Module-level Map for collection isolation
 
 **SeqService** (`seq.ts`):
+
 - Tracks cursor/sequence numbers for sync progress
 - Persists highest `seq` received from server
 - Simple async interface: `load()`, `save()`, `clear()`
@@ -137,11 +143,13 @@ Server update (via stream subscription)
 ### Core Concepts
 
 **Event-Sourced Dual Storage:**
+
 - Component storage: Append-only Yjs CRDT deltas (event log)
 - Main table: Materialized documents (read model)
 - Similar to CQRS pattern
 
 **CollectionContext** (`context.ts`):
+
 - Consolidated state for each collection
 - Replaces multiple module-level Maps
 - Contains: subdocManager, convexClient, api, peerId, persistence, proseFields, mutex
@@ -149,6 +157,7 @@ Server update (via stream subscription)
 ## Public API Surface
 
 ### Client (`@trestleinc/replicate/client`)
+
 ```typescript
 // Main entry point
 collection.create()           // Create lazy-initialized collection (SSR-safe)
@@ -169,6 +178,7 @@ schema.prose.empty()          // Create empty prose value
 ```
 
 ### Server (`@trestleinc/replicate/server`)
+
 ```typescript
 replicate()                   // Factory to create bound replicate function
 
@@ -178,6 +188,7 @@ schema.prose()                // Validator for ProseMirror JSON
 ```
 
 ### Shared (`@trestleinc/replicate/shared`)
+
 ```typescript
 ProseFields<T>                // Extract prose field names from document type
 XmlFragmentJSON               // ProseMirror-compatible JSON structure
@@ -187,6 +198,7 @@ OperationType                 // Enum: Delta | Snapshot
 ## Key Patterns
 
 ### Server: replicate Factory
+
 ```typescript
 // convex/replicate.ts (create once)
 import { replicate } from '@trestleinc/replicate/server';
@@ -200,6 +212,7 @@ export const { stream, material, insert, update, remove, versions } =
 ```
 
 ### Client: Collection Setup
+
 ```typescript
 import { collection, persistence } from '@trestleinc/replicate/client';
 import { ConvexClient } from 'convex/browser';
@@ -250,7 +263,7 @@ const unsubscribe = sync.onPendingChange((pending) => {
 - **Simple sync manager** - Per-document sync handlers with setTimeout debouncing
 - **Debounce batching** - Rapid local changes coalesced into single sync (200ms default)
 - **Hard deletes** - Documents physically removed from main table, history kept in component
-- **LogTape logging** - Use LogTape, not console.*
+- **LogTape logging** - Use LogTape, not console.\*
 - **Import types** - Use `import type` for type-only imports
 - **bun for commands** - Use `bun run` not `pnpm run` for all commands
 - **No external deps for sync** - Sync system uses plain JavaScript (no Effect.ts)

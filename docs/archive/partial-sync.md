@@ -7,6 +7,7 @@ Building on the presence branch foundation, this document outlines strategies fo
 ## Core Principle: Correctness First
 
 **We never sacrifice CRDT history for performance.** All optimizations must preserve:
+
 - Full operation history for offline clients
 - State vectors for conflict resolution
 - Ability to sync with any client regardless of when they last connected
@@ -26,22 +27,22 @@ Building on the presence branch foundation, this document outlines strategies fo
 
 ### ✅ Safe (Preserve CRDT History)
 
-| Technique | Size Reduction | Description |
-|-----------|---------------|-------------|
-| `Y.mergeUpdates()` | ~61% | Combines updates, keeps all operations |
-| State vector diffing | Variable | Only transfer missing ops |
-| Batch network calls | N/A | Reduce round trips |
-| Parallel doc processing | N/A | Different docs don't conflict |
-| Indexed queries | N/A | Faster DB reads |
-| Compaction (current) | ~70% | Merge deltas into snapshot in component |
+| Technique               | Size Reduction | Description                             |
+| ----------------------- | -------------- | --------------------------------------- |
+| `Y.mergeUpdates()`      | ~61%           | Combines updates, keeps all operations  |
+| State vector diffing    | Variable       | Only transfer missing ops               |
+| Batch network calls     | N/A            | Reduce round trips                      |
+| Parallel doc processing | N/A            | Different docs don't conflict           |
+| Indexed queries         | N/A            | Faster DB reads                         |
+| Compaction (current)    | ~70%           | Merge deltas into snapshot in component |
 
 ### ❌ Unsafe (Never Do)
 
-| Technique | Why Dangerous |
-|-----------|---------------|
-| Fresh doc from snapshot | Loses CRDT history, breaks offline sync |
-| Truncating old operations | Offline clients can't merge |
-| Discarding tombstones | Deleted items may reappear |
+| Technique                 | Why Dangerous                           |
+| ------------------------- | --------------------------------------- |
+| Fresh doc from snapshot   | Loses CRDT history, breaks offline sync |
+| Truncating old operations | Offline clients can't merge             |
+| Discarding tombstones     | Deleted items may reappear              |
 
 ---
 
@@ -67,6 +68,7 @@ onInsert: async ({ transaction }) => {
 ```
 
 When clicking rapidly:
+
 - First ~10 succeed before rate limiting
 - Remaining hit OCC conflicts/rate limits
 - Those transactions get rolled back, **items disappear from UI**
@@ -80,7 +82,7 @@ Local CRDT state is the source of truth. Server sync is just replication.
 onInsert: async ({ transaction }) => {
   // 1. Apply to local Yjs immediately (synchronous)
   const deltas = applyYjsInsert(transaction.mutations);
-  
+
   // 2. Fire-and-forget server sync - don't await, don't throw
   Promise.all([persistenceReadyPromise, optimisticReadyPromise])
     .then(() => {
@@ -89,7 +91,7 @@ onInsert: async ({ transaction }) => {
         transaction.mutations.map(async (mut, i) => {
           const delta = deltas[i];
           if (!delta || delta.length === 0) return;
-          
+
           const document = String(mut.key);
           await syncWithRetry("insert", document, delta, mut.modified);
         })
@@ -98,7 +100,7 @@ onInsert: async ({ transaction }) => {
     .catch((error) => {
       logger.error`Insert sync failed: ${error}`;
     });
-  
+
   // 4. Return immediately - local state is already applied
 }
 ```
@@ -120,7 +122,7 @@ class RetryQueue {
   private processing = false;
   private maxAttempts = 5;
   private baseDelay = 1000;
-  
+
   async enqueue(item: Omit<RetryItem, "attempts" | "nextRetry">) {
     this.queue.push({
       ...item,
@@ -129,22 +131,22 @@ class RetryQueue {
     });
     this.process();
   }
-  
+
   private async process() {
     if (this.processing) return;
     this.processing = true;
-    
+
     while (this.queue.length > 0) {
       const now = Date.now();
       const ready = this.queue.filter(item => item.nextRetry <= now);
-      
+
       if (ready.length === 0) {
         // Wait for next item
         const nextTime = Math.min(...this.queue.map(i => i.nextRetry));
         await sleep(nextTime - now);
         continue;
       }
-      
+
       // Process ready items in parallel
       await Promise.all(ready.map(async (item) => {
         try {
@@ -165,10 +167,10 @@ class RetryQueue {
         }
       }));
     }
-    
+
     this.processing = false;
   }
-  
+
   private async executeMutation(item: RetryItem) {
     switch (item.type) {
       case "insert":
@@ -219,13 +221,13 @@ async function syncWithRetry(
 // onInsert - parallel, fire-and-forget, with retry
 onInsert: async ({ transaction }) => {
   const deltas = applyYjsInsert(transaction.mutations);
-  
+
   Promise.all([persistenceReadyPromise, optimisticReadyPromise])
     .then(() => Promise.all(
       transaction.mutations.map((mut, i) => {
         const delta = deltas[i];
         if (!delta?.length) return;
-        return syncWithRetry("insert", String(mut.key), delta, 
+        return syncWithRetry("insert", String(mut.key), delta,
           extractDocumentFromSubdoc(subdocManager, String(mut.key)) ?? mut.modified);
       })
     ))
@@ -235,7 +237,7 @@ onInsert: async ({ transaction }) => {
 // onUpdate - parallel, fire-and-forget, with retry
 onUpdate: async ({ transaction }) => {
   const deltas = applyYjsUpdate(transaction.mutations);
-  
+
   Promise.all([persistenceReadyPromise, optimisticReadyPromise])
     .then(() => Promise.all(
       transaction.mutations.map((mut, i) => {
@@ -248,11 +250,11 @@ onUpdate: async ({ transaction }) => {
     .catch(e => logger.error`Update sync error: ${e}`);
 }
 
-// onDelete - parallel, fire-and-forget, with retry  
+// onDelete - parallel, fire-and-forget, with retry
 onDelete: async ({ transaction }) => {
   const deltas = applyYjsDelete(transaction.mutations);
   ops.delete(transaction.mutations.map(m => m.original).filter(Boolean));
-  
+
   Promise.all([persistenceReadyPromise, optimisticReadyPromise])
     .then(() => Promise.all(
       transaction.mutations.map((mut, i) => {
@@ -284,7 +286,7 @@ Convex automatically batches mutations within a single function as an atomic tra
 
 ```typescript
 export const batchSync = mutation({
-  args: { 
+  args: {
     documents: v.array(v.object({
       id: v.string(),
       bytes: v.bytes(),
@@ -307,7 +309,7 @@ Debounce rapid updates and batch them:
 class SyncBatcher {
   private pending = new Map<string, Uint8Array>();
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
-  
+
   add(document: string, delta: Uint8Array) {
     // Merge with pending delta for same document
     const existing = this.pending.get(document);
@@ -318,13 +320,13 @@ class SyncBatcher {
     }
     this.scheduleFlush();
   }
-  
+
   private scheduleFlush() {
     if (!this.flushTimer) {
       this.flushTimer = setTimeout(() => this.flush(), 100);
     }
   }
-  
+
   private async flush() {
     this.flushTimer = null;
     const batch = Array.from(this.pending.entries()).map(([id, bytes]) => ({
@@ -332,7 +334,7 @@ class SyncBatcher {
       bytes,
     }));
     this.pending.clear();
-    
+
     if (batch.length > 0) {
       await convexClient.mutation(api.sync.batchSync, { documents: batch });
     }
@@ -378,14 +380,14 @@ async function applyBatchUpdates(updates: Array<{doc: string, bytes: ArrayBuffer
     existing.push(new Uint8Array(bytes));
     byDoc.set(doc, existing);
   }
-  
+
   // Process documents in parallel
   await Promise.all(
     Array.from(byDoc.entries()).map(async ([doc, docUpdates]) => {
       // Merge all updates for this document first
       const merged = Y.mergeUpdates(docUpdates);
       subdocManager.applyUpdate(doc, merged, "server");
-      
+
       const item = extractDocumentFromSubdoc(subdocManager, doc);
       if (item) ops.upsert([item]);
     })
@@ -490,19 +492,19 @@ export const mergeDocumentDeltas = internalMutation({
     const deltas = await ctx.db.query("deltas")
       .withIndex("by_document", q => q.eq("document", document))
       .collect();
-    
+
     if (deltas.length < 50) return; // Not worth merging yet
-    
+
     // Merge all deltas (preserves full history)
     const merged = Y.mergeUpdates(deltas.map(d => new Uint8Array(d.bytes)));
-    
+
     // Replace with single merged delta
     await ctx.db.insert("deltas", {
       document,
       bytes: merged,
       seq: deltas[deltas.length - 1].seq,
     });
-    
+
     // Delete old deltas
     for (const delta of deltas) {
       await ctx.db.delete(delta._id);
@@ -534,7 +536,7 @@ export const stream = query({
   args: { scopes: v.array(v.string()), seq: v.number() },
   handler: async (ctx, { scopes, seq }) => {
     return ctx.db.query("deltas")
-      .withIndex("by_scope_seq", q => 
+      .withIndex("by_scope_seq", q =>
         q.eq("scope", scopes[0]).gt("seq", seq))
       .take(1000);
   },
@@ -547,7 +549,7 @@ Load full CRDT content on-demand:
 
 ```typescript
 // Initial sync: Metadata only (fast)
-const material = await api.intervals.listMetadata(); 
+const material = await api.intervals.listMetadata();
 // Returns: [{ id, title, updatedAt }, ...]
 
 // On document open: Full CRDT state
@@ -563,25 +565,25 @@ Sync visible/active documents first:
 class PrioritySyncQueue {
   private visible = new Set<string>();
   private queue: Array<{ doc: string; priority: number; bytes: Uint8Array }> = [];
-  
+
   setVisible(docs: string[]) {
     this.visible = new Set(docs);
     this.queue.sort((a, b) => this.getPriority(a.doc) - this.getPriority(b.doc));
   }
-  
+
   private getPriority(doc: string): number {
     return this.visible.has(doc) ? 0 : 1;
   }
-  
+
   enqueue(doc: string, bytes: Uint8Array) {
     this.queue.push({ doc, priority: this.getPriority(doc), bytes });
     this.queue.sort((a, b) => a.priority - b.priority);
   }
-  
+
   async processNext(): Promise<boolean> {
     const item = this.queue.shift();
     if (!item) return false;
-    
+
     await this.applyUpdate(item.doc, item.bytes);
     return true;
   }
@@ -616,14 +618,14 @@ export const streamMaterial = query({
   args: { cursor: v.optional(v.string()), limit: v.number() },
   handler: async (ctx, { cursor, limit }) => {
     let query = ctx.db.query("documents").withIndex("by_id");
-    
+
     if (cursor) {
       query = query.filter(q => q.gt(q.field("id"), cursor));
     }
-    
+
     const docs = await query.take(limit);
     const nextCursor = docs.length === limit ? docs[docs.length - 1].id : null;
-    
+
     return { docs, nextCursor, hasMore: !!nextCursor };
   },
 });
@@ -632,18 +634,18 @@ export const streamMaterial = query({
 async function loadCollection() {
   let cursor = null;
   let totalLoaded = 0;
-  
+
   do {
-    const { docs, nextCursor, hasMore } = await api.streamMaterial({ 
-      cursor, 
-      limit: 100 
+    const { docs, nextCursor, hasMore } = await api.streamMaterial({
+      cursor,
+      limit: 100
     });
-    
+
     // Apply batch and update UI immediately
     await applyBatchUpdates(docs);
     totalLoaded += docs.length;
     onProgress?.(totalLoaded);
-    
+
     cursor = nextCursor;
   } while (cursor);
 }
@@ -675,7 +677,7 @@ export const mergeHighDeltaDocs = internalMutation({
       .withIndex("by_delta_count")
       .filter(q => q.gt(q.field("deltaCount"), 100))
       .take(50);
-    
+
     for (const doc of candidates) {
       await ctx.scheduler.runAfter(0, internal.sync.mergeDocumentDeltas, {
         document: doc.id,
@@ -701,6 +703,7 @@ Client                          Server
 ```
 
 **Limitations:**
+
 - Single stream subscription
 - Sequential delta application (mutex)
 - All documents loaded upfront
@@ -729,6 +732,7 @@ Client                                    Server
 ```
 
 **Benefits:**
+
 - **Fire-and-forget mutations (no UI rollback)**
 - **Retry queue with exponential backoff**
 - Document-level parallelism (no OCC conflicts between docs)
@@ -742,7 +746,9 @@ Client                                    Server
 ## 8. Implementation Roadmap
 
 ### Phase 0: Fire-and-Forget Mutations (CRITICAL)
+
 **Priority: Immediate - Fixes UI rollback bug**
+
 - [ ] Convert onInsert to fire-and-forget with parallel mutations
 - [ ] Convert onUpdate to fire-and-forget with parallel mutations
 - [ ] Convert onDelete to fire-and-forget with parallel mutations
@@ -751,29 +757,35 @@ Client                                    Server
 - [ ] Persist retry queue to localStorage (survive refresh)
 
 ### Phase 1: OCC Reduction (High Impact)
+
 **Priority: Immediate - Reduces server errors**
+
 - [ ] Write coalescing with debounce (50ms)
 - [ ] Predicate-based index locking (narrow read sets)
 - [ ] Replace for-loops with Promise.all everywhere
 - [ ] Background compaction via scheduler
 
 ### Phase 2: Batch Operations (Low Risk)
+
 - [ ] Client-side update batching with `Y.mergeUpdates()`
 - [ ] Server-side batch mutations
 - [ ] Batch SSR prefetching
 
 ### Phase 3: Parallel Processing (Medium Risk)
+
 - [ ] Document-level parallel CRDT application
 - [ ] Workpool integration for high-throughput sync
 - [ ] Parallel stream subscription handling
 - [ ] Sharded counters for delta counts
 
 ### Phase 4: Partial Sync (Higher Complexity)
+
 - [ ] Scope/filter-based subscriptions
 - [ ] Lazy document loading
 - [ ] Priority-based sync queue
 
 ### Phase 5: Advanced Optimizations
+
 - [ ] Aggregate component for collection stats
 - [ ] HTTP Actions + CDN caching for SSR
 - [ ] Periodic delta merging cron
@@ -783,16 +795,16 @@ Client                                    Server
 
 ## Benchmarks (Target)
 
-| Metric | Current | Target |
-|--------|---------|--------|
-| Initial load (1K docs) | ~3s | <500ms |
-| Initial load (10K docs) | N/A | <2s |
-| Delta apply (batch 100) | ~500ms | <100ms |
-| Memory (10K docs) | TBD | <100MB |
-| Time to first render | ~2s | <200ms |
-| Rapid clicks (20x) | ~10 succeed | 20/20 persist |
-| Mutation UI response | Blocks on server | Instant |
-| Server error handling | Rollback UI | Retry in background |
+| Metric                  | Current          | Target              |
+| ----------------------- | ---------------- | ------------------- |
+| Initial load (1K docs)  | ~3s              | <500ms              |
+| Initial load (10K docs) | N/A              | <2s                 |
+| Delta apply (batch 100) | ~500ms           | <100ms              |
+| Memory (10K docs)       | TBD              | <100MB              |
+| Time to first render    | ~2s              | <200ms              |
+| Rapid clicks (20x)      | ~10 succeed      | 20/20 persist       |
+| Mutation UI response    | Blocks on server | Instant             |
+| Server error handling   | Rollback UI      | Retry in background |
 
 ---
 
@@ -864,9 +876,9 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const url = new URL(request.url);
     const collection = url.pathname.split("/").pop();
-    
+
     const data = await ctx.runQuery(api.tasks.material, { collection });
-    
+
     return new Response(JSON.stringify(data), {
       headers: {
         "Content-Type": "application/json",
@@ -890,12 +902,12 @@ class WriteCoalescer {
     material: unknown;
     timer: ReturnType<typeof setTimeout>;
   }>();
-  
+
   private debounceMs = 50;
-  
+
   write(document: string, delta: Uint8Array, material: unknown) {
     const existing = this.pending.get(document);
-    
+
     if (existing) {
       clearTimeout(existing.timer);
       // Merge deltas
@@ -910,11 +922,11 @@ class WriteCoalescer {
       });
     }
   }
-  
+
   private async flush(document: string) {
     const item = this.pending.get(document);
     if (!item) return;
-    
+
     this.pending.delete(document);
     await syncWithRetry("update", document, item.delta, item.material);
   }
@@ -954,7 +966,7 @@ Avoid blocking mutations with scheduled work:
 export const insertDocument = mutation({
   handler: async (ctx, args) => {
     await ctx.db.insert("deltas", { ... });
-    
+
     // Check if compaction needed
     const deltaCount = await deltaCounter.count(ctx, args.document);
     if (deltaCount >= 500) {
@@ -974,13 +986,13 @@ Persist retry queue to survive page refresh:
 ```typescript
 class PersistentRetryQueue extends RetryQueue {
   private storageKey = "replicate:retryQueue";
-  
+
   constructor() {
     super();
     this.loadFromStorage();
     window.addEventListener("beforeunload", () => this.saveToStorage());
   }
-  
+
   private loadFromStorage() {
     const stored = localStorage.getItem(this.storageKey);
     if (stored) {
@@ -992,7 +1004,7 @@ class PersistentRetryQueue extends RetryQueue {
       this.process();
     }
   }
-  
+
   private saveToStorage() {
     const serializable = this.queue.map(item => ({
       ...item,
@@ -1007,19 +1019,19 @@ class PersistentRetryQueue extends RetryQueue {
 
 ## 10. Priority Matrix
 
-| Improvement | Effort | Impact | OCC Reduction | Priority |
-|------------|--------|--------|---------------|----------|
-| **Fire-and-Forget Mutations** | Short | Critical | ✅ | 🔴 Immediate |
-| **Write Coalescing** | Quick | High | ✅ Direct | 🔴 Do First |
-| **Predicate Index Locking** | Short | High | ✅ Direct | 🔴 Do First |
-| **Parallel Promise.all** | Quick | High | ✅ | 🔴 Do First |
-| **RetryQueue** | Short | High | | 🟡 Important |
-| **Offline Queue Persistence** | Short | High | | 🟡 Important |
-| **Sharded Counter** | Short | High | ✅ Direct | 🟡 If counting bottleneck |
-| **Background Compaction** | Short | Medium | ✅ Indirect | 🟡 Nice to Have |
-| **Aggregate Component** | Short | Medium | | 🟢 Later |
-| **HTTP + CDN for SSR** | Quick | Medium | | 🟢 If SSR load high |
-| **Subscription Chunking** | Short | Medium | | 🟢 Later |
+| Improvement                   | Effort | Impact   | OCC Reduction | Priority                  |
+| ----------------------------- | ------ | -------- | ------------- | ------------------------- |
+| **Fire-and-Forget Mutations** | Short  | Critical | ✅            | 🔴 Immediate              |
+| **Write Coalescing**          | Quick  | High     | ✅ Direct     | 🔴 Do First               |
+| **Predicate Index Locking**   | Short  | High     | ✅ Direct     | 🔴 Do First               |
+| **Parallel Promise.all**      | Quick  | High     | ✅            | 🔴 Do First               |
+| **RetryQueue**                | Short  | High     |               | 🟡 Important              |
+| **Offline Queue Persistence** | Short  | High     |               | 🟡 Important              |
+| **Sharded Counter**           | Short  | High     | ✅ Direct     | 🟡 If counting bottleneck |
+| **Background Compaction**     | Short  | Medium   | ✅ Indirect   | 🟡 Nice to Have           |
+| **Aggregate Component**       | Short  | Medium   |               | 🟢 Later                  |
+| **HTTP + CDN for SSR**        | Quick  | Medium   |               | 🟢 If SSR load high       |
+| **Subscription Chunking**     | Short  | Medium   |               | 🟢 Later                  |
 
 ---
 
@@ -1028,10 +1040,11 @@ class PersistentRetryQueue extends RetryQueue {
 The Convex architecture uses Optimistic Concurrency Control. Current OCC-prone patterns:
 
 1. **`mark` mutations** - Update same session doc from all clients every 10s
-2. **`compact` mutations** - Read all sessions to check safety  
+2. **`compact` mutations** - Read all sessions to check safety
 3. **`stream` queries** - Count all deltas per document
 
 **Top fixes:**
+
 1. Write Coalescing (reduce mutation frequency)
 2. Predicate Locking (narrow read sets)
 3. Sharded Counters (distribute write load)

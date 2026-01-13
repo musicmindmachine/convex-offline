@@ -5,9 +5,9 @@ import { intervals, type Interval } from "../collections/useIntervals";
 import { comments, type Comment } from "../collections/useComments";
 
 interface IntervalsContextValue {
-  collection: ReturnType<typeof intervals.get>;
-  intervals: Interval[];
-  isLoading: boolean;
+	collection: ReturnType<typeof intervals.get>;
+	intervals: Interval[];
+	isLoading: boolean;
 }
 
 const IntervalsContext = createContext<IntervalsContextValue | null>(null);
@@ -15,72 +15,73 @@ const IntervalsContext = createContext<IntervalsContextValue | null>(null);
 let persistenceInitialized = false;
 
 interface PersistenceGateProps {
-  children: ReactNode;
-  intervalsMaterial?: Materialized<Interval>;
-  commentsMaterial?: Materialized<Comment>;
+	children: ReactNode;
+	intervalsMaterial?: Materialized<Interval>;
+	commentsMaterial?: Materialized<Comment>;
 }
 
 function PersistenceGate({ children, intervalsMaterial, commentsMaterial }: PersistenceGateProps) {
-  const [ready, setReady] = useState(persistenceInitialized);
+	const [ready, setReady] = useState(persistenceInitialized);
 
-  useEffect(() => {
-    if (!ready) {
-      Promise.all([
-        intervals.init(intervalsMaterial),
-        comments.init(commentsMaterial),
-      ]).then(() => {
-        persistenceInitialized = true;
-        setReady(true);
-      });
-    }
-  }, [ready, intervalsMaterial, commentsMaterial]);
+	useEffect(() => {
+		if (!ready) {
+			Promise.all([intervals.init(intervalsMaterial), comments.init(commentsMaterial)]).then(() => {
+				persistenceInitialized = true;
+				setReady(true);
+			});
+		}
+	}, [ready, intervalsMaterial, commentsMaterial]);
 
-  if (!ready) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="text-muted-foreground">Loading...</div>
-      </div>
-    );
-  }
+	if (!ready) {
+		return (
+			<div className="flex items-center justify-center h-screen">
+				<div className="text-muted-foreground">Loading...</div>
+			</div>
+		);
+	}
 
-  return <>{children}</>;
+	return <>{children}</>;
 }
 
 function IntervalsProviderInner({ children }: { children: ReactNode }) {
-  const collection = intervals.get();
-  const { data: intervalsData = [], isLoading } = useLiveQuery(collection);
+	const collection = intervals.get();
+	const { data: intervalsData = [], isLoading } = useLiveQuery(collection);
 
-  return (
-    <IntervalsContext.Provider
-      value={{
-        collection,
-        intervals: intervalsData,
-        isLoading,
-      }}
-    >
-      {children}
-    </IntervalsContext.Provider>
-  );
+	return (
+		<IntervalsContext.Provider
+			value={{
+				collection,
+				intervals: intervalsData,
+				isLoading,
+			}}
+		>
+			{children}
+		</IntervalsContext.Provider>
+	);
 }
 
 interface IntervalsProviderProps {
-  children: ReactNode;
-  intervalsMaterial?: Materialized<Interval>;
-  commentsMaterial?: Materialized<Comment>;
+	children: ReactNode;
+	intervalsMaterial?: Materialized<Interval>;
+	commentsMaterial?: Materialized<Comment>;
 }
 
-export function IntervalsProvider({ children, intervalsMaterial, commentsMaterial }: IntervalsProviderProps) {
-  return (
-    <PersistenceGate intervalsMaterial={intervalsMaterial} commentsMaterial={commentsMaterial}>
-      <IntervalsProviderInner>{children}</IntervalsProviderInner>
-    </PersistenceGate>
-  );
+export function IntervalsProvider({
+	children,
+	intervalsMaterial,
+	commentsMaterial,
+}: IntervalsProviderProps) {
+	return (
+		<PersistenceGate intervalsMaterial={intervalsMaterial} commentsMaterial={commentsMaterial}>
+			<IntervalsProviderInner>{children}</IntervalsProviderInner>
+		</PersistenceGate>
+	);
 }
 
 export function useIntervalsContext() {
-  const ctx = useContext(IntervalsContext);
-  if (!ctx) {
-    throw new Error("useIntervalsContext must be used within IntervalsProvider");
-  }
-  return ctx;
+	const ctx = useContext(IntervalsContext);
+	if (!ctx) {
+		throw new Error("useIntervalsContext must be used within IntervalsProvider");
+	}
+	return ctx;
 }
