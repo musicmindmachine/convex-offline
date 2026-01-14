@@ -42,12 +42,12 @@ A Linear-style issue tracker built with TanStack Router + Convex + TipTap, using
 **Replicate Fragments for Rich Text**: TipTap content is stored as Y.XmlFragment via Replicate's prose binding:
 
 ```typescript
-const binding = await collection.utils.prose(intervalId, 'description');
+const binding = await collection.utils.prose(intervalId, "description");
 const editor = useEditor({
-  extensions: [
-    StarterKit.configure({ history: false }),
-    Collaboration.configure({ fragment: binding.fragment }),
-  ],
+	extensions: [
+		StarterKit.configure({ history: false }),
+		Collaboration.configure({ fragment: binding.fragment }),
+	],
 });
 ```
 
