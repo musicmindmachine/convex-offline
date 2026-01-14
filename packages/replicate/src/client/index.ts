@@ -18,7 +18,7 @@ export {
 
 export type { DocFromSchema, TableNamesFromSchema, InferDoc } from "$/client/types";
 
-export { identity, type UserIdentity } from "$/client/identity";
+export { identity, type UserIdentity, type AnonymousPresenceConfig } from "$/client/identity";
 
 export { type Seq } from "$/client/services/seq";
 

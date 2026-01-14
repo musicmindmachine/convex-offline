@@ -9,12 +9,10 @@ import {
 	type NonSingleResult,
 	type BaseCollectionConfig,
 } from "@tanstack/db";
-import type { SchemaDefinition } from "convex/server";
 import type { GenericValidator } from "convex/values";
 import type { VersionedSchema } from "$/server/migration";
 import type { MigrationErrorHandler, ClientMigrationMap } from "$/client/migration";
 import { runMigrations } from "$/client/migration";
-import type { DocFromSchema, TableNamesFromSchema } from "$/client/types";
 import { findProseFields } from "$/client/validators";
 import { ProseError, NonRetriableError } from "$/client/errors";
 import { createSeqService, type Seq } from "$/client/services/seq";
@@ -32,17 +30,16 @@ import {
 	updateContext,
 	deleteContext,
 } from "$/client/services/context";
-import { createAwarenessProvider, type ConvexAwarenessProvider } from "$/client/services/awareness";
 import {
-	createDocumentPresence,
-	type DocumentHandle,
-	type DocumentPresence,
-	type DocumentPresenceProvider,
+	createPresence,
+	type PresenceProvider,
+	type Presence,
 	type PresenceState,
-} from "$/client/document";
+} from "$/client/services/presence";
 
-export type { DocumentHandle, DocumentPresence, PresenceState };
-import type { UserIdentity } from "$/client/identity";
+export type { Presence as DocumentPresence, PresenceState };
+export type { PresenceState as SessionInfo };
+import type { AnonymousPresenceConfig, UserIdentity } from "$/client/identity";
 import { Awareness } from "y-protocols/awareness";
 
 enum YjsOrigin {
@@ -133,16 +130,22 @@ interface ConvexCollectionApi {
 	session: FunctionReference<"query">;
 }
 
-export interface ConvexCollectionConfig<
-	T extends object = object,
-	TKey extends string | number = string | number,
-> extends Omit<BaseCollectionConfig<T, TKey, never>, "schema"> {
+export interface ConvexCollectionConfig<T extends object = object> extends Omit<
+	BaseCollectionConfig<T, string, never>,
+	"schema"
+> {
 	validator?: GenericValidator;
 	convexClient: ConvexClient;
 	api: ConvexCollectionApi;
 	persistence: Persistence;
 	material?: Materialized<T>;
 	user?: () => UserIdentity | undefined;
+	/**
+	 * Configuration for anonymous presence names and colors.
+	 * Allows customizing the adjectives, nouns, and colors used
+	 * when generating anonymous user identities for presence.
+	 */
+	anonymousPresence?: AnonymousPresenceConfig;
 }
 
 /**
@@ -176,8 +179,8 @@ export interface EditorBinding {
 }
 
 export interface ProseOptions {
-	/** User identity for collaborative presence */
-	user?: UserIdentity;
+	/** User identity getter for collaborative presence */
+	user?: () => UserIdentity | undefined;
 	/**
 	 * Debounce delay in milliseconds before syncing changes to server.
 	 * Local changes are batched during this window for efficiency.
@@ -210,22 +213,35 @@ export interface SessionAPI {
 	subscribe(callback: (sessions: SessionInfo[]) => void): () => void;
 }
 
+export interface DocumentHandle<T extends object> {
+	readonly id: string;
+	readonly presence: Presence;
+	readonly awareness: Awareness;
+	prose(field: ProseFields<T>, options?: ProseOptions): Promise<EditorBinding>;
+}
+
 interface ConvexCollectionExtensions<T extends object> {
 	doc(id: string): DocumentHandle<T>;
 	readonly session: SessionAPI;
 }
 
-export function convexCollectionOptions<
-	T extends object = object,
-	TKey extends string | number = string | number,
->(
-	config: ConvexCollectionConfig<T, TKey>,
-): CollectionConfig<T, TKey, never, ConvexCollectionUtils<T>> & {
+export function convexCollectionOptions<T extends object = object>(
+	config: ConvexCollectionConfig<T>,
+): CollectionConfig<T, string, never, ConvexCollectionUtils<T>> & {
 	id: string;
 	utils: ConvexCollectionUtils<T>;
 	extensions: ConvexCollectionExtensions<T>;
 } {
-	const { validator, getKey, material, convexClient, api, persistence, user: userGetter } = config;
+	const {
+		validator,
+		getKey,
+		material,
+		convexClient,
+		api,
+		persistence,
+		user: userGetter,
+		anonymousPresence,
+	} = config;
 
 	const functionPath = getFunctionName(api.delta);
 	const collection = functionPath.split(":")[0];
@@ -325,11 +341,10 @@ export function convexCollectionOptions<
 			const storedApi = ctx.api;
 			const storedClientId = ctx.clientId;
 
-			let awarenessProvider: ConvexAwarenessProvider | null = null;
+			let presenceProvider: PresenceProvider | null = null;
 			const hasPresenceApi = storedApi?.session && storedApi?.presence;
 			if (storedConvexClient && hasPresenceApi && storedClientId) {
-				const resolvedUser = options?.user ?? ctx.userGetter?.();
-				awarenessProvider = createAwarenessProvider({
+				presenceProvider = createPresence({
 					convexClient: storedConvexClient,
 					api: {
 						presence: storedApi.presence!,
@@ -339,15 +354,16 @@ export function convexCollectionOptions<
 					client: storedClientId,
 					ydoc: subdoc,
 					syncReady: ctx.synced,
-					user: resolvedUser,
+					user: options?.user ?? ctx.userGetter,
 					throttleMs: options?.throttleMs,
+					anonymousPresence: ctx.anonymousPresence,
 				});
 			}
 
 			const binding: EditorBinding = {
 				fragment,
-				provider: awarenessProvider
-					? { awareness: awarenessProvider.awareness, document: subdoc }
+				provider: presenceProvider
+					? { awareness: presenceProvider.awareness, document: subdoc }
 					: { awareness: new Awareness(subdoc), document: subdoc },
 
 				get pending() {
@@ -359,7 +375,7 @@ export function convexCollectionOptions<
 				},
 
 				destroy() {
-					awarenessProvider?.destroy();
+					presenceProvider?.destroy();
 				},
 			};
 
@@ -368,7 +384,7 @@ export function convexCollectionOptions<
 	};
 
 	const documentHandles = new Map<string, DocumentHandle<DataType>>();
-	const presenceProviders = new Map<string, DocumentPresenceProvider>();
+	const presenceProviders = new Map<string, PresenceProvider>();
 
 	const getOrCreateDocumentHandle = (documentId: string): DocumentHandle<DataType> => {
 		let handle = documentHandles.get(documentId);
@@ -385,7 +401,7 @@ export function convexCollectionOptions<
 		if (!presenceProvider) {
 			const hasPresenceApi = ctx.api?.session && ctx.api?.presence;
 			if (ctx.client && hasPresenceApi && ctx.clientId) {
-				presenceProvider = createDocumentPresence({
+				presenceProvider = createPresence({
 					convexClient: ctx.client,
 					api: {
 						presence: ctx.api.presence!,
@@ -395,13 +411,14 @@ export function convexCollectionOptions<
 					client: ctx.clientId,
 					ydoc: subdoc,
 					syncReady: ctx.synced,
-					userGetter: ctx.userGetter,
+					user: ctx.userGetter,
+					anonymousPresence: ctx.anonymousPresence,
 				});
 				presenceProviders.set(documentId, presenceProvider);
 			}
 		}
 
-		const presence: DocumentPresence = presenceProvider ?? {
+		const presence: Presence = presenceProvider ?? {
 			join: () => {},
 			leave: () => {},
 			update: () => {},
@@ -483,6 +500,7 @@ export function convexCollectionOptions<
 		persistence,
 		fields: proseFieldSet,
 		userGetter,
+		anonymousPresence,
 	});
 
 	// Bound replicate operations - set during sync initialization
@@ -1079,20 +1097,14 @@ export type ConvexCollection<T extends object> = Collection<
 	NonSingleResult &
 	ConvexCollectionExtensions<T>;
 
-interface CreateCollectionOptions<T extends object> {
-	persistence: () => Promise<Persistence>;
-	config: () => Omit<LazyCollectionConfig<T>, "material">;
-	pagination?: PaginationConfig;
-}
-
-/** Options for new versioned schema API */
-interface CreateVersionedCollectionOptions<T extends object> {
+/** Options for collection.create() */
+export interface CreateCollectionOptions<T extends object> {
 	schema: VersionedSchema<GenericValidator>;
 	persistence: () => Promise<Persistence>;
 	config: () => {
 		convexClient: ConvexClient;
 		api: ConvexCollectionApi;
-		getKey: (doc: T) => string | number;
+		getKey: (doc: T) => string;
 		user?: () => UserIdentity | undefined;
 	};
 	clientMigrations?: ClientMigrationMap;
@@ -1105,7 +1117,7 @@ interface CreateVersionedCollectionOptions<T extends object> {
  * Handles automatic client-side migrations when schema version changes.
  */
 function createVersionedCollection<T extends object>(
-	options: CreateVersionedCollectionOptions<T>,
+	options: CreateCollectionOptions<T>,
 ): LazyCollection<T> {
 	const { schema: versionedSchema, clientMigrations, onMigrationError } = options;
 
@@ -1236,7 +1248,7 @@ export namespace collection {
  * ```typescript
  * const tasks = collection.create({
  *   schema: taskSchema,
- *   persistence: () => persistence.web.sqlite(),
+ *   persistence: () => persistence.web.sqlite.create(),
  *   config: () => ({
  *     convexClient: new ConvexClient(url),
  *     api: api.tasks,
@@ -1249,194 +1261,6 @@ export namespace collection {
  * });
  * ```
  */
-function createCollection_versioned<T extends object>(
-	options: CreateVersionedCollectionOptions<T>,
-): LazyCollection<T> {
-	return createVersionedCollection<T>(options);
-}
-
-/**
- * Create a collection with Convex schema (legacy API).
- */
-function createCollection_legacy<
-	Schema extends SchemaDefinition<any, any>,
-	TableName extends TableNamesFromSchema<Schema>,
->(
-	schema: Schema,
-	table: TableName,
-	options: CreateCollectionOptions<DocFromSchema<Schema, TableName>>,
-): LazyCollection<DocFromSchema<Schema, TableName>> {
-	type LegacyT = DocFromSchema<Schema, TableName>;
-
-	const tableDefinition = (schema.tables as Record<string, { validator?: GenericValidator }>)[
-		table
-	];
-	if (!tableDefinition) {
-		throw new Error(`Table "${table}" not found in schema`);
-	}
-	const validator = tableDefinition.validator;
-
-	let persistence: Persistence | null = null;
-	let resolvedConfig: LazyCollectionConfig<LegacyT> | null = null;
-	let material: Materialized<LegacyT> | undefined;
-	type Instance = LazyCollection<LegacyT>["get"] extends () => infer R ? R : never;
-	let instance: Instance | null = null;
-
-	let paginationState: PaginationState = {
-		status: "idle",
-		count: 0,
-		cursor: null,
-	};
-	const listeners = new Set<(state: PaginationState) => void>();
-
-	const notify = () => listeners.forEach(cb => cb(paginationState));
-
-	const isPaginatedMaterial = (
-		mat: Materialized<LegacyT> | PaginatedMaterial<LegacyT> | undefined,
-	): mat is PaginatedMaterial<LegacyT> => {
-		return mat !== undefined && "pages" in mat && Array.isArray(mat.pages);
-	};
-
-	const convertPaginatedToMaterial = (
-		paginated: PaginatedMaterial<LegacyT>,
-	): Materialized<LegacyT> => {
-		const allDocs = paginated.pages.flatMap(p => p.page);
-		return {
-			documents: allDocs,
-			count: allDocs.length,
-		};
-	};
-
-	return {
-		async init(mat?: Materialized<LegacyT> | PaginatedMaterial<LegacyT>) {
-			if (!persistence) {
-				persistence = await options.persistence();
-				resolvedConfig = options.config();
-
-				if (isPaginatedMaterial(mat)) {
-					material = convertPaginatedToMaterial(mat);
-					paginationState = {
-						status: mat.isDone ? "done" : "idle",
-						count: mat.pages.reduce((sum, p) => sum + p.page.length, 0),
-						cursor: mat.cursor,
-					};
-				} else {
-					material = mat;
-				}
-			}
-		},
-
-		get() {
-			if (!persistence || !resolvedConfig) {
-				throw new Error("Call init() before get()");
-			}
-			if (!instance) {
-				const opts = convexCollectionOptions<LegacyT, string>({
-					...resolvedConfig,
-					validator,
-					persistence,
-					material,
-				});
-				const baseCollection = createCollection(opts);
-				instance = Object.assign(baseCollection, opts.extensions) as Instance;
-			}
-			return instance!;
-		},
-
-		pagination: {
-			async load(): Promise<PaginatedPage<LegacyT> | null> {
-				if (!resolvedConfig || paginationState.status !== "idle") {
-					return null;
-				}
-
-				paginationState = { ...paginationState, status: "busy" };
-				notify();
-
-				try {
-					const pageSize = options.pagination?.pageSize ?? 25;
-					const result = (await resolvedConfig.convexClient.query(resolvedConfig.api.material, {
-						numItems: pageSize,
-						cursor: paginationState.cursor ?? undefined,
-					})) as PaginatedPage<LegacyT>;
-
-					if (instance && result.page.length > 0) {
-						instance.insert(result.page as LegacyT[]);
-					}
-
-					paginationState = {
-						status: result.isDone ? "done" : "idle",
-						count: paginationState.count + result.page.length,
-						cursor: result.continueCursor,
-					};
-					notify();
-
-					return result;
-				} catch (err) {
-					paginationState = {
-						...paginationState,
-						status: "error",
-						error: err instanceof Error ? err : new Error(String(err)),
-					};
-					notify();
-					return null;
-				}
-			},
-
-			get status() {
-				return paginationState.status;
-			},
-
-			get canLoadMore() {
-				return paginationState.status === "idle";
-			},
-
-			get count() {
-				return paginationState.count;
-			},
-
-			subscribe(callback: (state: PaginationState) => void) {
-				listeners.add(callback);
-				callback(paginationState);
-				return () => listeners.delete(callback);
-			},
-		},
-	};
-}
-
-// Overloaded collection.create function
-interface CollectionCreateFn {
-	/** Create collection with versioned schema (new API) */
-	<T extends object>(options: CreateVersionedCollectionOptions<T>): LazyCollection<T>;
-	/** Create collection with Convex schema (legacy API) */
-	<Schema extends SchemaDefinition<any, any>, TableName extends TableNamesFromSchema<Schema>>(
-		schema: Schema,
-		table: TableName,
-		options: CreateCollectionOptions<DocFromSchema<Schema, TableName>>,
-	): LazyCollection<DocFromSchema<Schema, TableName>>;
-}
-
-const createFn: CollectionCreateFn = <
-	T extends object,
-	Schema extends SchemaDefinition<any, any>,
-	TableName extends TableNamesFromSchema<Schema>,
->(
-	schemaOrOptions: Schema | CreateVersionedCollectionOptions<T>,
-	table?: TableName,
-	options?: CreateCollectionOptions<DocFromSchema<Schema, TableName>>,
-): LazyCollection<T> | LazyCollection<DocFromSchema<Schema, TableName>> => {
-	// New versioned schema API
-	if (typeof schemaOrOptions === "object" && "schema" in schemaOrOptions) {
-		return createCollection_versioned(schemaOrOptions as CreateVersionedCollectionOptions<T>);
-	}
-
-	// Legacy API
-	return createCollection_legacy(
-		schemaOrOptions as Schema,
-		table as TableName,
-		options as CreateCollectionOptions<DocFromSchema<Schema, TableName>>,
-	);
-};
-
 export const collection = {
-	create: createFn,
+	create: createVersionedCollection,
 };

@@ -2,69 +2,148 @@ import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 import type { ConvexClient } from "convex/browser";
 import type { FunctionReference } from "convex/server";
-import type { UserIdentity } from "$/client/identity";
+import type { AnonymousPresenceConfig, UserIdentity } from "$/client/identity";
 
-const DEFAULT_HEARTBEAT_INTERVAL = 10000;
+const DEFAULT_HEARTBEAT_MS = 10000;
 const DEFAULT_THROTTLE_MS = 50;
 
-interface AwarenessApi {
+const DEFAULT_ADJECTIVES = [
+	"Swift",
+	"Bright",
+	"Calm",
+	"Bold",
+	"Keen",
+	"Quick",
+	"Warm",
+	"Cool",
+	"Sharp",
+	"Gentle",
+];
+
+const DEFAULT_NOUNS = [
+	"Fox",
+	"Owl",
+	"Bear",
+	"Wolf",
+	"Hawk",
+	"Deer",
+	"Lynx",
+	"Crow",
+	"Hare",
+	"Seal",
+];
+
+const DEFAULT_COLORS = [
+	"#9F5944",
+	"#A9704D",
+	"#B08650",
+	"#8A7D3F",
+	"#6E7644",
+	"#8C4A42",
+	"#9E7656",
+	"#9A5240",
+	"#987C4A",
+	"#7A8B6E",
+];
+
+interface PresenceApi {
 	presence: FunctionReference<"mutation">;
 	session: FunctionReference<"query">;
 }
 
-export interface ConvexAwarenessConfig {
+export interface PresenceState {
+	local: UserIdentity | null;
+	remote: UserIdentity[];
+}
+
+export interface Presence {
+	join(options?: { cursor?: unknown }): void;
+	leave(): void;
+	update(options: { cursor?: unknown }): void;
+	get(): PresenceState;
+	subscribe(callback: (state: PresenceState) => void): () => void;
+}
+
+export interface PresenceConfig {
 	convexClient: ConvexClient;
-	api: AwarenessApi;
+	api: PresenceApi;
 	document: string;
 	client: string;
 	ydoc: Y.Doc;
-	interval?: number;
+	heartbeatMs?: number;
 	throttleMs?: number;
 	syncReady?: Promise<void>;
-	user?: UserIdentity;
+	user?: () => UserIdentity | undefined;
+	anonymousPresence?: AnonymousPresenceConfig;
 }
 
-export interface ConvexAwarenessProvider {
+export interface PresenceProvider extends Presence {
 	awareness: Awareness;
-	document: Y.Doc;
-	destroy: () => void;
+	destroy(): void;
 }
 
-type PresenceState = "idle" | "joining" | "active" | "leaving" | "destroyed";
+type PresenceLifecycleState = "idle" | "joining" | "active" | "leaving" | "destroyed";
+
+interface PresencePayload {
+	action: "join" | "leave";
+	cursor?: unknown;
+	user?: string;
+	profile?: { name?: string; color?: string; avatar?: string };
+	vector?: ArrayBuffer;
+}
 
 interface FlightStatus {
 	inFlight: boolean;
 	pending: PresencePayload | null;
 }
 
-interface PresencePayload {
-	action: "join" | "leave";
-	cursor?: { anchor: unknown; head: unknown };
-	user?: string;
-	profile?: { name?: string; color?: string; avatar?: string };
-	vector?: ArrayBuffer;
+export function hashStringToNumber(str: string): number {
+	let hash = 0;
+	for (let i = 0; i < str.length; i++) {
+		const char = str.charCodeAt(i);
+		hash = (hash << 5) - hash + char;
+		hash = hash & hash;
+	}
+	return Math.abs(hash);
 }
 
-export function createAwarenessProvider(config: ConvexAwarenessConfig): ConvexAwarenessProvider {
+export function getStableAnonName(clientId: string, config?: AnonymousPresenceConfig): string {
+	const adjectives = config?.adjectives ?? DEFAULT_ADJECTIVES;
+	const nouns = config?.nouns ?? DEFAULT_NOUNS;
+	const hash = hashStringToNumber(clientId);
+	const adj = adjectives[hash % adjectives.length];
+	const noun = nouns[(hash >> 4) % nouns.length];
+	return `${adj} ${noun}`;
+}
+
+export function getStableAnonColor(clientId: string, config?: AnonymousPresenceConfig): string {
+	const colors = config?.colors ?? DEFAULT_COLORS;
+	const hash = hashStringToNumber(clientId);
+	return colors[(hash >> 8) % colors.length];
+}
+
+export function createPresence(config: PresenceConfig): PresenceProvider {
 	const {
 		convexClient,
 		api,
 		document,
 		client,
 		ydoc,
-		interval = DEFAULT_HEARTBEAT_INTERVAL,
+		heartbeatMs = DEFAULT_HEARTBEAT_MS,
 		throttleMs = DEFAULT_THROTTLE_MS,
 		syncReady,
-		user,
+		user: userGetter,
+		anonymousPresence,
 	} = config;
 
 	const awareness = new Awareness(ydoc);
+	const resolvedUser = userGetter?.();
 
-	if (user) {
-		awareness.setLocalStateField("user", user);
+	if (resolvedUser) {
+		awareness.setLocalStateField("user", resolvedUser);
 	}
 
-	let state: PresenceState = "idle";
+	let state: PresenceLifecycleState = "idle";
 	let visible = true;
 	let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 	let throttleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -79,6 +158,7 @@ export function createAwarenessProvider(config: ConvexAwarenessConfig): ConvexAw
 	};
 
 	const remoteClientIds = new Map<string, number>();
+	const subscribers = new Set<(state: PresenceState) => void>();
 
 	const getVector = (): ArrayBuffer | undefined => {
 		return Y.encodeStateVector(ydoc).buffer as ArrayBuffer;
@@ -86,21 +166,10 @@ export function createAwarenessProvider(config: ConvexAwarenessConfig): ConvexAw
 
 	const extractCursorFromState = (
 		awarenessState: Record<string, unknown> | null,
-	):
-		| {
-				anchor: unknown;
-				head: unknown;
-		  }
-		| undefined => {
+	): { anchor: unknown; head: unknown } | undefined => {
 		if (!awarenessState) return undefined;
 
-		const cursor = awarenessState.cursor as
-			| {
-					anchor?: unknown;
-					head?: unknown;
-			  }
-			| undefined
-			| null;
+		const cursor = awarenessState.cursor as { anchor?: unknown; head?: unknown } | undefined | null;
 
 		if (cursor?.anchor === undefined || cursor.head === undefined) {
 			return undefined;
@@ -153,9 +222,9 @@ export function createAwarenessProvider(config: ConvexAwarenessConfig): ConvexAw
 		return {};
 	};
 
-	const buildJoinPayload = (): PresencePayload => {
+	const buildJoinPayload = (cursorOverride?: unknown): PresencePayload => {
 		const localState = awareness.getLocalState();
-		const cursor = extractCursorFromState(localState);
+		const cursor = cursorOverride ?? extractCursorFromState(localState);
 		const { user: userId, profile } = extractUserFromState(localState);
 		const vector = getVector();
 
@@ -176,7 +245,7 @@ export function createAwarenessProvider(config: ConvexAwarenessConfig): ConvexAw
 			cursor: payload.cursor,
 			user: payload.user,
 			profile: payload.profile,
-			interval: payload.action === "join" ? interval : undefined,
+			interval: payload.action === "join" ? heartbeatMs : undefined,
 			vector: payload.vector,
 		});
 	};
@@ -209,8 +278,8 @@ export function createAwarenessProvider(config: ConvexAwarenessConfig): ConvexAw
 		}
 	};
 
-	const transitionTo = (newState: PresenceState): boolean => {
-		const validTransitions: Record<PresenceState, PresenceState[]> = {
+	const transitionTo = (newState: PresenceLifecycleState): boolean => {
+		const validTransitions: Record<PresenceLifecycleState, PresenceLifecycleState[]> = {
 			idle: ["joining", "destroyed"],
 			joining: ["active", "leaving", "destroyed"],
 			active: ["leaving", "destroyed"],
@@ -226,14 +295,40 @@ export function createAwarenessProvider(config: ConvexAwarenessConfig): ConvexAw
 		return true;
 	};
 
-	const join = (): void => {
+	const notifySubscribers = (): void => {
+		const presenceState = getPresenceState();
+		subscribers.forEach(cb => cb(presenceState));
+	};
+
+	const getPresenceState = (): PresenceState => {
+		const localState = awareness.getLocalState();
+		const localUser = localState?.user as UserIdentity | undefined;
+
+		const remote: UserIdentity[] = [];
+		for (const [clientStr] of remoteClientIds) {
+			const clientId = remoteClientIds.get(clientStr);
+			if (clientId !== undefined) {
+				const remoteState = awareness.states.get(clientId);
+				if (remoteState?.user) {
+					remote.push(remoteState.user as UserIdentity);
+				}
+			}
+		}
+
+		return {
+			local: localUser ?? null,
+			remote,
+		};
+	};
+
+	const joinPresence = (cursorOverride?: unknown): void => {
 		if (state === "destroyed" || !visible) return;
 
 		if (state === "idle" || state === "leaving") {
 			transitionTo("joining");
 		}
 
-		const payload = buildJoinPayload();
+		const payload = buildJoinPayload(cursorOverride);
 		sendWithSingleFlight(payload).then(() => {
 			if (state === "joining") {
 				transitionTo("active");
@@ -241,7 +336,7 @@ export function createAwarenessProvider(config: ConvexAwarenessConfig): ConvexAw
 		});
 	};
 
-	const leave = (): void => {
+	const leavePresence = (): void => {
 		if (state === "destroyed") return;
 		if (state === "idle") return;
 
@@ -261,7 +356,7 @@ export function createAwarenessProvider(config: ConvexAwarenessConfig): ConvexAw
 		throttleTimer = setTimeout(() => {
 			throttleTimer = null;
 			if (visible) {
-				join();
+				joinPresence();
 			}
 		}, throttleMs);
 	};
@@ -308,8 +403,12 @@ export function createAwarenessProvider(config: ConvexAwarenessConfig): ConvexAw
 
 					const remoteState: Record<string, unknown> = {
 						user: {
-							name: remote.profile?.name ?? remote.user ?? getStableAnonName(remote.client),
-							color: remote.profile?.color ?? getStableAnonColor(remote.client),
+							id: remote.user,
+							name:
+								remote.profile?.name ??
+								remote.user ??
+								getStableAnonName(remote.client, anonymousPresence),
+							color: remote.profile?.color ?? getStableAnonColor(remote.client, anonymousPresence),
 							avatar: remote.profile?.avatar,
 							clientId: remote.client,
 						},
@@ -333,6 +432,8 @@ export function createAwarenessProvider(config: ConvexAwarenessConfig): ConvexAw
 					{ added: [], updated: Array.from(remoteClientIds.values()), removed: [] },
 					"remote",
 				]);
+
+				notifySubscribers();
 			},
 		);
 	};
@@ -347,9 +448,9 @@ export function createAwarenessProvider(config: ConvexAwarenessConfig): ConvexAw
 			visible = globalThis.document.visibilityState === "visible";
 
 			if (wasVisible && !visible) {
-				leave();
-			} else if (!wasVisible && visible) {
-				join();
+				leavePresence();
+			} else if (!wasVisible && visible && state === "active") {
+				joinPresence();
 			}
 		};
 
@@ -382,12 +483,11 @@ export function createAwarenessProvider(config: ConvexAwarenessConfig): ConvexAw
 	const startHeartbeat = (): void => {
 		if (state === "destroyed") return;
 
-		join();
 		heartbeatTimer = setInterval(() => {
-			if (state !== "destroyed" && visible) {
-				join();
+			if (state !== "destroyed" && visible && state === "active") {
+				joinPresence();
 			}
-		}, interval);
+		}, heartbeatMs);
 	};
 
 	const stopHeartbeat = (): void => {
@@ -417,9 +517,31 @@ export function createAwarenessProvider(config: ConvexAwarenessConfig): ConvexAw
 
 	return {
 		awareness,
-		document: ydoc,
 
-		destroy: (): void => {
+		join(options?: { cursor?: unknown }): void {
+			joinPresence(options?.cursor);
+		},
+
+		leave(): void {
+			leavePresence();
+		},
+
+		update(options: { cursor?: unknown }): void {
+			if (state === "destroyed") return;
+			awareness.setLocalStateField("cursor", options.cursor);
+		},
+
+		get(): PresenceState {
+			return getPresenceState();
+		},
+
+		subscribe(callback: (state: PresenceState) => void): () => void {
+			subscribers.add(callback);
+			callback(getPresenceState());
+			return () => subscribers.delete(callback);
+		},
+
+		destroy(): void {
 			if (state === "destroyed") return;
 			transitionTo("destroyed");
 
@@ -433,6 +555,7 @@ export function createAwarenessProvider(config: ConvexAwarenessConfig): ConvexAw
 			}
 
 			flightStatus.pending = null;
+			subscribers.clear();
 
 			stopHeartbeat();
 			awareness.off("update", onLocalAwarenessUpdate);
@@ -455,65 +578,4 @@ export function createAwarenessProvider(config: ConvexAwarenessConfig): ConvexAw
 			awareness.destroy();
 		},
 	};
-}
-
-export function hashStringToNumber(str: string): number {
-	let hash = 0;
-	for (let i = 0; i < str.length; i++) {
-		const char = str.charCodeAt(i);
-		hash = (hash << 5) - hash + char;
-		hash = hash & hash;
-	}
-	return Math.abs(hash);
-}
-
-const ANONYMOUS_ADJECTIVES = [
-	"Swift",
-	"Bright",
-	"Calm",
-	"Bold",
-	"Keen",
-	"Quick",
-	"Warm",
-	"Cool",
-	"Sharp",
-	"Gentle",
-];
-
-const ANONYMOUS_NOUNS = [
-	"Fox",
-	"Owl",
-	"Bear",
-	"Wolf",
-	"Hawk",
-	"Deer",
-	"Lynx",
-	"Crow",
-	"Hare",
-	"Seal",
-];
-
-const ANONYMOUS_COLORS = [
-	"#9F5944",
-	"#A9704D",
-	"#B08650",
-	"#8A7D3F",
-	"#6E7644",
-	"#8C4A42",
-	"#9E7656",
-	"#9A5240",
-	"#987C4A",
-	"#7A8B6E",
-];
-
-export function getStableAnonName(clientId: string): string {
-	const hash = hashStringToNumber(clientId);
-	const adj = ANONYMOUS_ADJECTIVES[hash % ANONYMOUS_ADJECTIVES.length];
-	const noun = ANONYMOUS_NOUNS[(hash >> 4) % ANONYMOUS_NOUNS.length];
-	return `${adj} ${noun}`;
-}
-
-export function getStableAnonColor(clientId: string): string {
-	const hash = hashStringToNumber(clientId);
-	return ANONYMOUS_COLORS[(hash >> 8) % ANONYMOUS_COLORS.length];
 }

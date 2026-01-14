@@ -25,29 +25,35 @@ export type {
 
 export const persistence = {
 	web: {
-		sqlite: Object.assign(createWebSqlitePersistence, {
+		sqlite: {
+			create: createWebSqlitePersistence,
 			once: onceWebSqlitePersistence,
-		}),
-		encryption: Object.assign(createWebEncryptionPersistence, {
+		},
+		encryption: {
+			create: createWebEncryptionPersistence,
 			manager: createEncryptionManager,
 			webauthn: {
 				supported: isPRFSupported,
 			},
-		}),
+		},
 	},
 	native: {
-		sqlite: createNativeSqlitePersistence,
-		encryption: Object.assign(
-			(): never => {
-				throw new Error("persistence.native.encryption() not yet implemented");
+		sqlite: {
+			create: createNativeSqlitePersistence,
+		},
+		encryption: {
+			create: (): never => {
+				throw new Error("persistence.native.encryption.create() not yet implemented");
 			},
-			{
-				biometric: {
-					supported: (): Promise<boolean> => Promise.resolve(false),
-				},
+			biometric: {
+				supported: (): Promise<boolean> => Promise.resolve(false),
 			},
-		),
+		},
 	},
-	memory: memoryPersistence,
-	custom: createCustomPersistence,
+	memory: {
+		create: memoryPersistence,
+	},
+	custom: {
+		create: createCustomPersistence,
+	},
 } as const;

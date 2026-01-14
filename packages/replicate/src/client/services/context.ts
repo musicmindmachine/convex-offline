@@ -3,7 +3,7 @@ import type { FunctionReference } from "convex/server";
 import type { Collection } from "@tanstack/db";
 import type { Persistence } from "$/client/persistence/types";
 import type { DocumentManager } from "$/client/documents";
-import type { UserIdentity } from "$/client/identity";
+import type { AnonymousPresenceConfig, UserIdentity } from "$/client/identity";
 
 interface ConvexCollectionApi {
 	material: FunctionReference<"query">;
@@ -29,6 +29,7 @@ export interface CollectionContext {
 	actorReady?: Promise<void>;
 	resolveActorReady?: () => void;
 	userGetter?: () => UserIdentity | undefined;
+	anonymousPresence?: AnonymousPresenceConfig;
 }
 
 const contexts = new Map<string, CollectionContext>();

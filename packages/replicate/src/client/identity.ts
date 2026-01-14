@@ -1,4 +1,4 @@
-import { getStableAnonColor, getStableAnonName } from "$/client/services/awareness";
+import { getStableAnonColor, getStableAnonName } from "$/client/services/presence";
 
 /**
  * User identity for presence and collaborative features.
@@ -8,6 +8,20 @@ export interface UserIdentity {
 	name?: string;
 	color?: string;
 	avatar?: string;
+}
+
+/**
+ * Configuration for anonymous presence names and colors.
+ * Allows applications to customize the adjectives, nouns, and colors
+ * used when generating anonymous user identities.
+ */
+export interface AnonymousPresenceConfig {
+	/** List of adjectives for anonymous names (e.g., ["Swift", "Bright", "Calm"]) */
+	adjectives?: string[];
+	/** List of nouns for anonymous names (e.g., ["Fox", "Owl", "Bear"]) */
+	nouns?: string[];
+	/** List of hex colors for anonymous users (e.g., ["#9F5944", "#A9704D"]) */
+	colors?: string[];
 }
 
 /**
@@ -48,10 +62,11 @@ export const identity = {
 		 * Same seed always produces the same color.
 		 *
 		 * @param seed - Any string (user ID, client ID, etc.)
+		 * @param config - Optional custom colors configuration
 		 * @returns Hex color string (e.g., "#9F5944")
 		 */
-		generate(seed: string): string {
-			return getStableAnonColor(seed);
+		generate(seed: string, config?: AnonymousPresenceConfig): string {
+			return getStableAnonColor(seed, config);
 		},
 	},
 
@@ -64,10 +79,11 @@ export const identity = {
 		 * Same seed always produces the same name.
 		 *
 		 * @param seed - Any string (user ID, client ID, etc.)
+		 * @param config - Optional custom adjectives/nouns configuration
 		 * @returns Anonymous name (e.g., "Swift Fox", "Calm Bear")
 		 */
-		anonymous(seed: string): string {
-			return getStableAnonName(seed);
+		anonymous(seed: string, config?: AnonymousPresenceConfig): string {
+			return getStableAnonName(seed, config);
 		},
 	},
 } as const;

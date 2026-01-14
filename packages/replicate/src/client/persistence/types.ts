@@ -2,7 +2,7 @@ import type * as Y from "yjs";
 
 /**
  * Low-level storage adapter for custom backends (Chrome extension, localStorage, cloud).
- * For SQLite, use `persistence.sqlite()` directly.
+ * For SQLite, use `persistence.web.sqlite.create()` or `persistence.native.sqlite.create()` directly.
  *
  * @example
  * ```typescript
@@ -51,7 +51,7 @@ export interface MigrationDatabase {
 
 /**
  * High-level persistence interface for collections.
- * Create via `persistence.sqlite()`, `persistence.memory()`, or `persistence.custom()`.
+ * Create via `persistence.web.sqlite.create()`, `persistence.memory.create()`, or `persistence.custom.create()`.
  */
 export interface Persistence {
 	createDocPersistence(collection: string, ydoc: Y.Doc): PersistenceProvider;
