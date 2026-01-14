@@ -19,6 +19,7 @@ export interface ConvexAwarenessConfig {
 	client: string;
 	ydoc: Y.Doc;
 	interval?: number;
+	throttleMs?: number;
 	syncReady?: Promise<void>;
 	user?: UserIdentity;
 }
@@ -52,6 +53,7 @@ export function createAwarenessProvider(config: ConvexAwarenessConfig): ConvexAw
 		client,
 		ydoc,
 		interval = DEFAULT_HEARTBEAT_INTERVAL,
+		throttleMs = DEFAULT_THROTTLE_MS,
 		syncReady,
 		user,
 	} = config;
@@ -261,7 +263,7 @@ export function createAwarenessProvider(config: ConvexAwarenessConfig): ConvexAw
 			if (visible) {
 				join();
 			}
-		}, DEFAULT_THROTTLE_MS);
+		}, throttleMs);
 	};
 
 	const onLocalAwarenessUpdate = (

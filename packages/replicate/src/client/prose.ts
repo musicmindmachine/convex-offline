@@ -44,14 +44,16 @@ function createSyncFn(
 		const delta = Y.encodeStateAsUpdateV2(ydoc);
 		const bytes = delta.buffer as ArrayBuffer;
 
-		const result = collectionRef.update(
+		// Fire-and-forget: TanStack DB handles persistence independently.
+		// Yjs CRDTs ensure eventual consistency, so we don't need to await.
+		// This removes the network round-trip blocking from the sync path.
+		collectionRef.update(
 			document,
 			{ metadata: { contentSync: { bytes, material } } },
 			(draft: any) => {
 				draft.timestamp = Date.now();
 			},
 		);
-		await result.isPersisted.promise;
 	};
 }
 

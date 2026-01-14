@@ -144,7 +144,12 @@
     try {
       isLoading = true;
       error = null;
-      binding = await collection.utils.prose(intervalId, "description");
+      // Prose binding syncs rich text via Yjs CRDTs
+      // 300ms debounce for accurate cursor position tracking
+      binding = await collection.utils.prose(intervalId, "description", {
+        debounceMs: 300,
+        throttleMs: 300,
+      });
       isLoading = false;
     }
     catch (err) {
