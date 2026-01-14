@@ -51,8 +51,6 @@ enum YjsOrigin {
 	Server = "server",
 }
 
-const noop = (): void => undefined;
-
 const logger = getLogger(["replicate", "collection"]);
 
 import type { ProseFields } from "$/shared/types";
@@ -183,9 +181,15 @@ export interface ProseOptions {
 	/**
 	 * Debounce delay in milliseconds before syncing changes to server.
 	 * Local changes are batched during this window for efficiency.
-	 * @default 200
+	 * @default 50
 	 */
 	debounceMs?: number;
+	/**
+	 * Throttle delay in milliseconds for presence/cursor position updates.
+	 * Lower values mean faster cursor sync but more network traffic.
+	 * @default 50
+	 */
+	throttleMs?: number;
 }
 
 interface ConvexCollectionUtils<T extends object> {
@@ -336,6 +340,7 @@ export function convexCollectionOptions<
 					ydoc: subdoc,
 					syncReady: ctx.synced,
 					user: resolvedUser,
+					throttleMs: options?.throttleMs,
 				});
 			}
 
@@ -497,9 +502,11 @@ export function convexCollectionOptions<
 		resolveOptimisticReady = resolve;
 	});
 
-	const recover = async (): Promise<void> => {
+	const recover = async (pushLocal = false): Promise<void> => {
 		const docIds = docManager.documents();
 		if (docIds.length === 0) return;
+
+		logger.debug("Starting recovery for documents", { collection, count: docIds.length });
 
 		const recoveryPromises = docIds.map(async docId => {
 			try {
@@ -512,13 +519,39 @@ export function convexCollectionOptions<
 				if (result.mode === "recovery" && result.diff) {
 					const update = new Uint8Array(result.diff);
 					docManager.applyUpdate(docId, update, YjsOrigin.Server);
+					logger.debug("Applied server diff during recovery", { document: docId, collection });
 				}
-			} catch {
-				noop();
+
+				// Only push local state when explicitly requested (reconnection scenario)
+				// On init, we only pull server diff - pushing would flood the mutation queue
+				if (pushLocal) {
+					const ydoc = docManager.get(docId);
+					if (ydoc) {
+						const localState = Y.encodeStateAsUpdateV2(ydoc);
+						const material = serializeDocument(docManager, docId);
+
+						if (material && localState.length > 0) {
+							await convexClient.mutation(api.replicate, {
+								document: docId,
+								bytes: localState.buffer as ArrayBuffer,
+								material,
+								type: "update",
+							});
+							logger.debug("Pushed local changes during recovery", { document: docId, collection });
+						}
+					}
+				}
+			} catch (error) {
+				logger.warn("Recovery failed for document", {
+					document: docId,
+					collection,
+					error: error instanceof Error ? error.message : String(error),
+				});
 			}
 		});
 
 		await Promise.all(recoveryPromises);
+		logger.debug("Recovery completed", { collection, count: docIds.length });
 	};
 
 	const applyYjsInsert = (mutations: CollectionMutation<DataType>[]): Uint8Array[] => {
@@ -618,21 +651,23 @@ export function convexCollectionOptions<
 			try {
 				await Promise.all([persistenceReadyPromise, optimisticReadyPromise]);
 
-				for (let i = 0; i < transaction.mutations.length; i++) {
-					const mut = transaction.mutations[i];
-					const delta = deltas[i];
-					if (!delta || delta.length === 0) continue;
+				// Process mutations in parallel for better performance
+				await Promise.all(
+					transaction.mutations.map(async (mut, i) => {
+						const delta = deltas[i];
+						if (!delta || delta.length === 0) return;
 
-					const document = String(mut.key);
-					const materializedDoc = serializeDocument(docManager, document) ?? mut.modified;
+						const document = String(mut.key);
+						const materializedDoc = serializeDocument(docManager, document) ?? mut.modified;
 
-					await convexClient.mutation(api.replicate, {
-						document: document,
-						bytes: delta.slice().buffer,
-						material: materializedDoc,
-						type: "insert",
-					});
-				}
+						await convexClient.mutation(api.replicate, {
+							document: document,
+							bytes: delta.buffer,
+							material: materializedDoc,
+							type: "insert",
+						});
+					}),
+				);
 			} catch (error) {
 				handleMutationError(error);
 			}
@@ -662,21 +697,23 @@ export function convexCollectionOptions<
 				}
 
 				if (deltas) {
-					for (let i = 0; i < transaction.mutations.length; i++) {
-						const mut = transaction.mutations[i];
-						const delta = deltas[i];
-						if (!delta || delta.length === 0) continue;
+					// Process mutations in parallel for better performance
+					await Promise.all(
+						transaction.mutations.map(async (mut, i) => {
+							const delta = deltas[i];
+							if (!delta || delta.length === 0) return;
 
-						const docId = String(mut.key);
-						const fullDoc = serializeDocument(docManager, docId) ?? mut.modified;
+							const docId = String(mut.key);
+							const fullDoc = serializeDocument(docManager, docId) ?? mut.modified;
 
-						await convexClient.mutation(api.replicate, {
-							document: docId,
-							bytes: delta.slice().buffer,
-							material: fullDoc,
-							type: "update",
-						});
-					}
+							await convexClient.mutation(api.replicate, {
+								document: docId,
+								bytes: delta.buffer,
+								material: fullDoc,
+								type: "update",
+							});
+						}),
+					);
 				}
 			} catch (error) {
 				handleMutationError(error);
@@ -694,17 +731,19 @@ export function convexCollectionOptions<
 					.filter((item): item is DataType => item !== undefined && Object.keys(item).length > 0);
 				ops.delete(itemsToDelete);
 
-				for (let i = 0; i < transaction.mutations.length; i++) {
-					const mut = transaction.mutations[i];
-					const delta = deltas[i];
-					if (!delta || delta.length === 0) continue;
+				// Process mutations in parallel for better performance
+				await Promise.all(
+					transaction.mutations.map(async (mut, i) => {
+						const delta = deltas[i];
+						if (!delta || delta.length === 0) return;
 
-					await convexClient.mutation(api.replicate, {
-						document: String(mut.key),
-						bytes: delta.slice().buffer,
-						type: "delete",
-					});
-				}
+						await convexClient.mutation(api.replicate, {
+							document: String(mut.key),
+							bytes: delta.buffer,
+							type: "delete",
+						});
+					}),
+				);
 			} catch (error) {
 				handleMutationError(error);
 			}
@@ -781,96 +820,91 @@ export function convexCollectionOptions<
 						// Signal that sync is ready (no actor system needed - sync manager is self-contained)
 						getContext(collection).resolveActorReady?.();
 
-						const handleSnapshotChange = async (
+						// Returns { item, isNew, isDelete } for batching, null if no action needed
+						type ChangeResult = {
+							item: DataType;
+							isNew: boolean;
+							isDelete: boolean;
+						} | null;
+
+						const handleSnapshotChange = (
 							bytes: ArrayBuffer,
 							document: string,
 							exists: boolean,
-						) => {
+						): ChangeResult => {
 							const hadLocally = docManager.has(document);
 
 							if (!exists && hadLocally) {
 								const itemBefore = serializeDocument(docManager, document);
-								if (itemBefore) {
-									ops.delete([itemBefore as DataType]);
-								}
 								docManager.delete(document);
-								return;
+								if (itemBefore) {
+									return { item: itemBefore as DataType, isNew: false, isDelete: true };
+								}
+								return null;
 							}
 
 							if (!exists && !hadLocally) {
-								return;
+								return null;
 							}
 
-							const itemBefore = serializeDocument(docManager, document);
+							// Apply update - use hadLocally for existence check (avoid double serialization)
 							const update = new Uint8Array(bytes);
 							docManager.applyUpdate(document, update, YjsOrigin.Server);
 							const itemAfter = serializeDocument(docManager, document);
 
 							if (itemAfter) {
-								if (itemBefore) {
-									ops.upsert([itemAfter as DataType]);
-								} else {
-									ops.insert([itemAfter as DataType]);
-								}
-							} else if (itemBefore) {
-								// itemAfter is null but itemBefore exists - document serialization failed
-								// Keep existing item to prevent data loss
+								return { item: itemAfter as DataType, isNew: !hadLocally, isDelete: false };
+							} else if (hadLocally) {
+								// Serialization failed - log warning but don't return item
 								logger.warn("Document serialization returned null after snapshot update", {
 									document,
 									collection,
 									hadFieldsAfter: !!docManager.getFields(document),
 								});
-								// Re-add the previous item to prevent it from disappearing
-								ops.upsert([itemBefore as DataType]);
 							}
+							return null;
 						};
 
-						const handleDeltaChange = async (
+						const handleDeltaChange = (
 							bytes: ArrayBuffer,
 							document: string | undefined,
 							exists: boolean,
-						) => {
+						): ChangeResult => {
 							if (!document) {
-								return;
+								return null;
 							}
 
 							const hadLocally = docManager.has(document);
 
 							if (!exists && hadLocally) {
 								const itemBefore = serializeDocument(docManager, document);
-								if (itemBefore) {
-									ops.delete([itemBefore as DataType]);
-								}
 								docManager.delete(document);
-								return;
+								if (itemBefore) {
+									return { item: itemBefore as DataType, isNew: false, isDelete: true };
+								}
+								return null;
 							}
 
 							if (!exists && !hadLocally) {
-								return;
+								return null;
 							}
 
-							const itemBefore = serializeDocument(docManager, document);
+							// Apply update - use hadLocally for existence check (avoid double serialization)
 							const update = new Uint8Array(bytes);
 							docManager.applyUpdate(document, update, YjsOrigin.Server);
 							const itemAfter = serializeDocument(docManager, document);
 
 							if (itemAfter) {
-								if (itemBefore) {
-									ops.upsert([itemAfter as DataType]);
-								} else {
-									ops.insert([itemAfter as DataType]);
-								}
-							} else if (itemBefore) {
-								// itemAfter is null but itemBefore exists - document serialization failed
-								// Keep existing item to prevent data loss
+								return { item: itemAfter as DataType, isNew: !hadLocally, isDelete: false };
+							} else if (hadLocally) {
+								// Serialization failed - log warning but don't return item
 								logger.warn("Document serialization returned null after delta update", {
 									document,
 									collection,
 									hadFieldsAfter: !!docManager.getFields(document),
 								});
-								// Re-add the previous item to prevent it from disappearing
-								ops.upsert([itemBefore as DataType]);
 							}
+							return null;
 						};
 
 						const handleSubscriptionUpdate = async (response: any) => {
@@ -881,6 +915,11 @@ export function convexCollectionOptions<
 							const { changes, seq: newSeq } = response;
 							const syncedDocuments = new Set<string>();
 
+							// Process all changes and collect results for batching
+							const toInsert: DataType[] = [];
+							const toUpsert: DataType[] = [];
+							const toDelete: DataType[] = [];
+
 							for (const change of changes) {
 								const { type, bytes, document, exists } = change;
 								if (!bytes || !document) {
@@ -889,12 +928,26 @@ export function convexCollectionOptions<
 
 								syncedDocuments.add(document);
 
-								if (type === "snapshot") {
-									await handleSnapshotChange(bytes, document, exists ?? true);
-								} else {
-									await handleDeltaChange(bytes, document, exists ?? true);
+								const result =
+									type === "snapshot"
+										? handleSnapshotChange(bytes, document, exists ?? true)
+										: handleDeltaChange(bytes, document, exists ?? true);
+
+								if (result) {
+									if (result.isDelete) {
+										toDelete.push(result.item);
+									} else if (result.isNew) {
+										toInsert.push(result.item);
+									} else {
+										toUpsert.push(result.item);
+									}
 								}
 							}
+
+							// Batch ops calls - single transaction instead of N separate calls
+							if (toDelete.length > 0) ops.delete(toDelete);
+							if (toInsert.length > 0) ops.insert(toInsert);
+							if (toUpsert.length > 0) ops.upsert(toUpsert);
 
 							if (newSeq !== undefined) {
 								persistence.kv.set(`cursor:${collection}`, newSeq);
@@ -932,6 +985,37 @@ export function convexCollectionOptions<
 							},
 						);
 
+						// Reconnection handling: when browser comes back online, resync local state
+						if (typeof globalThis.window !== "undefined") {
+							let wasOffline = false;
+							const handleOffline = () => {
+								wasOffline = true;
+								logger.debug("Network offline detected", { collection });
+							};
+							const handleOnline = () => {
+								if (wasOffline) {
+									logger.info("Network online restored, running recovery sync", { collection });
+									wasOffline = false;
+									recover(true).catch((error: Error) => {
+										logger.warn("Recovery sync failed after reconnection", {
+											collection,
+											error: error.message,
+										});
+									});
+								}
+							};
+
+							globalThis.window.addEventListener("offline", handleOffline);
+							globalThis.window.addEventListener("online", handleOnline);
+
+							// Store cleanup function in context for proper cleanup
+							const ctx = getContext(collection);
+							(ctx as any).cleanupReconnection = () => {
+								globalThis.window.removeEventListener("offline", handleOffline);
+								globalThis.window.removeEventListener("online", handleOnline);
+							};
+						}
+
 						// Note: markReady() was already called above (local-first)
 						// Subscription is background replication, not blocking
 					} catch (error) {
@@ -948,6 +1032,11 @@ export function convexCollectionOptions<
 				return {
 					material: docs,
 					cleanup: () => {
+						// Clean up reconnection listeners if stored in context
+						if (hasContext(collection)) {
+							const ctx = getContext(collection);
+							(ctx as any).cleanupReconnection?.();
+						}
 						subscription?.();
 						prose.cleanup(collection);
 						deleteContext(collection);

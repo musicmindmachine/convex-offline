@@ -93,13 +93,13 @@ describe("createDocumentSync", () => {
 			ydoc.destroy();
 		});
 
-		test("uses default debounce of 200ms when not provided", async () => {
+		test("uses default debounce of 50ms when not provided", async () => {
 			const ydoc = createMockYDoc();
 			const { fn: syncFn, getCallCount } = createMockSyncFn();
 			const sync = createDocumentSync("doc1", ydoc, syncFn);
 
 			sync.onLocalChange();
-			await vi.advanceTimersByTimeAsync(199);
+			await vi.advanceTimersByTimeAsync(49);
 			expect(getCallCount()).toBe(0);
 
 			await vi.advanceTimersByTimeAsync(1);
@@ -283,7 +283,7 @@ describe("createDocumentSync", () => {
 			ydoc.destroy();
 		});
 
-		test("sync error resets pending state to false", async () => {
+		test("sync error resets pending state to false after retries exhausted", async () => {
 			const ydoc = createMockYDoc();
 			const { fn: syncFn } = createMockSyncFn({ failCount: 100 });
 			const sync = createDocumentSync("doc1", ydoc, syncFn, 200);
@@ -291,14 +291,28 @@ describe("createDocumentSync", () => {
 			sync.onLocalChange();
 			expect(sync.isPending()).toBe(true);
 
+			// First attempt after debounce (200ms)
 			await vi.advanceTimersByTimeAsync(200);
+			// Still pending during retry 1
+			expect(sync.isPending()).toBe(true);
+
+			// Retry 1 after 1000ms
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(sync.isPending()).toBe(true);
+
+			// Retry 2 after 2000ms
+			await vi.advanceTimersByTimeAsync(2000);
+			expect(sync.isPending()).toBe(true);
+
+			// Retry 3 (final) after 3000ms - should reset to false after this
+			await vi.advanceTimersByTimeAsync(3000);
 			expect(sync.isPending()).toBe(false);
 
 			sync.destroy();
 			ydoc.destroy();
 		});
 
-		test("sync error calls listeners with false", async () => {
+		test("sync error calls listeners with false after retries exhausted", async () => {
 			const ydoc = createMockYDoc();
 			const { fn: syncFn } = createMockSyncFn({ failCount: 100 });
 			const sync = createDocumentSync("doc1", ydoc, syncFn, 200);
@@ -307,9 +321,16 @@ describe("createDocumentSync", () => {
 			sync.onPendingChange(callback);
 
 			sync.onLocalChange();
-			await vi.advanceTimersByTimeAsync(200);
 
+			// First call: pending = true on onLocalChange
+			expect(callback).toHaveBeenCalledTimes(1);
 			expect(callback).toHaveBeenNthCalledWith(1, true);
+
+			// Advance through all retries (200 + 1000 + 2000 + 3000 = 6200ms)
+			await vi.advanceTimersByTimeAsync(6200);
+
+			// Second call: pending = false after all retries exhausted
+			expect(callback).toHaveBeenCalledTimes(2);
 			expect(callback).toHaveBeenNthCalledWith(2, false);
 
 			sync.destroy();

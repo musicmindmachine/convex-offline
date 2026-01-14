@@ -11,15 +11,20 @@ export interface DocumentSync {
 	destroy(): void;
 }
 
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 1000;
+
 export function createDocumentSync(
 	documentId: string,
 	ydoc: Y.Doc,
 	syncFn: () => Promise<void>,
-	debounceMs = 200,
+	debounceMs = 50,
 ): DocumentSync {
 	let timeoutId: ReturnType<typeof setTimeout> | null = null;
+	let retryTimeoutId: ReturnType<typeof setTimeout> | null = null;
 	let pending = false;
 	let destroyed = false;
+	let retryCount = 0;
 	const pendingListeners = new Set<(pending: boolean) => void>();
 
 	const setPending = (value: boolean) => {
@@ -41,13 +46,28 @@ export function createDocumentSync(
 
 		try {
 			await syncFn();
+			retryCount = 0; // Reset on success
+			setPending(false);
 		} catch (error) {
 			logger.error("Sync failed", {
 				documentId,
 				error: error instanceof Error ? error.message : String(error),
+				retryCount,
 			});
-		} finally {
-			setPending(false);
+
+			// Retry logic - keep pending true until all retries exhausted
+			if (retryCount < MAX_RETRIES) {
+				retryCount++;
+				const delay = RETRY_DELAY_MS * retryCount; // Exponential backoff
+				logger.debug("Scheduling retry", { documentId, retryCount, delayMs: delay });
+				retryTimeoutId = setTimeout(performSync, delay);
+				// Keep pending = true during retries
+			} else {
+				// All retries exhausted - will retry on next local change
+				logger.warn("Sync retries exhausted, will retry on next change", { documentId });
+				setPending(false);
+				retryCount = 0;
+			}
 		}
 	};
 
@@ -55,6 +75,8 @@ export function createDocumentSync(
 		onLocalChange() {
 			if (destroyed) return;
 			if (timeoutId) clearTimeout(timeoutId);
+			if (retryTimeoutId) clearTimeout(retryTimeoutId);
+			retryCount = 0; // Reset retry count on new local change
 			setPending(true);
 			timeoutId = setTimeout(performSync, debounceMs);
 		},
@@ -78,6 +100,10 @@ export function createDocumentSync(
 			if (timeoutId) {
 				clearTimeout(timeoutId);
 				timeoutId = null;
+			}
+			if (retryTimeoutId) {
+				clearTimeout(retryTimeoutId);
+				retryTimeoutId = null;
 			}
 			pendingListeners.clear();
 		},
