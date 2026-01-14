@@ -1101,6 +1101,83 @@ A full-featured offline-first issue tracker built with Replicate, demonstrating 
 - Plain TextInput prose binding via `useProseField` hook
 - Crypto polyfills for React Native
 
+## Project Structure
+
+```
+packages/replicate/src/
+├── shared/
+│   └── index.ts         # All validators, types, Duration utilities
+├── client/
+│   └── index.ts         # Collection factory, persistence providers, error types
+├── server/
+│   ├── index.ts         # Schema helpers, collection factory, Replicate class
+│   └── collection.ts    # Server-side collection implementation
+└── component/
+    └── ...              # Convex component internals
+```
+
+### Getter / Factory / Namespace Pattern
+
+Replicate follows a consistent API design pattern across all entry points:
+
+**1. Factory Pattern** - Create collections with configuration:
+```typescript
+// Server: Create collection functions
+import { collection } from "@trestleinc/replicate/server";
+
+export const { stream, material, insert, update, remove, mark, compact } =
+  collection.create<Task>(components.replicate, "tasks", {
+    hooks: { evalWrite: async (ctx, doc) => { /* auth */ } },
+  });
+
+// Client: Create lazy-initialized collection
+import { collection, persistence } from "@trestleinc/replicate/client";
+
+export const tasks = collection.create(schema, "tasks", {
+  persistence: async () => persistence.pglite(db, "tasks"),
+  config: () => ({ convexClient, api: api.tasks, getKey: (t) => t.id }),
+});
+```
+
+**2. Namespace Pattern** - Organized utilities:
+```typescript
+// Server schema utilities
+import { schema } from "@trestleinc/replicate/server";
+
+schema.table(fields, indexes)  // Define replication-enabled table
+schema.prose()                 // ProseMirror field validator
+
+// Client persistence providers
+import { persistence } from "@trestleinc/replicate/client";
+
+persistence.pglite(db, name)        // Browser: PGlite
+persistence.sqlite.native(db, name) // React Native: op-sqlite
+persistence.memory()                // Testing: in-memory
+```
+
+**3. Getter Pattern** - Direct access to collection methods:
+```typescript
+// After init(), get the TanStack DB collection
+const collection = tasks.get();
+
+// Direct method access
+collection.insert(doc);
+collection.update(id, updater);
+collection.delete(id);
+```
+
+**4. Single Entry Point** - All exports consolidated per layer:
+```typescript
+// Server - everything from one import
+import { collection, schema, Replicate } from "@trestleinc/replicate/server";
+
+// Client - everything from one import
+import { collection, persistence, errors } from "@trestleinc/replicate/client";
+
+// Shared - all validators and types from one import
+import type { ProseValue, Duration } from "@trestleinc/replicate";
+```
+
 ## Development
 
 ```bash

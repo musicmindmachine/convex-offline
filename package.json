@@ -19,5 +19,8 @@
 	},
 	"resolutions": {
 		"convex": "^1.31.4"
+	},
+	"dependencies": {
+		"convex": "1.31.4"
 	}
 }
