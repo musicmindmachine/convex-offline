@@ -694,8 +694,9 @@ onMount(async () => {
 
 ```typescript
 interface ProseOptions {
-  user?: UserIdentity;  // Collaborative presence identity
-  debounceMs?: number;  // Sync debounce delay (default: 200ms)
+  user?: UserIdentity;   // Collaborative presence identity
+  debounceMs?: number;   // Sync debounce delay (default: 50ms)
+  throttleMs?: number;   // Cursor/presence update throttle (default: 50ms)
 }
 
 interface UserIdentity {
@@ -704,6 +705,10 @@ interface UserIdentity {
   avatar?: string; // Avatar URL for presence indicators
 }
 ```
+
+**Tuning sync performance:**
+- `debounceMs` - How long to wait after the last edit before syncing to server. Higher values batch more edits together, reducing network traffic but increasing latency.
+- `throttleMs` - How often cursor positions are broadcast to other users. Lower values give smoother cursor movement but more network traffic.
 
 **Configuration Examples:**
 
@@ -881,6 +886,7 @@ import { persistence } from '@trestleinc/replicate/client';
 const encrypted = await persistence.web.encryption({
   storage: await persistence.web.sqlite(),
   user: 'user-id',
+  mode: 'local',  // 'local' = device-only encryption (default), 'e2e' = end-to-end
 
   unlock: {
     webauthn: true,  // Use WebAuthn PRF (passkey-based)
@@ -898,7 +904,7 @@ const encrypted = await persistence.web.encryption({
     onRecover: async () => promptForRecoveryKey(),
   },
 
-  lock: { idle: 15 },  // Auto-lock after 15 mins idle
+  lock: { idle: 15 },  // Auto-lock after 15 minutes of inactivity
   onLock: () => updateUI('locked'),
   onUnlock: () => updateUI('unlocked'),
 });
@@ -909,6 +915,21 @@ export const tasks = collection.create(schema, 'tasks', {
   config: () => ({ /* ... */ }),
 });
 ```
+
+**Configuration options:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `storage` | `Persistence` | required | Underlying storage to encrypt |
+| `user` | `string` | required | User identifier for key scoping |
+| `mode` | `"local" \| "e2e"` | `"local"` | `local` = encrypt on device only, `e2e` = end-to-end encryption |
+| `unlock.webauthn` | `boolean` | — | Enable WebAuthn PRF unlock |
+| `unlock.passphrase` | `object` | — | Enable passphrase unlock with `get`/`setup` callbacks |
+| `recovery.onSetup` | `function` | — | Called when recovery key is generated |
+| `recovery.onRecover` | `function` | — | Called to retrieve recovery key |
+| `lock.idle` | `number` | — | Minutes of inactivity before auto-lock |
+| `onLock` | `function` | — | Callback when storage is locked |
+| `onUnlock` | `function` | — | Callback when storage is unlocked |
 
 **Encryption states:**
 - `"setup"` - First time, needs credential registration
@@ -1121,10 +1142,18 @@ interface CollectionConfig<T> {
     compact: FunctionReference;   // Manual compaction
     material?: FunctionReference; // SSR hydration query
   };
+  user?: () => UserIdentity | undefined;  // User identity for presence
+  anonymousPresence?: AnonymousPresenceConfig;  // Custom anonymous names/colors
+}
+
+interface AnonymousPresenceConfig {
+  adjectives?: string[];  // e.g., ["Swift", "Bright", "Calm"]
+  nouns?: string[];       // e.g., ["Fox", "Owl", "Bear"]
+  colors?: string[];      // e.g., ["#9F5944", "#A9704D", "#6366f1"]
 }
 ```
 
-**Example:**
+**Example with presence:**
 
 ```typescript
 import schema from '../../convex/schema';
@@ -1135,6 +1164,18 @@ export const tasks = collection.create(schema, 'tasks', {
     convexClient: new ConvexClient(import.meta.env.VITE_CONVEX_URL),
     api: api.tasks,
     getKey: (task) => task.id,
+    // Provide user identity for collaborative presence
+    user: () => currentUser ? {
+      name: currentUser.name,
+      color: currentUser.color,
+      avatar: currentUser.avatarUrl,
+    } : undefined,
+    // Customize anonymous user names (for users without identity)
+    anonymousPresence: {
+      adjectives: ['Happy', 'Clever', 'Swift'],
+      nouns: ['Panda', 'Eagle', 'Dolphin'],
+      colors: ['#6366f1', '#8b5cf6', '#ec4899'],
+    },
   }),
 });
 
@@ -1284,24 +1325,30 @@ Optional configuration for `collection.create()`.
 interface CollectionOptions<T> {
   // Optional: Compaction settings
   compaction?: {
-    sizeThreshold?: Size;      // Size threshold: "100kb", "5mb", "1gb" (default: "5mb")
-    peerTimeout?: Duration;    // Peer timeout: "30m", "24h", "7d" (default: "24h")
+    threshold?: number;        // Delta count before compaction (default: 500)
+    timeout?: Duration;        // Session timeout: "30m", "24h", "7d" (default: "24h")
+    retain?: number;           // Snapshots to keep in history (default: 0)
   };
+
+  // Optional: Query filter/ordering (for auth-based visibility)
+  view?: (ctx: QueryCtx, query: Query) => Query | Promise<Query>;
 
   // Optional: Hooks for permissions and lifecycle
   hooks?: {
     // Permission checks (throw to reject)
     evalRead?: (ctx, collection) => Promise<void>;
     evalWrite?: (ctx, doc) => Promise<void>;
-    evalRemove?: (ctx, document) => Promise<void>;
+    evalRemove?: (ctx, docId) => Promise<void>;
+    evalSession?: (ctx, clientId) => Promise<void>;  // Before presence ops
     evalMark?: (ctx, peerId) => Promise<void>;
-    evalCompact?: (ctx, document) => Promise<void>;
+    evalCompact?: (ctx, docId) => Promise<void>;
 
     // Lifecycle callbacks (run after operation)
+    onDelta?: (ctx, result) => Promise<void>;  // After delta query
     onStream?: (ctx, result) => Promise<void>;
     onInsert?: (ctx, doc) => Promise<void>;
     onUpdate?: (ctx, doc) => Promise<void>;
-    onRemove?: (ctx, document) => Promise<void>;
+    onRemove?: (ctx, docId) => Promise<void>;
 
     // Transform hook (modify documents before returning)
     transform?: (docs) => Promise<T[]>;
@@ -1311,8 +1358,33 @@ interface CollectionOptions<T> {
 
 **Type-safe values:**
 
-- `Size`: `"100kb"`, `"5mb"`, `"1gb"`, etc.
 - `Duration`: `"30m"`, `"24h"`, `"7d"`, etc.
+
+**View function example (multi-tenant filtering):**
+
+```typescript
+export const { stream, material, insert, update, remove } = collection.create<Task>(
+  components.replicate,
+  'tasks',
+  {
+    // Only return documents belonging to the current user's organization
+    view: async (ctx, query) => {
+      const identity = await ctx.auth.getUserIdentity();
+      if (!identity) throw new Error('Unauthorized');
+      return query.withIndex('by_org', (q) => q.eq('orgId', identity.orgId));
+    },
+    hooks: {
+      // Verify user can write to this org
+      evalWrite: async (ctx, doc) => {
+        const identity = await ctx.auth.getUserIdentity();
+        if (doc.orgId !== identity?.orgId) {
+          throw new Error('Cannot write to another organization');
+        }
+      },
+    },
+  }
+);
+```
 
 **Returns:** Object with generated functions:
 
