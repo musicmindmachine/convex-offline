@@ -178,11 +178,7 @@ import schema from '../../convex/schema';
 // Create lazy-initialized collection (SSR-safe)
 // Types are inferred from Convex schema - no Zod needed!
 export const tasks = collection.create(schema, 'tasks', {
-  persistence: async () => {
-    const { PGlite } = await import('@electric-sql/pglite');
-    const db = new PGlite('idb://tasks');
-    return persistence.pglite(db, 'tasks');
-  },
+  persistence: () => persistence.web.sqlite(),
   config: () => ({
     convexClient: new ConvexClient(import.meta.env.VITE_CONVEX_URL),
     api: api.tasks,
@@ -357,7 +353,21 @@ function RootComponent() {
 
 ## Sync Protocol
 
-Replicate uses cursor-based sync with peer tracking for safe compaction.
+Replicate v2 uses a simple debounce-based sync architecture with cursor-based streaming and state-vector recovery.
+
+### Architecture Overview
+
+```
+Local edit → Yjs Y.Doc update → debounce (50ms) → Convex mutation
+                                                        ↓
+Server appends delta → stream subscription → client applies update
+```
+
+**Key design choices:**
+- **Debounce-based sync**: Simple `setTimeout` batching (50ms default), no complex actor systems
+- **Monotonic seq numbers**: Every delta gets a server-assigned sequence number (eliminates clock skew)
+- **Local-first startup**: Collection marked ready immediately after loading local data, server sync streams in background
+- **O(1) compaction checks**: Counter-based threshold instead of scanning all deltas
 
 ### `stream` - Cursor-Based Real-Time Sync
 
@@ -365,62 +375,98 @@ The primary sync mechanism uses monotonically increasing sequence numbers (`seq`
 
 1. Client subscribes with last known `cursor` (seq number)
 2. Server returns all changes with `seq > cursor`
-3. Client applies changes and updates local cursor
-4. Client calls `mark` to report sync progress to server
+3. Client applies Yjs updates (automatic CRDT merge)
+4. Client reports state vector via `mark` mutation
 5. Subscription stays open for live updates
 
-This approach enables:
+**Stream response format:**
+```typescript
+interface StreamResponse {
+  changes: Array<{
+    type: "delta" | "snapshot";
+    document: string;
+    bytes: ArrayBuffer;  // Yjs update
+    seq: number;
+    exists?: boolean;    // false = document deleted
+  }>;
+  seq: number;           // Highest seq in batch
+  more: boolean;         // More changes available
+}
+```
 
-- **Safe compaction**: Server knows which deltas each peer has synced
-- **Peer tracking**: Active peers are tracked via `mark` calls
-- **No data loss**: Compaction only removes deltas all active peers have received
+### Local Changes & Debouncing
 
-### `mark` - Peer Sync Tracking
+When you edit a document:
 
-Clients report their sync progress to the server:
+1. Yjs `Y.Doc` fires update event
+2. Sync handler's `onLocalChange()` starts debounce timer (50ms default)
+3. Rapid edits restart the timer (batches multiple keystrokes)
+4. After debounce expires: encode delta, call Convex mutation
+5. Pending state cleared after successful sync
+
+```typescript
+// Configure debounce via prose options
+const binding = await collection.utils.prose(docId, 'content', {
+  debounceMs: 200,  // Wait 200ms after last edit before syncing (default: 200ms)
+});
+```
+
+**Note:** The 50ms debounce in the architecture overview is the internal sync layer batching. The `debounceMs` option in prose bindings (default: 200ms) adds additional delay for collaborative editing scenarios.
+
+### `mark` - State Vector Sync Tracking
+
+Clients report their Yjs state vector (not just seq number) to enable safe compaction:
 
 ```typescript
 // Called automatically after applying changes
 await convexClient.mutation(api.tasks.mark, {
   peerId: "client-uuid",
-  syncedSeq: 42,  // Last processed seq number
+  vector: stateVector,  // Y.encodeStateVector(ydoc)
 });
 ```
 
 The server tracks:
+- Active sessions with their state vectors
+- Session timeout for cleanup (default: 24h)
+- Which CRDT operations each peer has received
 
-- Which peers are actively syncing
-- Each peer's last synced `seq` number
-- Peer timeout for cleanup (configurable via `peerTimeout`)
+### `compact` - State-Vector-Aware Compaction
 
-### `compact` - Peer-Aware Compaction
+Compaction merges deltas into snapshots while ensuring no active peer loses data:
 
-Compaction is safe because it respects peer sync state:
-
-1. Server checks minimum `syncedSeq` across all active peers
-2. Only deletes deltas where `seq < minSyncedSeq`
-3. Ensures no active peer loses data they haven't synced
+1. Server merges all deltas + existing snapshot into single state
+2. For each active session, compute `Y.diffUpdateV2(merged, session.vector)`
+3. If diff is empty for all sessions → safe to delete deltas
+4. Replace snapshot with merged state, delete individual deltas
 
 **Compaction triggers:**
-
-- **Automatic**: When document deltas exceed `sizeThreshold`
+- **Automatic**: When delta count exceeds threshold (default: 500)
 - **Manual**: Via `compact` mutation
 
-### `recovery` - State Vector Sync
+**O(1) threshold check**: Delta count tracked per-document, not scanned on every write.
 
-Used on startup to reconcile client and server state using Yjs state vectors:
+### `recovery` - Startup Reconciliation
 
-1. Client encodes its local Y.Doc state vector (compact representation of what it has)
-2. Server merges all snapshots + deltas into full state
-3. Server computes diff between its state and client's state vector
+Used on app startup to reconcile client and server state using Yjs state vectors:
+
+1. Client loads local Y.Doc from SQLite
+2. Client encodes state vector (`Y.encodeStateVector(ydoc)`)
+3. Server computes diff between its state and client's vector
 4. Server returns only the missing bytes
-5. Client applies the diff to catch up
+5. Client applies diff to catch up
+6. Stream subscription begins from current seq
+
+**Local-first startup flow:**
+```
+Load from SQLite → markReady() → UI renders → recovery query → stream subscription
+                        ↑
+              (instant, no blocking)
+```
 
 **When recovery is used:**
-
-- App startup (before stream subscription begins)
+- App startup (before stream subscription)
 - After extended offline periods
-- When cursor-based sync can't satisfy the request (deltas compacted)
+- Reconnection after network interruption (with `pushLocal=true` to send local changes)
 
 ## Delete Pattern: Hard Delete with Event History
 
@@ -629,63 +675,52 @@ Choose the right storage backend for your platform. Persistence is configured in
 ```typescript
 import { collection, persistence } from '@trestleinc/replicate/client';
 
-// Browser: PGlite (PostgreSQL in browser via IndexedDB)
-export const tasks = collection.create({
-  persistence: async () => {
-    const { PGlite } = await import('@electric-sql/pglite');
-    const db = new PGlite('idb://my-app-db');
-    return persistence.pglite(db, 'tasks');
-  },
+// Browser: wa-sqlite with OPFS (recommended for web)
+export const tasks = collection.create(schema, 'tasks', {
+  persistence: () => persistence.web.sqlite(),
   config: () => ({ /* ... */ }),
 });
 
-// Browser: PGlite singleton (shared across multiple collections)
-// Use persistence.pglite.once() when you want one database for all collections
-import { persistence } from '@trestleinc/replicate/client';
-import { PGlite } from '@electric-sql/pglite';
+// Browser: SQLite singleton (shared across multiple collections)
+// Use persistence.web.sqlite.once() when you want one database for all collections
+const sharedSqlite = persistence.web.sqlite.once();
 
-// Create shared PGlite factory (module level)
-const pglite = async () => {
-  const db = new PGlite('idb://my-app-db');
-  return persistence.pglite.once(db, 'my-app');
-};
-
-export const tasks = collection.create({
-  persistence: pglite,  // Shared instance
+export const tasks = collection.create(schema, 'tasks', {
+  persistence: sharedSqlite,  // Shared instance
   config: () => ({ /* ... */ }),
 });
 
-export const comments = collection.create({
-  persistence: pglite,  // Same shared instance
+export const comments = collection.create(schema, 'comments', {
+  persistence: sharedSqlite,  // Same shared instance
   config: () => ({ /* ... */ }),
 });
 
 // React Native: Native SQLite (op-sqlite)
-export const tasks = collection.create({
+export const tasks = collection.create(schema, 'tasks', {
   persistence: async () => {
     const { open } = await import('@op-engineering/op-sqlite');
     const db = open({ name: 'my-app-db' });
-    return persistence.sqlite.native(db, 'my-app-db');
+    return persistence.native.sqlite(db, 'my-app-db');
   },
   config: () => ({ /* ... */ }),
 });
 
 // Testing: In-memory (no persistence)
-export const tasks = collection.create({
-  persistence: async () => persistence.memory(),
+export const tasks = collection.create(schema, 'tasks', {
+  persistence: () => persistence.memory(),
   config: () => ({ /* ... */ }),
 });
 
 // Custom backend: Implement StorageAdapter interface
-export const tasks = collection.create({
-  persistence: async () => persistence.custom(new MyCustomAdapter()),
+export const tasks = collection.create(schema, 'tasks', {
+  persistence: () => persistence.custom(new MyCustomAdapter()),
   config: () => ({ /* ... */ }),
 });
 ```
 
-**PGlite** - PostgreSQL compiled to WASM, stored in IndexedDB. Full SQL support with reactive queries. Recommended for web apps.
+**wa-sqlite (Web)** - SQLite compiled to WASM using wa-sqlite with OPFS (Origin Private File System) for persistence. Runs in a Web Worker for non-blocking I/O. Recommended for web apps.
 
-**PGlite Singleton** - Use `persistence.pglite.once()` when multiple collections should share one database. Reference counted for proper cleanup.
+**SQLite Singleton** - Use `persistence.web.sqlite.once()` when multiple collections should share one database. Reference counted for proper cleanup.
 
 **SQLite Native** - Uses op-sqlite for React Native. You create the database and pass it.
 
@@ -762,6 +797,188 @@ await configure({
 });
 ```
 
+## Experimental Features
+
+The following features are experimental and may change in future releases.
+
+### Encrypted Storage (Web)
+
+End-to-end encryption for local data using WebAuthn PRF or passphrase-based key derivation.
+
+```typescript
+import { persistence } from '@trestleinc/replicate/client';
+
+// Create encrypted persistence with WebAuthn PRF
+const encrypted = await persistence.web.encryption({
+  storage: await persistence.web.sqlite(),
+  user: 'user-id',
+
+  unlock: {
+    webauthn: true,  // Use WebAuthn PRF (passkey-based)
+    passphrase: {    // Fallback to passphrase
+      get: async () => promptForPassphrase(),
+      setup: async (recoveryKey) => {
+        displayRecoveryKey(recoveryKey);
+        return promptForNewPassphrase();
+      },
+    },
+  },
+
+  recovery: {
+    onSetup: async (key) => displayRecoveryKey(key),
+    onRecover: async () => promptForRecoveryKey(),
+  },
+
+  lock: { idle: 15 },  // Auto-lock after 15 mins idle
+  onLock: () => updateUI('locked'),
+  onUnlock: () => updateUI('unlocked'),
+});
+
+// Use in collection
+export const tasks = collection.create(schema, 'tasks', {
+  persistence: () => encrypted,
+  config: () => ({ /* ... */ }),
+});
+```
+
+**Encryption states:**
+- `"setup"` - First time, needs credential registration
+- `"locked"` - Encrypted, requires unlock to access
+- `"unlocked"` - Key in memory, storage accessible
+
+**Methods:**
+```typescript
+encrypted.state           // "setup" | "locked" | "unlocked"
+await encrypted.unlock()  // Trigger unlock flow
+await encrypted.lock()    // Lock immediately
+await encrypted.isSupported()  // Check WebAuthn PRF support
+```
+
+**Encryption Manager** (higher-level API):
+```typescript
+const manager = await persistence.web.encryption.manager({
+  storage,
+  user: 'user-id',
+  preference: 'webauthn',  // or 'passphrase' or 'none'
+  hooks: {
+    change: (state) => updateUI(state),
+    passphrase: async () => promptForPassphrase(),
+    recovery: (key) => displayRecoveryKey(key),
+  },
+});
+
+await manager.enable()   // Enable encryption
+await manager.disable()  // Disable encryption
+await manager.unlock()   // Unlock storage
+await manager.lock()     // Lock storage
+manager.subscribe((state) => { /* ... */ })
+```
+
+**WebAuthn PRF support check:**
+```typescript
+const supported = await persistence.web.encryption.webauthn.supported();
+```
+
+**Limitations:**
+- Web only (React Native not yet implemented)
+- Requires HTTPS or localhost
+- WebAuthn PRF requires compatible authenticator (Touch ID, security keys)
+
+### Schema Migrations
+
+Automatic SQLite schema migrations when your Convex schema changes.
+
+**Define a versioned schema:**
+```typescript
+// convex/schema.ts
+import { schema } from '@trestleinc/replicate/server';
+import { v } from 'convex/values';
+
+export const taskSchema = schema.define({
+  version: 2,
+  shape: v.object({
+    id: v.string(),
+    title: v.string(),
+    status: v.union(v.literal('todo'), v.literal('done')),
+    priority: v.optional(v.string()),  // Added in v2
+  }),
+  defaults: { status: 'todo', priority: 'medium' },
+  history: {
+    1: v.object({
+      id: v.string(),
+      title: v.string(),
+      completed: v.boolean(),
+    }),
+  },
+});
+
+export default defineSchema({
+  tasks: schema.table(taskSchema.shape),
+});
+```
+
+**Run migrations on client:**
+```typescript
+import { runMigrations } from '@trestleinc/replicate/client';
+
+const result = await runMigrations({
+  collection: 'tasks',
+  schema: taskSchema,
+  db: persistence.db,  // SQLite database from persistence
+});
+
+if (result.migrated) {
+  console.log(`Migrated from v${result.fromVersion} to v${result.toVersion}`);
+  console.log('Operations:', result.diff?.operations);
+}
+```
+
+**Schema diff operations:**
+- `add_column` - New field with default value
+- `remove_column` - Removed field
+- `rename_column` - Renamed field (requires custom migration)
+- `change_type` - Type changed (requires custom migration)
+
+**Custom migrations:**
+```typescript
+const migrations = taskSchema.migrations({
+  2: async (ctx) => {
+    // Custom migration logic for v1 → v2
+    for (const doc of ctx.docs) {
+      // Transform completed boolean to status enum
+      const status = doc.fields.completed ? 'done' : 'todo';
+      ctx.update(doc.id, { status, priority: 'medium' });
+    }
+  },
+});
+
+await runMigrations({
+  collection: 'tasks',
+  schema: taskSchema,
+  db: persistence.db,
+  clientMigrations: migrations,
+});
+```
+
+**Error recovery:**
+```typescript
+await runMigrations({
+  // ...
+  onError: async (ctx) => {
+    if (ctx.canResetSafely) {
+      return { action: 'reset' };  // Clear data, start fresh
+    }
+    return { action: 'keep-old-schema' };  // Keep old version
+  },
+});
+```
+
+**Limitations:**
+- Experimental with limited test coverage
+- SQLite 3.35+ required for DROP COLUMN
+- Type changes and renames require custom migrations
+- No automatic rollback support
+
 ## API Reference
 
 ### Client-Side (`@trestleinc/replicate/client`)
@@ -788,11 +1005,7 @@ import schema from '../../convex/schema';
 import { api } from '../../convex/_generated/api';
 
 export const tasks = collection.create(schema, 'tasks', {
-  persistence: async () => {
-    const { PGlite } = await import('@electric-sql/pglite');
-    const db = new PGlite('idb://tasks');
-    return persistence.pglite(db, 'tasks');
-  },
+  persistence: () => persistence.web.sqlite(),
   config: () => ({
     convexClient: new ConvexClient(import.meta.env.VITE_CONVEX_URL),
     api: api.tasks,
@@ -848,11 +1061,7 @@ interface CollectionConfig<T> {
 import schema from '../../convex/schema';
 
 export const tasks = collection.create(schema, 'tasks', {
-  persistence: async () => {
-    const { PGlite } = await import('@electric-sql/pglite');
-    const db = new PGlite('idb://tasks');
-    return persistence.pglite(db, 'tasks');
-  },
+  persistence: () => persistence.web.sqlite(),
   config: () => ({
     convexClient: new ConvexClient(import.meta.env.VITE_CONVEX_URL),
     api: api.tasks,
@@ -888,18 +1097,18 @@ const plainText = schema.prose.extract(task.content);
 import { persistence, type StorageAdapter } from '@trestleinc/replicate/client';
 
 // Persistence providers (use in collection.create persistence factory)
-persistence.pglite(db, name)           // Browser: PGlite (PostgreSQL in IndexedDB)
-persistence.pglite.once(db, name)      // Browser: PGlite singleton (shared across collections)
-persistence.sqlite.native(db, name)    // React Native: op-sqlite
+persistence.web.sqlite()               // Browser: wa-sqlite + OPFS (Web Worker)
+persistence.web.sqlite.once()          // Browser: SQLite singleton (shared across collections)
+persistence.native.sqlite(db, name)    // React Native: op-sqlite
 persistence.memory()                   // Testing: in-memory (no persistence)
 persistence.custom(adapter)            // Custom: your StorageAdapter implementation
 ```
 
-**`persistence.pglite(db, name)`** - Browser persistence using PGlite (PostgreSQL compiled to WASM, stored in IndexedDB).
+**`persistence.web.sqlite()`** - Browser persistence using wa-sqlite compiled to WASM with OPFS for storage. Runs in a Web Worker.
 
-**`persistence.pglite.once(db, name)`** - Singleton PGlite instance for sharing across multiple collections. Reference counted for cleanup.
+**`persistence.web.sqlite.once()`** - Singleton SQLite instance for sharing across multiple collections. Reference counted for cleanup.
 
-**`persistence.sqlite.native(db, name)`** - React Native SQLite using op-sqlite. You create the database and pass it.
+**`persistence.native.sqlite(db, name)`** - React Native SQLite using op-sqlite. You create the database and pass it.
 
 **`persistence.memory()`** - In-memory, no persistence. Useful for testing.
 
@@ -933,13 +1142,44 @@ interface StorageAdapter {
 ```typescript
 import { errors } from '@trestleinc/replicate/client';
 
-errors.Network           // Network-related failures
+errors.Network           // Network-related failures (retryable)
 errors.IDB               // Storage read errors
 errors.IDBWrite          // Storage write errors
 errors.Reconciliation    // Phantom document cleanup errors
 errors.Prose             // Rich text field errors
 errors.CollectionNotReady// Collection not initialized
 errors.NonRetriable      // Errors that should not be retried (auth, validation)
+```
+
+#### Identity Utilities
+
+Helpers for generating user identity data for collaborative features:
+
+```typescript
+import { identity } from '@trestleinc/replicate/client';
+
+// Create identity from user data
+const user = identity.from({
+  name: 'Alice',
+  color: '#6366f1',
+  avatar: 'https://example.com/alice.jpg',
+});
+
+// Generate deterministic color from seed (e.g., user ID)
+const color = identity.color.generate('user-123');  // Returns hex color
+
+// Generate anonymous name from seed
+const name = identity.name.anonymous('user-123');  // e.g., "Swift Fox"
+```
+
+**Use with prose bindings:**
+```typescript
+const binding = await collection.utils.prose(docId, 'content', {
+  user: {
+    name: identity.name.anonymous(userId),
+    color: identity.color.generate(userId),
+  },
+});
 ```
 
 ### Server-Side (`@trestleinc/replicate/server`)
@@ -1057,6 +1297,18 @@ Validator for ProseMirror-compatible JSON fields.
 content: schema.prose()  // Validates ProseMirror JSON structure
 ```
 
+#### `schema.define(options)` (Experimental)
+
+Define a versioned schema for migration support. See [Schema Migrations](#schema-migrations) for details.
+
+**Parameters:**
+- `options.version` - Current schema version number
+- `options.shape` - Convex validator for document structure
+- `options.defaults` - Default values for new fields
+- `options.history` - Previous schema versions for diffing
+
+**Returns:** `VersionedSchema<T>` with `getVersion()`, `diff()`, `migrations()` methods
+
 ### Shared Types (`@trestleinc/replicate`)
 
 ```typescript
@@ -1107,7 +1359,7 @@ A full-featured offline-first issue tracker built with Replicate, demonstrating 
 
 **Web features demonstrated:**
 
-- Offline-first with PGlite persistence (PostgreSQL in IndexedDB)
+- Offline-first with wa-sqlite persistence (SQLite in OPFS)
 - Rich text editing with TipTap + Yjs collaboration
 - PWA with custom service worker
 - Real-time sync across devices
@@ -1153,7 +1405,7 @@ export const { stream, material, insert, update, remove, mark, compact } =
 import { collection, persistence } from "@trestleinc/replicate/client";
 
 export const tasks = collection.create(schema, "tasks", {
-  persistence: async () => persistence.pglite(db, "tasks"),
+  persistence: () => persistence.web.sqlite(),
   config: () => ({ convexClient, api: api.tasks, getKey: (t) => t.id }),
 });
 ```
@@ -1169,8 +1421,8 @@ schema.prose()                 // ProseMirror field validator
 // Client persistence providers
 import { persistence } from "@trestleinc/replicate/client";
 
-persistence.pglite(db, name)        // Browser: PGlite
-persistence.sqlite.native(db, name) // React Native: op-sqlite
+persistence.web.sqlite()            // Browser: wa-sqlite + OPFS
+persistence.native.sqlite(db, name) // React Native: op-sqlite
 persistence.memory()                // Testing: in-memory
 ```
 
