@@ -351,6 +351,75 @@ function RootComponent() {
 
 **Note:** If your framework doesn't support SSR, just call `await tasks.init()` without arguments - it will fetch data on mount and show a loading state.
 
+### Step 7: Pagination (Optional)
+
+For large collections, use pagination to load documents in pages instead of all at once.
+
+**Server-side: Fetch first page**
+
+```typescript
+// SvelteKit: src/routes/+layout.server.ts
+import { ConvexHttpClient } from 'convex/browser';
+import { api } from '../convex/_generated/api';
+import type { PaginatedMaterial, PaginatedPage } from '@trestleinc/replicate/client';
+
+const httpClient = new ConvexHttpClient(PUBLIC_CONVEX_URL);
+const PAGE_SIZE = 25;
+
+export async function load() {
+  // Pass numItems to get paginated result
+  const firstPage = await httpClient.query(api.tasks.material, {
+    numItems: PAGE_SIZE,
+  }) as PaginatedPage<Task>;
+
+  // Convert to PaginatedMaterial for hydration
+  const tasksMaterial: PaginatedMaterial<Task> = {
+    pages: [firstPage],
+    cursor: firstPage.continueCursor,
+    isDone: firstPage.isDone,
+  };
+
+  return { tasksMaterial };
+}
+```
+
+**Client-side: Initialize with paginated data**
+
+```typescript
+// Initialize with paginated material
+await tasks.init(tasksMaterial);
+
+// Access pagination state
+const { pagination } = tasks;
+
+console.log(pagination.status);      // "idle" | "busy" | "done" | "error"
+console.log(pagination.canLoadMore); // true if more pages available
+console.log(pagination.count);       // total documents loaded
+
+// Subscribe to pagination state changes
+const unsubscribe = pagination.subscribe((state) => {
+  console.log('Pagination state:', state.status, state.count);
+});
+```
+
+**Pagination types:**
+
+```typescript
+interface PaginatedPage<T> {
+  page: readonly T[];        // Documents in this page
+  isDone: boolean;           // All pages loaded?
+  continueCursor: string;    // Cursor for next page
+}
+
+interface PaginatedMaterial<T> {
+  pages: readonly PaginatedPage<T>[];
+  cursor: string;
+  isDone: boolean;
+}
+```
+
+**Note:** Client-side `pagination.load()` for fetching subsequent pages is not yet implemented. Currently, pagination works for SSR hydration with the first page. For infinite scroll, implement server-side pagination in your API routes.
+
 ## Sync Protocol
 
 Replicate v2 uses a simple debounce-based sync architecture with cursor-based streaming and state-vector recovery.
