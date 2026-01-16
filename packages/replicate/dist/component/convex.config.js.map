@@ -1,0 +1,1 @@
+{"version":3,"file":"convex.config.js","names":[],"sources":["../../src/component/convex.config.ts"],"sourcesContent":["import { defineComponent } from \"convex/server\";\n\nconst component = defineComponent(\"replicate\");\n\nexport default component;\n"],"mappings":";;;AAEA,MAAM,YAAY,gBAAgB,YAAY;AAE9C,4BAAe"}
