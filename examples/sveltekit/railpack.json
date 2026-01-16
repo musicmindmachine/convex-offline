@@ -1,4 +1,12 @@
 {
 	"$schema": "https://schema.railpack.com",
-	"provider": "bun"
+	"provider": "node",
+	"packages": {
+		"bun": "latest"
+	},
+	"steps": {
+		"install": {
+			"commands": ["bun install"]
+		}
+	}
 }

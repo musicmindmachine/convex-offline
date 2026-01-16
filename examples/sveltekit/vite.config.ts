@@ -6,7 +6,6 @@ export default defineConfig({
 	plugins: [tailwindcss(), sveltekit()],
 	build: {
 		rollupOptions: {
-			external: [/^@trestleinc\/replicate\/worker/],
 			onwarn(warning, warn) {
 				if (warning.code === "CIRCULAR_DEPENDENCY" && warning.message.includes("node_modules")) {
 					return;
@@ -28,7 +27,6 @@ export default defineConfig({
 		exclude: ["@electric-sql/pglite"],
 	},
 	ssr: {
-		noExternal: [/^@trestleinc\/replicate(?!\/worker)/],
-		external: [/^@trestleinc\/replicate\/worker/],
+		noExternal: [/^@trestleinc\/replicate/],
 	},
 });
