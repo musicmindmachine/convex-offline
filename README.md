@@ -476,11 +476,11 @@ When you edit a document:
 ```typescript
 // Configure debounce via prose options
 const binding = await collection.utils.prose(docId, 'content', {
-  debounceMs: 200,  // Wait 200ms after last edit before syncing (default: 200ms)
+  debounceMs: 200,  // Wait 200ms after last edit before syncing (default: 50ms)
 });
 ```
 
-**Note:** The 50ms debounce in the architecture overview is the internal sync layer batching. The `debounceMs` option in prose bindings (default: 200ms) adds additional delay for collaborative editing scenarios.
+**Note:** The default `debounceMs` is 50ms. Increase it for collaborative editing scenarios where you want to batch more edits together before syncing.
 
 ### `mark` - State Vector Sync Tracking
 
@@ -694,7 +694,7 @@ onMount(async () => {
 
 ```typescript
 interface ProseOptions {
-  user?: UserIdentity;   // Collaborative presence identity
+  user?: () => UserIdentity | undefined;   // User identity getter for collaborative presence
   debounceMs?: number;   // Sync debounce delay (default: 50ms)
   throttleMs?: number;   // Cursor/presence update throttle (default: 50ms)
 }
@@ -1063,6 +1063,31 @@ await runMigrations({
 });
 ```
 
+**Additional migration utilities:**
+```typescript
+import {
+  runMigrations,
+  runAutoMigration,
+  getStoredSchemaVersion,
+  setStoredSchemaVersion,
+  createMigrationError,
+} from '@trestleinc/replicate/client';
+
+// Run automatic schema migrations from a schema diff
+const diff = taskSchema.diff(1, 2);  // Get diff between versions
+await runAutoMigration(persistence.db, 'tasks', diff);
+
+// Check current stored schema version
+const version = await getStoredSchemaVersion(persistence.db, 'tasks');
+
+// Manually set schema version (useful for manual migrations)
+await setStoredSchemaVersion(persistence.db, 'tasks', 2);
+
+// Create a typed migration error
+// Valid codes: 'SCHEMA_MISMATCH' | 'SQLITE_ERROR' | 'YJS_ERROR' | 'NETWORK_ERROR'
+const error = createMigrationError('SQLITE_ERROR', 'Cannot migrate field type', 1, 2);
+```
+
 **Limitations:**
 - Experimental with limited test coverage
 - SQLite 3.35+ required for DROP COLUMN
@@ -1292,6 +1317,173 @@ const binding = await collection.utils.prose(docId, 'content', {
 });
 ```
 
+#### Type Utilities
+
+Type inference helpers for extracting document types from collections and schemas:
+
+```typescript
+import type { InferDoc, DocFromSchema, TableNamesFromSchema } from '@trestleinc/replicate/client';
+
+// Extract document type from a LazyCollection
+type Task = InferDoc<typeof tasks>;
+
+// Alternative: use the $docType property directly
+type Task = NonNullable<typeof tasks.$docType>;
+
+// Extract document type from Convex schema by table name
+type Task = DocFromSchema<typeof schema, 'tasks'>;
+
+// Get all table names from a schema
+type Tables = TableNamesFromSchema<typeof schema>;  // "tasks" | "users" | ...
+```
+
+**`InferDoc<C>`** - Extracts the document type from a `LazyCollection`. Returns the inferred type `T` from `$docType`. Use `NonNullable<>` wrapper if you need to exclude `undefined`.
+
+**`DocFromSchema<Schema, TableName>`** - Extracts the document type for a specific table from a Convex schema definition.
+
+**`TableNamesFromSchema<Schema>`** - Returns a union type of all table names in the schema.
+
+#### EditorBinding Interface
+
+The binding returned by `collection.utils.prose()` for collaborative rich text editing:
+
+```typescript
+interface EditorBinding {
+  /** Yjs XmlFragment for content sync - pass to TipTap/BlockNote */
+  readonly fragment: Y.XmlFragment;
+
+  /** Provider with Yjs Awareness for cursor/presence sync */
+  readonly provider: {
+    readonly awareness: Awareness;  // For CollaborationCursor
+    readonly document: Y.Doc;       // The underlying Yjs document
+  };
+
+  /** Whether there are unsaved local changes pending sync */
+  readonly pending: boolean;
+
+  /** Subscribe to pending state changes for save indicators */
+  onPendingChange(callback: (pending: boolean) => void): () => void;
+
+  /** Cleanup - must be called when unmounting the editor */
+  destroy(): void;
+}
+```
+
+**Usage with TipTap:**
+```typescript
+const binding = await collection.utils.prose(docId, 'content');
+
+const editor = new Editor({
+  extensions: [
+    Collaboration.configure({ fragment: binding.fragment }),
+    CollaborationCursor.configure({ provider: binding.provider }),
+  ],
+});
+
+// Track save state
+binding.onPendingChange((pending) => {
+  setSaveIndicator(pending ? 'Saving...' : 'Saved');
+});
+
+// Cleanup on unmount
+onCleanup(() => binding.destroy());
+```
+
+#### DocumentHandle & Presence API
+
+Access per-document presence and awareness through the `doc()` method:
+
+```typescript
+interface DocumentHandle<T> {
+  readonly id: string;
+  readonly presence: DocumentPresence;
+  readonly awareness: Awareness;
+  prose(field: ProseFields<T>, options?: ProseOptions): Promise<EditorBinding>;
+}
+
+interface DocumentPresence {
+  /** Join presence for this document with optional cursor data */
+  join(options?: { cursor?: unknown }): void;
+
+  /** Leave presence for this document */
+  leave(): void;
+
+  /** Update presence state (e.g., cursor position) */
+  update(options: { cursor?: unknown }): void;
+
+  /** Get current presence state */
+  get(): PresenceState;
+
+  /** Subscribe to presence changes */
+  subscribe(callback: (state: PresenceState) => void): () => void;
+}
+
+interface PresenceState {
+  local: UserIdentity | null;    // Current user's identity
+  remote: UserIdentity[];        // Other users currently present
+}
+```
+
+**Usage:**
+```typescript
+const collection = tasks.get();
+const doc = collection.doc('task-123');
+
+// Join presence
+doc.presence.join({ cursor: { line: 0, ch: 0 } });
+
+// Subscribe to presence changes
+const unsubscribe = doc.presence.subscribe((state) => {
+  console.log('Users present:', state.remote.map(u => u.name));
+});
+
+// Update cursor position
+doc.presence.update({ cursor: { line: 5, ch: 10 } });
+
+// Leave when done
+doc.presence.leave();
+```
+
+#### Session API
+
+Query connected sessions across documents:
+
+```typescript
+interface SessionInfo {
+  client: string;                                           // Unique client ID
+  document: string;                                         // Document ID
+  user?: string;                                            // User identifier
+  profile?: { name?: string; color?: string; avatar?: string };
+  cursor?: unknown;                                         // Last known cursor position
+  connected: boolean;                                       // Currently connected
+}
+
+interface SessionAPI {
+  /** Get sessions, optionally filtered by document ID */
+  get(docId?: string): SessionInfo[];
+
+  /** Subscribe to session changes */
+  subscribe(callback: (sessions: SessionInfo[]) => void): () => void;
+}
+```
+
+**Usage:**
+```typescript
+const collection = tasks.get();
+
+// Get all connected sessions
+const allSessions = collection.session.get();
+
+// Get sessions for a specific document
+const docSessions = collection.session.get('task-123');
+
+// Subscribe to session changes
+const unsubscribe = collection.session.subscribe((sessions) => {
+  const activeUsers = sessions.filter(s => s.connected);
+  updatePresenceIndicator(activeUsers);
+});
+```
+
 ### Server-Side (`@trestleinc/replicate/server`)
 
 #### `collection.create<T>(component, name, options?)`
@@ -1450,13 +1642,147 @@ Define a versioned schema for migration support. See [Schema Migrations](#schema
 
 **Returns:** `VersionedSchema<T>` with `getVersion()`, `diff()`, `migrations()` methods
 
-### Shared Types (`@trestleinc/replicate`)
+#### `ViewFunction` Type
+
+Type for view functions used in collection options for filtering/ordering queries:
 
 ```typescript
-import type { ProseValue } from '@trestleinc/replicate';
+import type { ViewFunction } from '@trestleinc/replicate/server';
+
+type ViewFunction<TableInfo> = (
+  ctx: GenericQueryCtx<GenericDataModel>,
+  query: QueryInitializer<TableInfo>
+) => ViewQuery<TableInfo> | Promise<ViewQuery<TableInfo>>;
+```
+
+View functions receive a query initializer and return a filtered/ordered query. Useful for multi-tenant filtering, role-based access, or custom ordering.
+
+#### Advanced: `Replicate` Class
+
+For advanced customization, use the `Replicate` class directly instead of `collection.create()`:
+
+```typescript
+import { Replicate } from '@trestleinc/replicate/server';
+import { components } from './_generated/api';
+
+const r = new Replicate<Task>(components.replicate, 'tasks', {
+  threshold: 1000,      // Compact after 1000 deltas (default: 500)
+  timeout: '48h',       // Session timeout (default: 24h)
+  retain: 5,            // Keep 5 snapshots in history (default: 0)
+});
+
+// Create individual queries/mutations with custom options
+export const stream = r.createStreamQuery({ view: myViewFn });
+export const material = r.createMaterialQuery({ transform: filterDocs });
+export const insert = r.createInsertMutation({ evalWrite: checkAuth, onInsert: logInsert });
+export const update = r.createUpdateMutation({ evalWrite: checkAuth, onUpdate: logUpdate });
+export const remove = r.createRemoveMutation({ evalRemove: checkAuth, onRemove: logRemove });
+export const replicate = r.createReplicateMutation({ /* all hooks */ });
+export const mark = r.createMarkMutation({ evalWrite: checkAuth });
+export const delta = r.createDeltaQuery({ view: myViewFn, onDelta: trackSync });
+export const sessions = r.createSessionQuery({ view: myViewFn });
+export const presence = r.createSessionMutation({ view: myViewFn, evalSession: checkAuth });
+```
+
+**Replicate Class Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `createStreamQuery(opts?)` | Real-time CRDT stream with `seq` cursor |
+| `createMaterialQuery(opts?)` | SSR-friendly materialized documents query |
+| `createDeltaQuery(opts?)` | Delta query with recovery mode support |
+| `createSessionQuery(opts?)` | Query connected sessions |
+| `createInsertMutation(opts?)` | Insert document mutation |
+| `createUpdateMutation(opts?)` | Update document mutation |
+| `createRemoveMutation(opts?)` | Delete document mutation |
+| `createReplicateMutation(opts?)` | Universal insert/update/delete mutation |
+| `createMarkMutation(opts?)` | Mark sync progress mutation |
+| `createSessionMutation(opts?)` | Session/presence mutation (join/leave/signal) |
+
+### Shared Types (`@trestleinc/replicate` or `@trestleinc/replicate/shared`)
+
+```typescript
+import type { ProseValue, Duration, CompactionConfig } from '@trestleinc/replicate/shared';
 
 // ProseValue - type alias for ProseMirror JSON structure
 // Automatically inferred from schema.prose() fields in Convex schema
+```
+
+#### Duration Type
+
+Time duration strings for configuration:
+
+```typescript
+type Duration = `${number}${"m" | "h" | "d"}`;
+
+// Examples
+const timeout: Duration = "30m";   // 30 minutes
+const sessionTTL: Duration = "24h"; // 24 hours
+const retention: Duration = "7d";   // 7 days
+
+// Convert to milliseconds
+import { parseDuration } from '@trestleinc/replicate/shared';
+const ms = parseDuration("24h");  // 86400000
+```
+
+#### CompactionConfig
+
+Configuration for CRDT compaction behavior:
+
+```typescript
+interface CompactionConfig {
+  /** Delta count threshold before auto-compaction (default: 500) */
+  threshold?: number;
+
+  /** Session timeout - inactive sessions are cleaned up (default: "24h") */
+  timeout?: Duration;
+
+  /** Number of snapshots to retain in history (default: 0) */
+  retain?: number;
+}
+```
+
+#### Other Shared Types
+
+```typescript
+// Profile for user presence
+interface Profile {
+  name?: string;
+  color?: string;
+  avatar?: string;
+}
+
+// Cursor position for collaborative editing
+interface Cursor {
+  anchor: unknown;
+  head: unknown;
+  field?: string;
+}
+
+// ProseMirror-compatible JSON structure
+interface XmlFragmentJSON {
+  type: "doc";
+  content?: XmlNodeJSON[];
+}
+
+interface XmlNodeJSON {
+  type: string;
+  attrs?: Record<string, unknown>;
+  content?: XmlNodeJSON[];
+  text?: string;
+  marks?: { type: string; attrs?: Record<string, unknown> }[];
+}
+
+// Extract prose field names from a document type
+type ProseFields<T> = {
+  [K in keyof T]: T[K] extends ProseValue ? K : never;
+}[keyof T];
+
+// Operation type in stream changes
+enum OperationType {
+  Delta = "delta",
+  Snapshot = "snapshot",
+}
 ```
 
 ## React Native
