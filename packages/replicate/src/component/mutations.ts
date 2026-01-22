@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
-import { v } from 'convex/values';
-import { mutation, query } from '$/component/_generated/server';
+import { v, ConvexError } from 'convex/values';
+import { mutation, query, type MutationCtx } from '$/component/_generated/server';
 import { api } from '$/component/_generated/api';
 import { getLogger } from '$/shared/logger';
 import { OperationType } from '$/shared';
@@ -33,10 +33,10 @@ const MAX_RETRIES = 3;
  * Previous approach (querying max seq from deltas table) had a race condition
  * where concurrent mutations could get the same seq number.
  */
-async function getNextSeq(ctx: any, collection: string): Promise<number> {
+async function getNextSeq(ctx: MutationCtx, collection: string): Promise<number> {
 	const existing = await ctx.db
 		.query('sequences')
-		.withIndex('by_collection', (q: any) => q.eq('collection', collection))
+		.withIndex('by_collection', (q) => q.eq('collection', collection))
 		.unique();
 
 	if (existing) {
@@ -52,13 +52,13 @@ async function getNextSeq(ctx: any, collection: string): Promise<number> {
 
 // O(1) delta count increment - called when inserting a delta
 async function incrementDeltaCount(
-	ctx: any,
+	ctx: MutationCtx,
 	collection: string,
 	document: string
 ): Promise<number> {
 	const existing = await ctx.db
 		.query('deltaCounts')
-		.withIndex('by_document', (q: any) => q.eq('collection', collection).eq('document', document))
+		.withIndex('by_document', (q) => q.eq('collection', collection).eq('document', document))
 		.first();
 
 	if (existing) {
@@ -73,14 +73,14 @@ async function incrementDeltaCount(
 
 // O(1) delta count decrement - called when compaction deletes deltas
 async function decrementDeltaCount(
-	ctx: any,
+	ctx: MutationCtx,
 	collection: string,
 	document: string,
 	amount: number
 ): Promise<void> {
 	const existing = await ctx.db
 		.query('deltaCounts')
-		.withIndex('by_document', (q: any) => q.eq('collection', collection).eq('document', document))
+		.withIndex('by_document', (q) => q.eq('collection', collection).eq('document', document))
 		.first();
 
 	if (existing) {
@@ -91,7 +91,7 @@ async function decrementDeltaCount(
 
 // O(1) compaction threshold check using cached count
 async function scheduleCompactionIfNeeded(
-	ctx: any,
+	ctx: MutationCtx,
 	collection: string,
 	document: string,
 	currentCount: number,
@@ -233,14 +233,14 @@ export const mark = mutation({
 	handler: async (ctx, args) => {
 		// Require internal call marker - prevents direct client calls to component mutations
 		if (args._internal !== true) {
-			throw new Error('Unauthorized: Direct component mutation calls are not allowed');
+			throw new ConvexError('Unauthorized: Direct component mutation calls are not allowed');
 		}
 
 		const now = Date.now();
 
 		const existing = await ctx.db
 			.query('sessions')
-			.withIndex('by_client', (q: any) =>
+			.withIndex('by_client', (q) =>
 				q.eq('collection', args.collection).eq('document', args.document).eq('client', args.client)
 			)
 			.first();
@@ -289,20 +289,20 @@ export const compact = mutation({
 		// where new deltas arrive during compaction and get incorrectly included.
 		const sequenceRecord = await ctx.db
 			.query('sequences')
-			.withIndex('by_collection', (q: any) => q.eq('collection', args.collection))
+			.withIndex('by_collection', (q) => q.eq('collection', args.collection))
 			.unique();
 		const snapshotBoundarySeq = sequenceRecord?.seq ?? 0;
 
 		// Query all deltas for this document
 		const allDeltas = await ctx.db
 			.query('deltas')
-			.withIndex('by_document', (q: any) =>
+			.withIndex('by_document', (q) =>
 				q.eq('collection', args.collection).eq('document', args.document)
 			)
 			.collect();
 
 		// Filter to only include deltas within our boundary
-		const deltas = allDeltas.filter((d: any) => d.seq <= snapshotBoundarySeq);
+		const deltas = allDeltas.filter((d) => d.seq <= snapshotBoundarySeq);
 
 		if (deltas.length === 0) {
 			return { success: true, removed: 0, retained: 0, size: 0 };
@@ -310,7 +310,7 @@ export const compact = mutation({
 
 		const existing = await ctx.db
 			.query('snapshots')
-			.withIndex('by_document', (q: any) =>
+			.withIndex('by_document', (q) =>
 				q.eq('collection', args.collection).eq('document', args.document)
 			)
 			.first();
@@ -319,17 +319,17 @@ export const compact = mutation({
 		if (existing) {
 			updates.push(new Uint8Array(existing.bytes));
 		}
-		updates.push(...deltas.map((d: any) => new Uint8Array(d.bytes)));
+		updates.push(...deltas.map((d) => new Uint8Array(d.bytes)));
 
 		const merged = Y.mergeUpdatesV2(updates);
 		const vector = Y.encodeStateVectorFromUpdateV2(merged);
 
 		const sessions = await ctx.db
 			.query('sessions')
-			.withIndex('by_document', (q: any) =>
+			.withIndex('by_document', (q) =>
 				q.eq('collection', args.collection).eq('document', args.document)
 			)
-			.filter((q: any) => q.eq(q.field('connected'), true))
+			.filter((q) => q.eq(q.field('connected'), true))
 			.collect();
 
 		let canDeleteAll = true;
@@ -404,10 +404,10 @@ export const compact = mutation({
 
 		const disconnected = await ctx.db
 			.query('sessions')
-			.withIndex('by_document', (q: any) =>
+			.withIndex('by_document', (q) =>
 				q.eq('collection', args.collection).eq('document', args.document)
 			)
-			.filter((q: any) => q.eq(q.field('connected'), false))
+			.filter((q) => q.eq(q.field('connected'), false))
 			.collect();
 
 		let cleaned = 0;
@@ -461,7 +461,7 @@ export const scheduleCompaction = mutation({
 	handler: async (ctx, args) => {
 		const existing = await ctx.db
 			.query('compaction')
-			.withIndex('by_document', (q: any) =>
+			.withIndex('by_document', (q) =>
 				q.eq('collection', args.collection).eq('document', args.document).eq('status', 'running')
 			)
 			.first();
@@ -472,7 +472,7 @@ export const scheduleCompaction = mutation({
 
 		const pending = await ctx.db
 			.query('compaction')
-			.withIndex('by_document', (q: any) =>
+			.withIndex('by_document', (q) =>
 				q.eq('collection', args.collection).eq('document', args.document).eq('status', 'pending')
 			)
 			.first();
@@ -525,19 +525,19 @@ export const runCompaction = mutation({
 			// This establishes our snapshot boundary - prevents TOCTOU race conditions.
 			const sequenceRecord = await ctx.db
 				.query('sequences')
-				.withIndex('by_collection', (q: any) => q.eq('collection', job.collection))
+				.withIndex('by_collection', (q) => q.eq('collection', job.collection))
 				.unique();
 			const snapshotBoundarySeq = sequenceRecord?.seq ?? 0;
 
 			const allDeltas = await ctx.db
 				.query('deltas')
-				.withIndex('by_document', (q: any) =>
+				.withIndex('by_document', (q) =>
 					q.eq('collection', job.collection).eq('document', job.document)
 				)
 				.collect();
 
 			// Filter to only include deltas within our boundary
-			const deltas = allDeltas.filter((d: any) => d.seq <= snapshotBoundarySeq);
+			const deltas = allDeltas.filter((d) => d.seq <= snapshotBoundarySeq);
 
 			if (deltas.length === 0) {
 				await ctx.db.patch(args.id, { status: 'done', completed: now });
@@ -546,7 +546,7 @@ export const runCompaction = mutation({
 
 			const snapshot = await ctx.db
 				.query('snapshots')
-				.withIndex('by_document', (q: any) =>
+				.withIndex('by_document', (q) =>
 					q.eq('collection', job.collection).eq('document', job.document)
 				)
 				.first();
@@ -555,14 +555,14 @@ export const runCompaction = mutation({
 			if (snapshot) {
 				updates.push(new Uint8Array(snapshot.bytes));
 			}
-			updates.push(...deltas.map((d: any) => new Uint8Array(d.bytes)));
+			updates.push(...deltas.map((d) => new Uint8Array(d.bytes)));
 
 			const merged = Y.mergeUpdatesV2(updates);
 			const vector = Y.encodeStateVectorFromUpdateV2(merged);
 
 			const sessions = await ctx.db
 				.query('sessions')
-				.withIndex('by_document', (q: any) =>
+				.withIndex('by_document', (q) =>
 					q.eq('collection', job.collection).eq('document', job.document)
 				)
 				.collect();
@@ -616,10 +616,10 @@ export const runCompaction = mutation({
 
 			let removed = 0;
 			if (canDeleteAll) {
-				const sortedDeltas = [...deltas].sort((a: any, b: any) => b.seq - a.seq);
+				const sortedDeltas = [...deltas].sort((a, b) => b.seq - a.seq);
 				const deltasToRetain = sortedDeltas.slice(0, retain);
 				const deltasToDelete = sortedDeltas.slice(retain);
-				const retainIds = new Set(deltasToRetain.map((d: any) => d._id));
+				const retainIds = new Set(deltasToRetain.map((d) => d._id));
 
 				for (const delta of deltasToDelete) {
 					if (!retainIds.has(delta._id)) {
@@ -643,7 +643,7 @@ export const runCompaction = mutation({
 				logger.info('Snapshot created, deltas retained (clients still syncing)', {
 					document: job.document,
 					deltaCount: deltas.length,
-					activeCount: sessions.filter((s: any) => s.connected || now - s.seen < timeout).length,
+					activeCount: sessions.filter((s) => s.connected || now - s.seen < timeout).length,
 				});
 			}
 
@@ -704,12 +704,12 @@ export const stream = query({
 
 		const documents = await ctx.db
 			.query('deltas')
-			.withIndex('by_seq', (q: any) => q.eq('collection', args.collection).gt('seq', args.seq))
+			.withIndex('by_seq', (q) => q.eq('collection', args.collection).gt('seq', args.seq))
 			.order('asc')
 			.take(limit);
 
 		if (documents.length > 0) {
-			const changes = documents.map((doc: any) => ({
+			const changes = documents.map((doc) => ({
 				document: doc.document,
 				bytes: doc.bytes,
 				seq: doc.seq,
@@ -732,31 +732,31 @@ export const stream = query({
 
 		const oldest = await ctx.db
 			.query('deltas')
-			.withIndex('by_seq', (q: any) => q.eq('collection', args.collection))
+			.withIndex('by_seq', (q) => q.eq('collection', args.collection))
 			.order('asc')
 			.first();
 
 		if (oldest && args.seq < oldest.seq) {
 			const snapshots = await ctx.db
 				.query('snapshots')
-				.withIndex('by_document', (q: any) => q.eq('collection', args.collection))
+				.withIndex('by_document', (q) => q.eq('collection', args.collection))
 				.collect();
 
 			if (snapshots.length === 0) {
-				throw new Error(
+				throw new ConvexError(
 					`Disparity detected but no snapshots available for collection: ${args.collection}. ` +
 						`Client seq: ${args.seq}, Oldest delta seq: ${oldest.seq}`
 				);
 			}
 
-			const changes = snapshots.map((s: any) => ({
+			const changes = snapshots.map((s) => ({
 				document: s.document,
 				bytes: s.bytes,
 				seq: s.seq,
 				type: OperationType.Snapshot,
 			}));
 
-			const latestSeq = Math.max(...snapshots.map((s: any) => s.seq));
+			const latestSeq = Math.max(...snapshots.map((s) => s.seq));
 
 			return {
 				changes,
@@ -785,14 +785,14 @@ export const recovery = query({
 	handler: async (ctx, args) => {
 		const snapshot = await ctx.db
 			.query('snapshots')
-			.withIndex('by_document', (q: any) =>
+			.withIndex('by_document', (q) =>
 				q.eq('collection', args.collection).eq('document', args.document)
 			)
 			.first();
 
 		const deltas = await ctx.db
 			.query('deltas')
-			.withIndex('by_document', (q: any) =>
+			.withIndex('by_document', (q) =>
 				q.eq('collection', args.collection).eq('document', args.document)
 			)
 			.collect();
@@ -837,14 +837,14 @@ export const getDocumentState = query({
 	handler: async (ctx, args) => {
 		const snapshot = await ctx.db
 			.query('snapshots')
-			.withIndex('by_document', (q: any) =>
+			.withIndex('by_document', (q) =>
 				q.eq('collection', args.collection).eq('document', args.document)
 			)
 			.first();
 
 		const deltas = await ctx.db
 			.query('deltas')
-			.withIndex('by_document', (q: any) =>
+			.withIndex('by_document', (q) =>
 				q.eq('collection', args.collection).eq('document', args.document)
 			)
 			.collect();
@@ -884,21 +884,21 @@ export const sessions = query({
 	},
 	returns: v.array(sessionValidator),
 	handler: async (ctx, args) => {
-		let query = ctx.db
+		let sessionsQuery = ctx.db
 			.query('sessions')
-			.withIndex('by_document', (q: any) =>
+			.withIndex('by_document', (q) =>
 				q.eq('collection', args.collection).eq('document', args.document)
 			);
 
 		if (args.connected !== undefined) {
-			query = query.filter((q: any) => q.eq(q.field('connected'), args.connected));
+			sessionsQuery = sessionsQuery.filter((q) => q.eq(q.field('connected'), args.connected));
 		}
 
-		const records = await query.collect();
+		const records = await sessionsQuery.collect();
 
 		const mapped = records
-			.filter((p: any) => !args.exclude || p.client !== args.exclude)
-			.map((p: any) => ({
+			.filter((p) => !args.exclude || p.client !== args.exclude)
+			.map((p) => ({
 				client: p.client,
 				document: p.document,
 				user: p.user,
@@ -930,7 +930,7 @@ export const disconnect = mutation({
 	handler: async (ctx, args) => {
 		const existing = await ctx.db
 			.query('sessions')
-			.withIndex('by_client', (q: any) =>
+			.withIndex('by_client', (q) =>
 				q.eq('collection', args.collection).eq('document', args.document).eq('client', args.client)
 			)
 			.first();
@@ -965,12 +965,12 @@ export const presence = mutation({
 	handler: async (ctx, args) => {
 		// Require internal call marker - prevents direct client calls to component mutations
 		if (args._internal !== true) {
-			throw new Error('Unauthorized: Direct component mutation calls are not allowed');
+			throw new ConvexError('Unauthorized: Direct component mutation calls are not allowed');
 		}
 
 		const existing = await ctx.db
 			.query('sessions')
-			.withIndex('by_client', (q: any) =>
+			.withIndex('by_client', (q) =>
 				q.eq('collection', args.collection).eq('document', args.document).eq('client', args.client)
 			)
 			.first();
