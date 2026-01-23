@@ -25,6 +25,8 @@ export interface SyncQueueConfig {
 	baseDelayMs?: number;
 	/** Maximum delay cap in ms (default: 30000) */
 	maxDelayMs?: number;
+	/** Maximum concurrent tasks (default: 5) */
+	maxConcurrent?: number;
 }
 
 /** State of a sync task */
@@ -112,7 +114,7 @@ export interface SyncQueue {
  * Create a new sync queue.
  */
 export function createSyncQueue(config: SyncQueueConfig = {}): SyncQueue {
-	const { maxRetries = 3, baseDelayMs = 1000, maxDelayMs = 30000 } = config;
+	const { maxRetries = 3, baseDelayMs = 1000, maxDelayMs = 30000, maxConcurrent = 5 } = config;
 
 	let taskCounter = 0;
 	let destroyed = false;
@@ -262,13 +264,25 @@ export function createSyncQueue(config: SyncQueueConfig = {}): SyncQueue {
 		}
 	}
 
+	let runningCount = 0;
+
 	function processQueue(): void {
 		if (destroyed) return;
 
-		// Process all pending tasks
+		// Process pending tasks up to the concurrency limit.
+		// This prevents overwhelming the server with too many concurrent mutations
+		// (e.g. Convex disconnects with TooManyConcurrentMutations at ~50).
 		for (const task of tasks.values()) {
+			if (runningCount >= maxConcurrent) break;
 			if (task.state === 'pending') {
-				processTask(task);
+				runningCount++;
+				processTask(task).finally(() => {
+					runningCount--;
+					// Continue draining the queue after each task completes
+					if (!destroyed) {
+						processQueue();
+					}
+				});
 			}
 		}
 	}

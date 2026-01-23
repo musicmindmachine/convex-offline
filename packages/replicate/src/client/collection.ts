@@ -1025,12 +1025,21 @@ export function convexCollectionOptions<T extends object = object>(
 							return null;
 						};
 
+						let lastProcessedSeq = cursor;
+
 						const handleSubscriptionUpdate = async (response: any) => {
 							if (!response || !Array.isArray(response.changes)) {
 								return;
 							}
 
 							const { changes, seq: newSeq } = response;
+
+							// Skip if we've already processed up to this seq — prevents
+							// re-enqueuing presence marks on subscription re-fires (e.g. reconnect)
+							if (newSeq !== undefined && newSeq <= lastProcessedSeq) {
+								return;
+							}
+
 							const syncedDocuments = new Set<string>();
 
 							// Process all changes and collect results for batching
@@ -1068,6 +1077,7 @@ export function convexCollectionOptions<T extends object = object>(
 							if (toUpsert.length > 0) ops.upsert(toUpsert);
 
 							if (newSeq !== undefined) {
+								lastProcessedSeq = newSeq;
 								persistence.kv.set(`cursor:${collection}`, newSeq);
 
 								// Mark presence for synced documents using background sync queue
@@ -1084,6 +1094,19 @@ export function convexCollectionOptions<T extends object = object>(
 										});
 									});
 								}
+
+								// Resubscribe with the advanced cursor so the reactive query
+								// only returns genuinely new deltas, not ones we've already processed.
+								// Without this, reconnection or any table change causes the query
+								// to re-fire with ALL deltas since the original cursor.
+								subscription?.();
+								subscription = convexClient.onUpdate(
+									api.delta,
+									{ seq: newSeq, limit: 1000 },
+									(response: any) => {
+										handleSubscriptionUpdate(response);
+									}
+								);
 							}
 						};
 
