@@ -1,5 +1,6 @@
 import { createPersistenceFromExecutor, type Executor } from './schema.js';
 import type { Persistence } from '../types.js';
+import { compileWasmModule } from './preload.js';
 
 const INIT = 0;
 const EXECUTE = 1;
@@ -9,6 +10,7 @@ interface Request {
 	id: number;
 	type: number;
 	name?: string;
+	wasmModule?: WebAssembly.Module;
 	sql?: string;
 	params?: unknown[];
 }
@@ -79,8 +81,8 @@ class WorkerExecutor implements Executor {
 		});
 	}
 
-	async init(name: string): Promise<void> {
-		await this.send(INIT, { name });
+	async init(name: string, wasmModule: WebAssembly.Module): Promise<void> {
+		await this.send(INIT, { name, wasmModule });
 	}
 
 	async execute(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> {
@@ -106,11 +108,18 @@ export interface WebSqliteOptions {
 export async function createWebSqlitePersistence(options: WebSqliteOptions): Promise<Persistence> {
 	const { name, worker } = options;
 
-	const resolvedWorker = typeof worker === 'function' ? await worker() : worker;
+	// Compile WASM in parallel with worker creation for maximum performance.
+	// compileWasmModule() consumes the <link rel="preload"> cache entry and
+	// uses WebAssembly.compileStreaming for streaming compilation.
+	const [resolvedWorker, wasmModule] = await Promise.all([
+		typeof worker === 'function' ? worker() : worker,
+		compileWasmModule(),
+	]);
+
 	const executor = new WorkerExecutor(resolvedWorker);
 
 	try {
-		await executor.init(name);
+		await executor.init(name, wasmModule);
 	} catch (error) {
 		resolvedWorker.terminate();
 		throw new Error(`Failed to initialize: ${error}`);

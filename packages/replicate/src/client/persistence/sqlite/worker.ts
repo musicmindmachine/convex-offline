@@ -11,6 +11,7 @@ interface Request {
 	id: number;
 	type: typeof INIT | typeof EXECUTE | typeof CLOSE | typeof FLUSH;
 	name?: string;
+	wasmModule?: WebAssembly.Module;
 	sql?: string;
 	params?: unknown[];
 }
@@ -27,7 +28,7 @@ let db: number;
 let vfs: any;
 let mutex: Promise<unknown> = Promise.resolve();
 
-async function init(name: string): Promise<void> {
+async function init(name: string, wasmModule: WebAssembly.Module): Promise<void> {
 	const [{ default: SQLiteESMFactory }, { IDBBatchAtomicVFS }, SQLite] = await Promise.all([
 		import(/* @vite-ignore */ `${CDN_BASE}/dist/wa-sqlite-async.mjs`),
 		import(/* @vite-ignore */ `${CDN_BASE}/src/examples/IDBBatchAtomicVFS.js`),
@@ -35,7 +36,13 @@ async function init(name: string): Promise<void> {
 	]);
 
 	const module = await SQLiteESMFactory({
-		locateFile: (file: string) => `${CDN_BASE}/dist/${file}`,
+		instantiateWasm(
+			imports: WebAssembly.Imports,
+			successCallback: (instance: WebAssembly.Instance) => void
+		) {
+			WebAssembly.instantiate(wasmModule, imports).then(successCallback);
+			return {};
+		},
 	});
 	sqlite3 = SQLite.Factory(module);
 
@@ -96,7 +103,7 @@ self.onmessage = async (e: MessageEvent<Request>) => {
 	try {
 		switch (type) {
 			case INIT:
-				await init(name!);
+				await init(name!, e.data.wasmModule!);
 				self.postMessage({ id, ok: true } satisfies Response);
 				break;
 			case EXECUTE: {
