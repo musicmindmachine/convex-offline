@@ -194,17 +194,17 @@ export declare const components: {
           collection: string;
           cursor?: {
             anchor: {
-              assoc?: number;
-              item?: { client: number; clock: number };
-              tname?: string;
-              type?: { client: number; clock: number };
+              assoc?: number | null;
+              item?: { client: number; clock: number } | null;
+              tname?: string | null;
+              type?: { client: number; clock: number } | null;
             };
             field?: string;
             head: {
-              assoc?: number;
-              item?: { client: number; clock: number };
-              tname?: string;
-              type?: { client: number; clock: number };
+              assoc?: number | null;
+              item?: { client: number; clock: number } | null;
+              tname?: string | null;
+              type?: { client: number; clock: number } | null;
             };
           };
           document: string;
@@ -254,17 +254,17 @@ export declare const components: {
           client: string;
           cursor?: {
             anchor: {
-              assoc?: number;
-              item?: { client: number; clock: number };
-              tname?: string;
-              type?: { client: number; clock: number };
+              assoc?: number | null;
+              item?: { client: number; clock: number } | null;
+              tname?: string | null;
+              type?: { client: number; clock: number } | null;
             };
             field?: string;
             head: {
-              assoc?: number;
-              item?: { client: number; clock: number };
-              tname?: string;
-              type?: { client: number; clock: number };
+              assoc?: number | null;
+              item?: { client: number; clock: number } | null;
+              tname?: string | null;
+              type?: { client: number; clock: number } | null;
             };
           };
           document: string;

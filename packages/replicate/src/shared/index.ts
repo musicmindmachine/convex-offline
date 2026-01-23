@@ -41,16 +41,17 @@ export const yjsIdValidator = v.object({
 
 /**
  * Yjs RelativePosition JSON validator - encodes cursor positions that survive
- * concurrent edits. When serialized to JSON via relativePositionToJSON(),
- * only truthy fields are included, so all fields are optional.
+ * concurrent edits. Fields are nullable because the raw RelativePosition object
+ * stores them as `ID | null`, and JSON.stringify preserves null values.
+ * Fields are also optional since relativePositionToJSON() omits falsy fields.
  *
  * @see https://docs.yjs.dev/api/relative-positions
  */
 export const relativePositionValidator = v.object({
-	type: v.optional(yjsIdValidator),
-	tname: v.optional(v.string()),
-	item: v.optional(yjsIdValidator),
-	assoc: v.optional(v.number()),
+	type: v.optional(v.nullable(yjsIdValidator)),
+	tname: v.optional(v.nullable(v.string())),
+	item: v.optional(v.nullable(yjsIdValidator)),
+	assoc: v.optional(v.nullable(v.number())),
 });
 
 /**

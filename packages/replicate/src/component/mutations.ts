@@ -45,9 +45,20 @@ async function getNextSeq(ctx: MutationCtx, collection: string): Promise<number>
 		return nextSeq;
 	}
 
-	// Initialize sequence counter for this collection
-	await ctx.db.insert('sequences', { collection, seq: 1 });
-	return 1;
+	// Seed from existing deltas to handle migration from old getNextSeq.
+	// The previous implementation queried the deltas table directly for max seq.
+	// Without this seed, the counter would start at 1, creating duplicate seq
+	// numbers and breaking streaming (clients with cursor > 1 would never
+	// receive new changes because the stream query uses gt('seq', cursor)).
+	const latest = await ctx.db
+		.query('deltas')
+		.withIndex('by_seq', (q) => q.eq('collection', collection))
+		.order('desc')
+		.first();
+	const startSeq = (latest?.seq ?? 0) + 1;
+
+	await ctx.db.insert('sequences', { collection, seq: startSeq });
+	return startSeq;
 }
 
 // O(1) delta count increment - called when inserting a delta

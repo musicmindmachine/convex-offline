@@ -1044,17 +1044,6 @@ export function convexCollectionOptions<T extends object = object>(
 									continue;
 								}
 
-								// Skip processing if this document is being modified in an active transaction
-								// This prevents race conditions where server echoes back our own changes
-								// or where server delete confirmation arrives during local rollback
-								if (txCoordinator?.isDocumentBeingModified(document)) {
-									logger.debug('Skipping change for document in active transaction', {
-										document,
-										changeType: type,
-									});
-									continue;
-								}
-
 								syncedDocuments.add(document);
 
 								const result =
@@ -1098,6 +1087,9 @@ export function convexCollectionOptions<T extends object = object>(
 							}
 						};
 
+						// Subscribe to the delta stream. Convex handles reactivity —
+						// when new deltas are written to the server, the query re-evaluates
+						// and the callback fires with the updated result automatically.
 						subscription = convexClient.onUpdate(
 							api.delta,
 							{ seq: cursor, limit: 1000 },
