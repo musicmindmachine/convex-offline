@@ -1,5 +1,5 @@
 import * as Y from 'yjs';
-import { Awareness } from 'y-protocols/awareness';
+import { Awareness, removeAwarenessStates } from 'y-protocols/awareness';
 import type { ConvexClient } from 'convex/browser';
 import type { FunctionReference } from 'convex/server';
 import type { AnonymousPresenceConfig, UserIdentity } from '$/client/identity';
@@ -421,17 +421,22 @@ export function createPresence(config: PresenceConfig): PresenceProvider {
 					awareness.states.set(remoteClientId, remoteState);
 				}
 
+				const removedIds: number[] = [];
 				for (const [clientStr, clientId] of remoteClientIds) {
 					if (!currentRemotes.has(clientStr)) {
-						awareness.states.delete(clientId);
+						removedIds.push(clientId);
 						remoteClientIds.delete(clientStr);
 					}
 				}
 
-				awareness.emit('update', [
-					{ added: [], updated: Array.from(remoteClientIds.values()), removed: [] },
-					'remote',
-				]);
+				if (removedIds.length > 0) {
+					removeAwarenessStates(awareness, removedIds, 'remote');
+				}
+
+				const updatedIds = Array.from(remoteClientIds.values());
+				if (updatedIds.length > 0) {
+					awareness.emit('update', [{ added: [], updated: updatedIds, removed: [] }, 'remote']);
+				}
 
 				notifySubscribers();
 			}
