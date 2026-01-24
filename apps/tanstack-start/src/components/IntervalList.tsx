@@ -1,13 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { Trash2 } from 'lucide-react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
-	flexRender,
 	getCoreRowModel,
 	getFilteredRowModel,
 	getSortedRowModel,
 	useReactTable,
-	type ColumnDef,
 	type ColumnFiltersState,
 	type SortingState,
 } from '@tanstack/react-table';
@@ -17,7 +16,6 @@ import { IntervalListSkeleton } from './IntervalListSkeleton';
 import { StatusIcon } from './StatusIcon';
 import { PriorityIcon } from './PriorityIcon';
 import { Button } from './ui/button';
-import { Table, TableBody, TableCell, TableRow } from './ui/table';
 import {
 	DropdownMenu,
 	DropdownMenuTrigger,
@@ -57,7 +55,7 @@ function StatusCell({ interval }: { interval: Interval }) {
 
 	return (
 		<DropdownMenu>
-			<DropdownMenuTrigger className="hover:bg-muted flex items-center rounded-sm transition-colors">
+			<DropdownMenuTrigger className="hover:bg-muted -m-1 flex items-center p-1 transition-colors">
 				<StatusIcon status={interval.status} size={14} />
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="start">
@@ -86,7 +84,7 @@ function PriorityCell({ interval }: { interval: Interval }) {
 
 	return (
 		<DropdownMenu>
-			<DropdownMenuTrigger className="hover:bg-muted flex items-center rounded-sm transition-colors">
+			<DropdownMenuTrigger className="hover:bg-muted -m-1 flex items-center p-1 transition-colors">
 				<PriorityIcon priority={interval.priority} size={14} />
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="end">
@@ -124,7 +122,7 @@ function DeleteCell({ interval }: { interval: Interval }) {
 				variant="ghost"
 				size="icon-xs"
 				onClick={handleDeleteClick}
-				className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+				className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 transition-opacity group-hover:opacity-100"
 				title="Delete interval"
 			>
 				<Trash2 className="h-3.5 w-3.5" />
@@ -152,45 +150,10 @@ function DeleteCell({ interval }: { interval: Interval }) {
 	);
 }
 
-const columns: ColumnDef<Interval>[] = [
-	{
-		accessorKey: 'status',
-		cell: ({ row }) => <StatusCell interval={row.original} />,
-		filterFn: 'equals',
-		size: 32,
-	},
-	{
-		accessorKey: 'title',
-		cell: ({ row }) => (
-			<Link
-				to="/intervals/$intervalId"
-				params={{ intervalId: row.original.id }}
-				className="text-foreground block no-underline"
-			>
-				<span className="truncate text-sm font-medium">{row.original.title || 'Untitled'}</span>
-			</Link>
-		),
-	},
-	{
-		accessorKey: 'priority',
-		cell: ({ row }) => <PriorityCell interval={row.original} />,
-		filterFn: 'equals',
-		size: 32,
-	},
-	{
-		accessorKey: 'updatedAt',
-		enableHiding: true,
-	},
-	{
-		id: 'actions',
-		cell: ({ row }) => <DeleteCell interval={row.original} />,
-		size: 32,
-	},
-];
-
 export function IntervalList() {
 	const { intervals, isLoading } = useIntervalsContext();
 	const { statusFilter, priorityFilter } = useFilterContext();
+	const tableContainerRef = useRef<HTMLDivElement>(null);
 
 	const columnFilters = useMemo<ColumnFiltersState>(() => {
 		const filters: ColumnFiltersState = [];
@@ -207,7 +170,12 @@ export function IntervalList() {
 
 	const table = useReactTable({
 		data: intervals,
-		columns,
+		columns: [
+			{ accessorKey: 'status', filterFn: 'equals' },
+			{ accessorKey: 'title' },
+			{ accessorKey: 'priority', filterFn: 'equals' },
+			{ accessorKey: 'updatedAt', enableHiding: true },
+		],
 		state: {
 			sorting,
 			columnFilters,
@@ -218,7 +186,18 @@ export function IntervalList() {
 		getFilteredRowModel: getFilteredRowModel(),
 	});
 
-	const rows = table.getRowModel().rows;
+	const { rows } = table.getRowModel();
+
+	const rowVirtualizer = useVirtualizer({
+		count: rows.length,
+		estimateSize: () => 40,
+		getScrollElement: () => tableContainerRef.current,
+		measureElement:
+			typeof window !== 'undefined' && !navigator.userAgent.includes('Firefox')
+				? (element) => element?.getBoundingClientRect().height
+				: undefined,
+		overscan: 10,
+	});
 
 	if (isLoading) {
 		return <IntervalListSkeleton />;
@@ -226,44 +205,69 @@ export function IntervalList() {
 
 	if (rows.length === 0) {
 		return (
-			<div className="flex min-h-0 flex-1 flex-col">
-				<div className="text-muted-foreground flex flex-col items-center justify-center py-16 text-center">
-					{intervals.length === 0 ? (
-						<>
-							<p className="m-0">No intervals yet</p>
-							<p className="mt-1 text-xs opacity-60">
-								Press <kbd className="kbd-key">&#x2325;</kbd> <kbd className="kbd-key">N</kbd> to
-								create your first interval
-							</p>
-						</>
-					) : (
-						<p className="m-0">No intervals match your filters</p>
-					)}
-				</div>
+			<div className="text-muted-foreground flex flex-1 flex-col items-center justify-center py-16 text-center">
+				{intervals.length === 0 ? (
+					<>
+						<p className="m-0">No intervals yet</p>
+						<p className="mt-1 text-xs opacity-60">
+							Press <kbd className="kbd-key">&#x2325;</kbd> <kbd className="kbd-key">N</kbd> to
+							create your first interval
+						</p>
+					</>
+				) : (
+					<p className="m-0">No intervals match your filters</p>
+				)}
 			</div>
 		);
 	}
 
 	return (
-		<div className="flex min-h-0 flex-1 flex-col">
-			<div className="flex-1 overflow-auto">
-				<Table>
-					<TableBody>
-						{rows.map((row) => (
-							<TableRow key={row.id} className="group">
-								{row.getVisibleCells().map((cell) => (
-									<TableCell
-										key={cell.id}
-										className={cell.column.id === 'title' ? 'w-full' : 'w-8'}
+		<div ref={tableContainerRef} className="flex-1 overflow-auto" style={{ position: 'relative' }}>
+			<table style={{ display: 'grid', width: '100%' }}>
+				<tbody
+					style={{
+						display: 'grid',
+						height: `${rowVirtualizer.getTotalSize()}px`,
+						position: 'relative',
+					}}
+				>
+					{rowVirtualizer.getVirtualItems().map((virtualRow) => {
+						const row = rows[virtualRow.index];
+						const interval = row.original as Interval;
+						return (
+							<tr
+								key={row.id}
+								data-index={virtualRow.index}
+								ref={(node) => rowVirtualizer.measureElement(node)}
+								className="border-border group flex w-full items-center border-b transition-colors hover:bg-[var(--color-muted)]/50"
+								style={{
+									position: 'absolute',
+									transform: `translateY(${virtualRow.start}px)`,
+								}}
+							>
+								<td className="w-8 shrink-0 p-2">
+									<StatusCell interval={interval} />
+								</td>
+								<td className="min-w-0 flex-1 px-2 py-2">
+									<Link
+										to="/intervals/$intervalId"
+										params={{ intervalId: interval.id }}
+										className="text-foreground hover:text-primary block truncate text-sm font-medium no-underline transition-colors"
 									>
-										{flexRender(cell.column.columnDef.cell, cell.getContext())}
-									</TableCell>
-								))}
-							</TableRow>
-						))}
-					</TableBody>
-				</Table>
-			</div>
+										{interval.title || 'Untitled'}
+									</Link>
+								</td>
+								<td className="w-8 shrink-0 p-2">
+									<PriorityCell interval={interval} />
+								</td>
+								<td className="w-8 shrink-0 p-2">
+									<DeleteCell interval={interval} />
+								</td>
+							</tr>
+						);
+					})}
+				</tbody>
+			</table>
 		</div>
 	);
 }

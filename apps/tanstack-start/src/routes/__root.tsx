@@ -9,15 +9,17 @@ import {
 	ClientOnly,
 } from '@tanstack/react-router';
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools';
+import { createServerFn } from '@tanstack/react-start';
 import { configure, getConsoleSink, type LogRecord } from '@logtape/logtape';
 import { ConvexProvider, ConvexReactClient } from 'convex/react';
 import { ConvexHttpClient } from 'convex/browser';
 import { useState, useEffect, createContext, useContext } from 'react';
-import { Search, Plus, ArrowLeft, SlidersHorizontal } from 'lucide-react';
+import { ArrowLeft, Search, Plus, SlidersHorizontal } from 'lucide-react';
 import { useNavigate } from '@tanstack/react-router';
 import { Button } from '../components/ui/button';
 import { ConvexRxErrorBoundary } from '../components/ErrorBoundary';
 import { ReloadPrompt } from '../components/ReloadPrompt';
+import { Navbar } from '../components/Navbar';
 import { Sidebar } from '../components/Sidebar';
 import { SearchPanel } from '../components/SearchPanel';
 import { FilterDialog } from '../components/FilterDialog';
@@ -28,8 +30,6 @@ import type { StatusValue, PriorityValue } from '../types/interval';
 import { api } from '$convex/_generated/api';
 
 import appCss from '../styles.css?url';
-
-const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
 
 try {
 	await configure({
@@ -65,9 +65,33 @@ try {
 	// LogTape already configured during HMR - this is expected
 }
 
-// Create Convex client for React context
-const convexUrl = import.meta.env.VITE_CONVEX_URL;
-const convexReactClient = convexUrl ? new ConvexReactClient(convexUrl) : null;
+// Create Convex client for React context (client-only, guarded for SSR module eval)
+let convexReactClient: ConvexReactClient | null = null;
+if (typeof window !== 'undefined') {
+	const convexUrl = import.meta.env.PUBLIC_CONVEX_URL;
+	if (convexUrl) {
+		convexReactClient = new ConvexReactClient(convexUrl);
+	}
+}
+
+// Server function to fetch initial material for SSR hydration
+const fetchMaterial = createServerFn({ method: 'GET' }).handler(async () => {
+	const url = process.env.PUBLIC_CONVEX_URL;
+	if (!url) {
+		return { intervalsMaterial: null, commentsMaterial: null };
+	}
+	const httpClient = new ConvexHttpClient(url);
+	try {
+		const [intervalsMaterial, commentsMaterial] = await Promise.all([
+			httpClient.query(api.intervals.material),
+			httpClient.query(api.comments.material),
+		]);
+		return { intervalsMaterial, commentsMaterial };
+	} catch (error) {
+		console.error('Failed to load initial data from Convex:', error);
+		return { intervalsMaterial: null, commentsMaterial: null };
+	}
+});
 
 // Filter context for sharing filter state across components
 interface FilterContextValue {
@@ -129,24 +153,24 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 			{ rel: 'apple-touch-icon', href: '/logo192.png' },
 			{ rel: 'manifest', href: '/manifest.webmanifest' },
 			{ rel: 'stylesheet', href: appCss },
+			// Preload wa-sqlite WASM binary for faster SQLite initialization
+			{
+				rel: 'preload',
+				href: 'https://wa-sqlite.trestle.inc/v1.0.0/dist/wa-sqlite-async.wasm',
+				as: 'fetch',
+				type: 'application/wasm',
+				crossOrigin: 'anonymous',
+			},
 		],
 	}),
 
-	loader: async () => {
-		const [intervalsMaterial, commentsMaterial] = await Promise.all([
-			httpClient.query(api.intervals.material),
-			httpClient.query(api.comments.material),
-		]);
-		return { intervalsMaterial, commentsMaterial };
-	},
+	loader: async () => fetchMaterial(),
 
 	component: AppLayout,
 	shellComponent: RootDocument,
 });
 
 function RootDocument({ children }: { children: React.ReactNode }) {
-	const { intervalsMaterial, commentsMaterial } = Route.useLoaderData();
-
 	return (
 		<html lang="en">
 			<head>
@@ -154,28 +178,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 			</head>
 			<body>
 				<ConvexRxErrorBoundary>
-					<ClientOnly
-						fallback={
-							convexReactClient ? (
-								<ConvexProvider client={convexReactClient}>{children}</ConvexProvider>
-							) : (
-								children
-							)
-						}
-					>
-						{convexReactClient ? (
-							<ConvexProvider client={convexReactClient}>
-								<IntervalsProvider
-									intervalsMaterial={intervalsMaterial}
-									commentsMaterial={commentsMaterial}
-								>
-									{children}
-								</IntervalsProvider>
-							</ConvexProvider>
-						) : (
-							children
-						)}
-					</ClientOnly>
+					{children}
 					<TanStackDevtools
 						config={{ position: 'bottom-right' }}
 						plugins={[{ name: 'Tanstack Router', render: <TanStackRouterDevtoolsPanel /> }]}
@@ -189,6 +192,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 }
 
 function AppLayout() {
+	const { intervalsMaterial, commentsMaterial } = Route.useLoaderData();
 	const [isSearchOpen, setIsSearchOpen] = useState(false);
 	const [isFilterOpen, setIsFilterOpen] = useState(false);
 	const [statusFilter, setStatusFilter] = useState<StatusValue | null>(null);
@@ -204,41 +208,125 @@ function AppLayout() {
 		hasActiveFilters,
 	};
 
-	// Server-render the full layout structure
-	// IntervalsProvider is in RootDocument, wrapping this on client
 	return (
-		<FilterContext.Provider value={filterContextValue}>
-			<div className="app-layout">
-				<Sidebar
-					onSearchOpen={() => setIsSearchOpen(true)}
-					onFilterOpen={() => setIsFilterOpen(true)}
-					hasActiveFilters={hasActiveFilters}
-				/>
-				<main className="main-content">
-					<div className="main-scroll-area">
-						<Outlet />
+		<ClientOnly fallback={<AppLayoutFallback />}>
+			{convexReactClient ? (
+				<ConvexProvider client={convexReactClient}>
+					<IntervalsProvider
+						intervalsMaterial={intervalsMaterial ?? undefined}
+						commentsMaterial={commentsMaterial ?? undefined}
+					>
+						<FilterContext.Provider value={filterContextValue}>
+							<div className="app-layout">
+								<NavbarWithCreate
+									onSearchOpen={() => setIsSearchOpen(true)}
+									onFilterOpen={() => setIsFilterOpen(true)}
+									hasActiveFilters={hasActiveFilters}
+								/>
+								<div className="app-main">
+									<Sidebar />
+									<main className="main-content">
+										<div className="main-scroll-area">
+											<Outlet />
+										</div>
+									</main>
+								</div>
+								<KeyboardShortcuts onSearchOpen={() => setIsSearchOpen(true)} />
+								<SearchPanel isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} />
+								<FilterDialog
+									isOpen={isFilterOpen}
+									onClose={() => setIsFilterOpen(false)}
+									statusFilter={statusFilter}
+									priorityFilter={priorityFilter}
+									onStatusChange={setStatusFilter}
+									onPriorityChange={setPriorityFilter}
+								/>
+								<MobileBackButton />
+								<MobileActionBar
+									onSearchOpen={() => setIsSearchOpen(true)}
+									onFilterOpen={() => setIsFilterOpen(true)}
+									hasActiveFilters={hasActiveFilters}
+								/>
+							</div>
+						</FilterContext.Provider>
+					</IntervalsProvider>
+				</ConvexProvider>
+			) : (
+				<AppLayoutFallback />
+			)}
+		</ClientOnly>
+	);
+}
+
+/**
+ * Static layout shell for SSR (no providers, no interactivity).
+ */
+function AppLayoutFallback() {
+	return (
+		<div className="app-layout">
+			<NavbarFallback />
+			<div className="app-main">
+				<aside className="sidebar">
+					<div className="sidebar-header">
+						<span className="sidebar-title">Intervals</span>
 					</div>
+					<div className="sidebar-content">
+						<div className="space-y-1 p-2">
+							{Array.from({ length: 5 }).map((_, i) => (
+								<div key={i} className="skeleton h-9 w-full" />
+							))}
+						</div>
+					</div>
+				</aside>
+				<main className="main-content">
+					<div className="main-scroll-area" />
 				</main>
-				<ClientOnly fallback={null}>
-					<KeyboardShortcuts onSearchOpen={() => setIsSearchOpen(true)} />
-					<SearchPanel isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} />
-					<FilterDialog
-						isOpen={isFilterOpen}
-						onClose={() => setIsFilterOpen(false)}
-						statusFilter={statusFilter}
-						priorityFilter={priorityFilter}
-						onStatusChange={setStatusFilter}
-						onPriorityChange={setPriorityFilter}
-					/>
-					<MobileBackButton />
-					<MobileActionBar
-						onSearchOpen={() => setIsSearchOpen(true)}
-						onFilterOpen={() => setIsFilterOpen(true)}
-						hasActiveFilters={hasActiveFilters}
-					/>
-				</ClientOnly>
 			</div>
-		</FilterContext.Provider>
+		</div>
+	);
+}
+
+/**
+ * Navbar with create action (needs useCreateInterval hook which requires context).
+ */
+function NavbarWithCreate({
+	onSearchOpen,
+	onFilterOpen,
+	hasActiveFilters,
+}: {
+	onSearchOpen: () => void;
+	onFilterOpen: () => void;
+	hasActiveFilters: boolean;
+}) {
+	const createInterval = useCreateInterval();
+	return (
+		<Navbar
+			onSearchOpen={onSearchOpen}
+			onFilterOpen={onFilterOpen}
+			onCreate={createInterval}
+			hasActiveFilters={hasActiveFilters}
+		/>
+	);
+}
+
+/**
+ * Static navbar shell for SSR (no actions).
+ */
+function NavbarFallback() {
+	return (
+		<nav className="navbar">
+			<div className="flex items-center gap-3">
+				<span className="navbar-brand">
+					<span>INTERVAL</span>
+				</span>
+			</div>
+			<div className="navbar-center hidden sm:flex">
+				<button type="button" className="search-trigger" disabled>
+					<span>Search intervals...</span>
+				</button>
+			</div>
+			<div className="navbar-actions" />
+		</nav>
 	);
 }
 

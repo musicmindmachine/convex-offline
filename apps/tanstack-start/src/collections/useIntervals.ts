@@ -1,18 +1,18 @@
 import { collection } from '@trestleinc/replicate/client';
-import { ConvexClient } from 'convex/browser';
 import { api } from '$convex/_generated/api';
-import schema from '$convex/schema';
+import { intervalSchema } from '$convex/schema/intervals';
 import { sqlite } from '../lib/sqlite';
+import { getConvexClient } from '../lib/convex';
+import type { Infer } from 'convex/values';
 
-const CONVEX_URL = import.meta.env.VITE_CONVEX_URL!;
-
-export const intervals = collection.create(schema, 'intervals', {
+export const intervals = collection.create({
+	schema: intervalSchema,
 	persistence: sqlite,
 	config: () => ({
-		convexClient: new ConvexClient(CONVEX_URL),
+		convexClient: getConvexClient(),
 		api: api.intervals,
-		getKey: (interval) => interval.id,
+		getKey: (interval: Interval) => interval.id,
 	}),
 });
 
-export type Interval = NonNullable<typeof intervals.$docType>;
+export type Interval = Infer<typeof intervalSchema.shape>;

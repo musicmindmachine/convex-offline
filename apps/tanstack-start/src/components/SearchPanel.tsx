@@ -199,7 +199,7 @@ export function SearchPanel({ isOpen, onClose }: SearchPanelProps) {
 							{/* Interval results */}
 							{results.length === 0 && debouncedQuery.trim() ? (
 								<div className="text-muted-foreground py-6 text-center text-sm">
-									<p>No intervals found for "{query}"</p>
+									<p>No intervals found for &ldquo;{query}&rdquo;</p>
 								</div>
 							) : (
 								results.map((interval, index) => (

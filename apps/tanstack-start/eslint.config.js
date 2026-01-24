@@ -27,6 +27,7 @@ export default [
 		ignores: [
 			'**/dist/**',
 			'**/dev-dist/**',
+			'**/.output/**',
 			'**/_generated/**',
 			'**/*.d.ts',
 			'**/routeTree.gen.ts',

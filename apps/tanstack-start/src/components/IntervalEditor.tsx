@@ -194,7 +194,7 @@ function IntervalEditorView({
 	const priorityOptions = Object.values(Priority) as PriorityValue[];
 
 	return (
-		<div className="mx-auto w-full max-w-[680px] px-8 py-12">
+		<div className="editor-container">
 			{/* Title */}
 			{isEditingTitle ? (
 				<input
@@ -204,14 +204,10 @@ function IntervalEditorView({
 					onChange={(e) => handleTitleChange(e.target.value)}
 					onBlur={handleTitleBlur}
 					onKeyDown={handleTitleKeyDown}
-					className="font-display text-foreground border-primary w-full border-b-2 border-none bg-transparent p-0 pb-1 text-3xl leading-tight font-normal outline-none"
+					className="editor-title-input"
 				/>
 			) : (
-				<button
-					type="button"
-					className="font-display text-foreground hover:text-primary w-full cursor-text border-none bg-transparent p-0 text-left text-3xl leading-tight font-normal transition-colors"
-					onClick={() => setIsEditingTitle(true)}
-				>
+				<button type="button" className="editor-title" onClick={() => setIsEditingTitle(true)}>
 					{title || 'Untitled'}
 				</button>
 			)}

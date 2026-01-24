@@ -22,15 +22,41 @@ interface PersistenceGateProps {
 
 function PersistenceGate({ children, intervalsMaterial, commentsMaterial }: PersistenceGateProps) {
 	const [ready, setReady] = useState(persistenceInitialized);
+	const [error, setError] = useState<string | null>(null);
 
 	useEffect(() => {
 		if (!ready) {
-			Promise.all([intervals.init(intervalsMaterial), comments.init(commentsMaterial)]).then(() => {
-				persistenceInitialized = true;
-				setReady(true);
-			});
+			Promise.all([
+				intervals.init(intervalsMaterial ?? undefined),
+				comments.init(commentsMaterial ?? undefined),
+			])
+				.then(() => {
+					persistenceInitialized = true;
+					setReady(true);
+				})
+				.catch((err) => {
+					console.error('PersistenceGate init failed:', err);
+					setError(err instanceof Error ? err.message : String(err));
+				});
 		}
 	}, [ready, intervalsMaterial, commentsMaterial]);
+
+	if (error) {
+		return (
+			<div className="flex h-screen items-center justify-center">
+				<div className="max-w-md px-4 text-center">
+					<p className="text-destructive mb-4">{error}</p>
+					<button
+						type="button"
+						className="border-muted rounded border px-4 py-2 text-sm"
+						onClick={() => location.reload()}
+					>
+						Retry
+					</button>
+				</div>
+			</div>
+		);
+	}
 
 	if (!ready) {
 		return (

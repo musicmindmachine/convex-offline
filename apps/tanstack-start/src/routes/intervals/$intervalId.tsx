@@ -54,7 +54,7 @@ function IntervalNotFound() {
 					</svg>
 				</div>
 				<h2>Interval not found</h2>
-				<p>This interval doesn't exist or was deleted.</p>
+				<p>This interval doesn&apos;t exist or was deleted.</p>
 				<a href="/intervals" className="error-state-link">
 					Go back to intervals
 				</a>

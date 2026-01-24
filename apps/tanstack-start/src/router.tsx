@@ -6,12 +6,10 @@ import { ConvexClient } from 'convex/browser';
 // Import the generated route tree
 import { routeTree } from './routeTree.gen';
 
-// Initialize Convex client at module level for RxDB replication (WebSocket-based)
-const convexUrl = import.meta.env.VITE_CONVEX_URL;
-if (!convexUrl) {
-	throw new Error('VITE_CONVEX_URL environment variable is required');
-}
-export const convexClient = new ConvexClient(convexUrl);
+// Initialize Convex client at module level for replication (WebSocket-based).
+// During SSR, import.meta.env may not expose PUBLIC_CONVEX_URL, so we guard.
+const convexUrl = import.meta.env.PUBLIC_CONVEX_URL;
+export const convexClient = convexUrl ? new ConvexClient(convexUrl) : null;
 
 // Export queryClient so other modules can use it
 export let queryClient: QueryClient;
@@ -37,7 +35,9 @@ export const getRouter = () => {
 			<div className="mx-auto max-w-md p-6">
 				<div className="bg-rose-pine-surface border-rose-pine-rose text-rose-pine-text rounded border px-4 py-3">
 					<h2 className="mb-2 text-xl font-bold">404 - Page Not Found</h2>
-					<p className="text-rose-pine-muted">The page you're looking for doesn't exist.</p>
+					<p className="text-rose-pine-muted">
+						The page you&apos;re looking for doesn&apos;t exist.
+					</p>
 				</div>
 			</div>
 		),
