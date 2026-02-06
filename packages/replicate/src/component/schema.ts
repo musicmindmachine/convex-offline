@@ -97,6 +97,11 @@ export default defineSchema({
 			v.literal('done'),
 			v.literal('failed')
 		),
+		phase: v.optional(v.union(v.literal('merge'), v.literal('finalize'))),
+		cursor: v.optional(v.string()),
+		boundarySeq: v.optional(v.number()),
+		scratch: v.optional(v.bytes()),
+		processed: v.optional(v.number()),
 		started: v.number(),
 		completed: v.optional(v.number()),
 		retries: v.number(),

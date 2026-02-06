@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
 import { v, ConvexError } from 'convex/values';
-import { mutation, query, type MutationCtx } from '$/component/_generated/server';
+import { action, mutation, query, type ActionCtx, type MutationCtx } from '$/component/_generated/server';
 import { api } from '$/component/_generated/api';
 import { getLogger } from '$/shared/logger';
 import { OperationType } from '$/shared';
@@ -21,6 +21,9 @@ export { OperationType };
 const DEFAULT_THRESHOLD = 500;
 const DEFAULT_TIMEOUT = 24 * 60 * 60 * 1000;
 const MAX_RETRIES = 3;
+const COMPACTION_PAGE_SIZE = 100;
+const COMPACTION_MAX_PAGES = 8;
+const COMPACTION_MAX_DELTAS = 2000;
 
 /**
  * Atomic sequence generation using dedicated counter table.
@@ -400,6 +403,263 @@ export const compact = mutation({
 	},
 });
 
+const applyBytesToDoc = (doc: Y.Doc, bytes?: ArrayBuffer | null) => {
+	if (!bytes) return;
+	Y.applyUpdate(doc, new Uint8Array(bytes));
+};
+
+const encodeDocState = (doc: Y.Doc) => {
+	const bytes = Y.encodeStateAsUpdateV2(doc);
+	const vector = Y.encodeStateVector(doc);
+	return { bytes, vector };
+};
+
+const isActiveSession = (session: { connected: boolean; seen: number }, now: number, timeout: number) =>
+	session.connected || now - session.seen < timeout;
+
+type CompactionPatch = {
+	status?: 'pending' | 'running' | 'done' | 'failed';
+	phase?: 'merge' | 'finalize';
+	cursor?: string;
+	boundarySeq?: number;
+	scratch?: ArrayBuffer;
+	processed?: number;
+	retries?: number;
+	completed?: number;
+	error?: string;
+};
+
+export const getCompactionJob = query({
+	args: { id: v.id('compaction') },
+	returns: v.any(),
+	handler: async (ctx, args) => {
+		return ctx.db.get(args.id);
+	},
+});
+
+export const getCompactionSnapshot = query({
+	args: { collection: v.string(), document: v.string() },
+	returns: v.union(
+		v.null(),
+		v.object({
+			bytes: v.bytes(),
+			vector: v.bytes(),
+			seq: v.number(),
+		})
+	),
+	handler: async (ctx, args) => {
+		return ctx.db
+			.query('snapshots')
+			.withIndex('by_document', (q) =>
+				q.eq('collection', args.collection).eq('document', args.document)
+			)
+			.first();
+	},
+});
+
+export const getCompactionDeltasPage = query({
+	args: {
+		collection: v.string(),
+		document: v.string(),
+		cursor: v.optional(v.string()),
+		numItems: v.optional(v.number()),
+	},
+	returns: v.object({
+		page: v.array(v.object({ id: v.id('deltas'), seq: v.number(), bytes: v.bytes() })),
+		isDone: v.boolean(),
+		continueCursor: v.union(v.string(), v.null()),
+	}),
+	handler: async (ctx, args) => {
+		const numItems = Math.max(1, args.numItems ?? COMPACTION_PAGE_SIZE);
+		const maxScanPages = 10;
+		let cursorSeq = args.cursor ? Number(args.cursor) : 0;
+		if (!Number.isFinite(cursorSeq)) {
+			cursorSeq = 0;
+		}
+
+		const page: { id: any; seq: number; bytes: ArrayBuffer }[] = [];
+		let isDone = false;
+
+		for (let scan = 0; scan < maxScanPages && page.length < numItems; scan += 1) {
+			const batch = await ctx.db
+				.query('deltas')
+				.withIndex('by_seq', (q) => q.eq('collection', args.collection).gt('seq', cursorSeq))
+				.order('asc')
+				.take(numItems);
+
+			if (batch.length === 0) {
+				isDone = true;
+				break;
+			}
+
+			for (const delta of batch) {
+				cursorSeq = delta.seq;
+				if (delta.document === args.document) {
+					page.push({ id: delta._id, seq: delta.seq, bytes: delta.bytes });
+					if (page.length >= numItems) {
+						break;
+					}
+				}
+			}
+
+			if (batch.length < numItems) {
+				isDone = true;
+				break;
+			}
+		}
+
+		return {
+			page,
+			isDone,
+			continueCursor: isDone ? null : String(cursorSeq),
+		};
+	},
+});
+
+export const getCompactionSessions = query({
+	args: { collection: v.string(), document: v.string() },
+	returns: v.array(
+		v.object({
+			id: v.id('sessions'),
+			client: v.string(),
+			vector: v.optional(v.bytes()),
+			connected: v.boolean(),
+			seen: v.number(),
+		})
+	),
+	handler: async (ctx, args) => {
+		const sessions = await ctx.db
+			.query('sessions')
+			.withIndex('by_document', (q) =>
+				q.eq('collection', args.collection).eq('document', args.document)
+			)
+			.collect();
+		return sessions.map((session) => ({
+			id: session._id,
+			client: session.client,
+			vector: session.vector,
+			connected: session.connected,
+			seen: session.seen,
+		}));
+	},
+});
+
+export const getCompactionBoundarySeq = query({
+	args: { collection: v.string() },
+	returns: v.number(),
+	handler: async (ctx, args) => {
+		const sequenceRecord = await ctx.db
+			.query('sequences')
+			.withIndex('by_collection', (q) => q.eq('collection', args.collection))
+			.unique();
+		return sequenceRecord?.seq ?? 0;
+	},
+});
+
+export const updateCompactionJob = mutation({
+	args: {
+		id: v.id('compaction'),
+		patch: v.object({
+			status: v.optional(
+				v.union(
+					v.literal('pending'),
+					v.literal('running'),
+					v.literal('done'),
+					v.literal('failed')
+				)
+			),
+			phase: v.optional(v.union(v.literal('merge'), v.literal('finalize'))),
+			cursor: v.optional(v.string()),
+			boundarySeq: v.optional(v.number()),
+			scratch: v.optional(v.bytes()),
+			processed: v.optional(v.number()),
+			retries: v.optional(v.number()),
+			completed: v.optional(v.number()),
+			error: v.optional(v.string()),
+		}),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		await ctx.db.patch(args.id, args.patch);
+		return null;
+	},
+});
+
+export const upsertCompactionSnapshot = mutation({
+	args: {
+		collection: v.string(),
+		document: v.string(),
+		bytes: v.bytes(),
+		vector: v.bytes(),
+		seq: v.number(),
+		created: v.number(),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const existing = await ctx.db
+			.query('snapshots')
+			.withIndex('by_document', (q) =>
+				q.eq('collection', args.collection).eq('document', args.document)
+			)
+			.first();
+
+		if (existing) {
+			await ctx.db.patch(existing._id, {
+				bytes: args.bytes,
+				vector: args.vector,
+				seq: args.seq,
+				created: args.created,
+			});
+			return null;
+		}
+
+		await ctx.db.insert('snapshots', {
+			collection: args.collection,
+			document: args.document,
+			bytes: args.bytes,
+			vector: args.vector,
+			seq: args.seq,
+			created: args.created,
+		});
+		return null;
+	},
+});
+
+export const deleteCompactionDeltasBatch = mutation({
+	args: {
+		collection: v.string(),
+		document: v.string(),
+		ids: v.array(v.id('deltas')),
+	},
+	returns: v.number(),
+	handler: async (ctx, args) => {
+		let removed = 0;
+		for (const id of args.ids) {
+			await ctx.db.delete(id);
+			removed++;
+		}
+		if (removed > 0) {
+			await decrementDeltaCount(ctx, args.collection, args.document, removed);
+		}
+		return removed;
+	},
+});
+
+export const deleteCompactionSessionsBatch = mutation({
+	args: {
+		ids: v.array(v.id('sessions')),
+	},
+	returns: v.number(),
+	handler: async (ctx, args) => {
+		let removed = 0;
+		for (const id of args.ids) {
+			await ctx.db.delete(id);
+			removed++;
+		}
+		return removed;
+	},
+});
+
 export const scheduleCompaction = mutation({
 	args: {
 		collection: v.string(),
@@ -444,9 +704,10 @@ export const scheduleCompaction = mutation({
 			status: 'pending',
 			started: Date.now(),
 			retries: 0,
+			timeout: args.timeout,
 		});
 
-		await ctx.scheduler.runAfter(0, api.mutations.runCompaction, {
+		await ctx.scheduler.runAfter(0, api.mutations.runCompactionAction, {
 			id,
 			timeout: args.timeout,
 			retain: args.retain,
@@ -635,6 +896,320 @@ export const runCompaction = mutation({
 					status: 'failed',
 					error: String(error),
 					completed: now,
+				});
+				logger.error('Compaction failed after max retries', {
+					document: job.document,
+					error: String(error),
+				});
+			}
+			throw error;
+		}
+	},
+});
+
+export const runCompactionAction = action({
+	args: {
+		id: v.id('compaction'),
+		timeout: v.optional(v.number()),
+		retain: v.optional(v.number()),
+	},
+	returns: v.any(),
+	handler: async (ctx: ActionCtx, args) => {
+		const logger = getLogger(['compaction']);
+		const job = await ctx.runQuery(api.mutations.getCompactionJob, { id: args.id });
+
+		if (!job || job.status === 'done' || job.status === 'failed') {
+			return null;
+		}
+
+		const now = Date.now();
+		const timeout = args.timeout ?? job.timeout ?? DEFAULT_TIMEOUT;
+		const retain = args.retain ?? 0;
+
+		try {
+			if (job.status !== 'running') {
+				await ctx.runMutation(api.mutations.updateCompactionJob, {
+					id: args.id,
+					patch: { status: 'running' },
+				});
+			}
+
+			let boundarySeq = job.boundarySeq;
+			if (boundarySeq === undefined || boundarySeq === null) {
+				boundarySeq = await ctx.runQuery(api.mutations.getCompactionBoundarySeq, {
+					collection: job.collection,
+				});
+				await ctx.runMutation(api.mutations.updateCompactionJob, {
+					id: args.id,
+					patch: { boundarySeq },
+				});
+			}
+
+			const phase = job.phase ?? 'merge';
+			if (phase === 'merge') {
+				const doc = new Y.Doc();
+				if (job.scratch) {
+					applyBytesToDoc(doc, job.scratch);
+				} else {
+					const snapshot = await ctx.runQuery(api.mutations.getCompactionSnapshot, {
+						collection: job.collection,
+						document: job.document,
+					});
+					applyBytesToDoc(doc, snapshot?.bytes ?? null);
+				}
+
+				let cursor: string | undefined = job.cursor ?? undefined;
+				let processed = job.processed ?? 0;
+				let deltasProcessed = 0;
+				let pages = 0;
+				let mergeDone = false;
+
+				while (pages < COMPACTION_MAX_PAGES && deltasProcessed < COMPACTION_MAX_DELTAS) {
+					const page = await ctx.runQuery(api.mutations.getCompactionDeltasPage, {
+						collection: job.collection,
+						document: job.document,
+						cursor,
+						numItems: COMPACTION_PAGE_SIZE,
+					});
+
+					let reachedBoundary = false;
+					for (const delta of page.page) {
+						if (delta.seq > boundarySeq) {
+							reachedBoundary = true;
+							break;
+						}
+						applyBytesToDoc(doc, delta.bytes);
+						processed += 1;
+						deltasProcessed += 1;
+						if (deltasProcessed >= COMPACTION_MAX_DELTAS) {
+							break;
+						}
+					}
+
+					cursor = page.continueCursor ?? undefined;
+					pages += 1;
+
+					if (reachedBoundary || page.isDone) {
+						mergeDone = true;
+						break;
+					}
+
+				}
+
+				const scratchBytes = Y.encodeStateAsUpdateV2(doc);
+				doc.destroy();
+				const patch: CompactionPatch = {
+					phase: mergeDone ? 'finalize' : 'merge',
+					processed,
+					scratch: scratchBytes.buffer as ArrayBuffer,
+				};
+				if (!mergeDone && cursor) {
+					patch.cursor = cursor;
+				}
+				await ctx.runMutation(api.mutations.updateCompactionJob, {
+					id: args.id,
+					patch,
+				});
+
+				await ctx.scheduler.runAfter(0, api.mutations.runCompactionAction, {
+					id: args.id,
+					timeout,
+					retain,
+				});
+
+				return { phase: mergeDone ? 'finalize' : 'merge' };
+			}
+
+			if (!job.scratch) {
+				const patch: CompactionPatch = { phase: 'merge' };
+				if (job.cursor) patch.cursor = job.cursor;
+				await ctx.runMutation(api.mutations.updateCompactionJob, {
+					id: args.id,
+					patch,
+				});
+				await ctx.scheduler.runAfter(0, api.mutations.runCompactionAction, {
+					id: args.id,
+					timeout,
+					retain,
+				});
+				return { phase: 'merge' };
+			}
+
+			const doc = new Y.Doc();
+			applyBytesToDoc(doc, job.scratch);
+
+			const { bytes: snapshotBytes, vector: snapshotVector } = encodeDocState(doc);
+
+			await ctx.runMutation(api.mutations.upsertCompactionSnapshot, {
+				collection: job.collection,
+				document: job.document,
+				bytes: snapshotBytes.buffer as ArrayBuffer,
+				vector: snapshotVector.buffer as ArrayBuffer,
+				seq: boundarySeq,
+				created: now,
+			});
+
+			const sessions = await ctx.runQuery(api.mutations.getCompactionSessions, {
+				collection: job.collection,
+				document: job.document,
+			});
+
+			let canDeleteAll = true;
+			for (const session of sessions) {
+				if (!isActiveSession(session, now, timeout)) continue;
+				if (!session.vector) {
+					canDeleteAll = false;
+					logger.warn('Active session without vector, skipping full compaction', {
+						client: session.client,
+					});
+					break;
+				}
+				const sessionVector = new Uint8Array(session.vector);
+				const missing = Y.encodeStateAsUpdateV2(doc, sessionVector);
+				if (missing.byteLength > 2) {
+					canDeleteAll = false;
+					logger.debug('Active session still needs data', {
+						client: session.client,
+						missingSize: missing.byteLength,
+					});
+					break;
+				}
+			}
+
+			let removed = 0;
+			let retained = 0;
+
+			if (canDeleteAll) {
+				const retainCount = Math.max(0, retain);
+				const retainList: { id: string; seq: number }[] = [];
+
+				if (retainCount > 0) {
+					let cursor: string | undefined;
+					let done = false;
+
+					while (!done) {
+						const page = await ctx.runQuery(api.mutations.getCompactionDeltasPage, {
+							collection: job.collection,
+							document: job.document,
+							cursor,
+							numItems: COMPACTION_PAGE_SIZE,
+						});
+
+						for (const delta of page.page) {
+							if (delta.seq > boundarySeq) {
+								done = true;
+								break;
+							}
+							if (retainList.length < retainCount) {
+								retainList.push({ id: delta.id, seq: delta.seq });
+								retainList.sort((a, b) => b.seq - a.seq);
+								continue;
+							}
+							if (retainCount > 0 && delta.seq > retainList[retainList.length - 1].seq) {
+								retainList[retainList.length - 1] = { id: delta.id, seq: delta.seq };
+								retainList.sort((a, b) => b.seq - a.seq);
+							}
+						}
+
+						if (done || page.isDone) {
+							break;
+						}
+
+						cursor = page.continueCursor ?? undefined;
+					}
+				}
+
+				const retainIds = new Set(retainList.map((entry) => entry.id));
+				let cursor: string | undefined;
+				let done = false;
+				let batch: string[] = [];
+
+				while (!done) {
+					const page = await ctx.runQuery(api.mutations.getCompactionDeltasPage, {
+						collection: job.collection,
+						document: job.document,
+						cursor,
+						numItems: COMPACTION_PAGE_SIZE,
+					});
+
+					for (const delta of page.page) {
+						if (delta.seq > boundarySeq) {
+							done = true;
+							break;
+						}
+						if (retainIds.has(delta.id)) {
+							retained += 1;
+							continue;
+						}
+						batch.push(delta.id);
+						if (batch.length >= 50) {
+							removed += await ctx.runMutation(api.mutations.deleteCompactionDeltasBatch, {
+								collection: job.collection,
+								document: job.document,
+								ids: batch as any,
+							});
+							batch = [];
+						}
+					}
+
+					if (done || page.isDone) {
+						break;
+					}
+
+					cursor = page.continueCursor ?? undefined;
+				}
+
+				if (batch.length > 0) {
+					removed += await ctx.runMutation(api.mutations.deleteCompactionDeltasBatch, {
+						collection: job.collection,
+						document: job.document,
+						ids: batch as any,
+					});
+				}
+			} else {
+				retained = job.processed ?? 0;
+			}
+
+			const staleSessions = sessions.filter(
+				(session) => !session.connected && now - session.seen > timeout
+			);
+			for (let i = 0; i < staleSessions.length; i += 50) {
+				const chunk = staleSessions.slice(i, i + 50).map((session) => session.id);
+				await ctx.runMutation(api.mutations.deleteCompactionSessionsBatch, {
+					ids: chunk as any,
+				});
+			}
+
+			await ctx.runMutation(api.mutations.updateCompactionJob, {
+				id: args.id,
+				patch: { status: 'done', completed: now, phase: 'finalize' },
+			});
+
+			doc.destroy();
+			return { removed, retained };
+		} catch (error) {
+			const retries = (job.retries ?? 0) + 1;
+
+			if (retries < MAX_RETRIES) {
+				await ctx.runMutation(api.mutations.updateCompactionJob, {
+					id: args.id,
+					patch: { status: 'pending', retries, error: String(error) },
+				});
+				const backoff = Math.pow(2, retries) * 1000;
+				await ctx.scheduler.runAfter(backoff, api.mutations.runCompactionAction, {
+					id: args.id,
+					timeout,
+					retain,
+				});
+				logger.warn('Compaction failed, scheduling retry', {
+					document: job.document,
+					retries,
+					backoff,
+				});
+			} else {
+				await ctx.runMutation(api.mutations.updateCompactionJob, {
+					id: args.id,
+					patch: { status: 'failed', error: String(error), completed: now },
 				});
 				logger.error('Compaction failed after max retries', {
 					document: job.document,

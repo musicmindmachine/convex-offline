@@ -614,6 +614,29 @@ export function convexCollectionOptions<T extends object = object>(
 		return deltas;
 	};
 
+	const hydrateFromMaterial = (docs: DataType[]) => {
+		for (const doc of docs) {
+			const documentId = String(getKey(doc));
+			docManager.transactWithDelta(
+				documentId,
+				(fieldsMap) => {
+					Object.entries(doc as Record<string, unknown>).forEach(([k, v]) => {
+						if (k === 'id') return;
+						if (v === undefined) return;
+						if (proseFieldSet.has(k) && isDoc(v)) {
+							const fragment = new Y.XmlFragment();
+							fieldsMap.set(k, fragment);
+							fragmentFromJSON(fragment, v);
+						} else {
+							fieldsMap.set(k, v);
+						}
+					});
+				},
+				YjsOrigin.Server
+			);
+		}
+	};
+
 	const applyYjsUpdate = (mutations: CollectionMutation<DataType>[]): Uint8Array[] => {
 		const deltas: Uint8Array[] = [];
 
@@ -907,6 +930,12 @@ export function convexCollectionOptions<T extends object = object>(
 
 						resolveOptimisticReady?.();
 
+						let hydratedFromMaterial = false;
+						if (!ssrCrdt && existingDocIds.length === 0 && docs.length > 0) {
+							hydrateFromMaterial(docs);
+							hydratedFromMaterial = true;
+						}
+
 						if (ssrCrdt) {
 							for (const [docId, state] of Object.entries(ssrCrdt)) {
 								const update = new Uint8Array(state.bytes);
@@ -930,7 +959,10 @@ export function convexCollectionOptions<T extends object = object>(
 						const persistedCursor = await seqService.load(collection);
 						let cursor = ssrCursor ?? persistedCursor;
 
-						if (cursor > 0 && docManager.documents().length === 0) {
+						if (hydratedFromMaterial && ssrCursor === undefined) {
+							cursor = 0;
+							persistence.kv.set(`cursor:${collection}`, 0);
+						} else if (cursor > 0 && docManager.documents().length === 0) {
 							cursor = 0;
 							persistence.kv.set(`cursor:${collection}`, 0);
 						}
@@ -1268,6 +1300,73 @@ function createVersionedCollection<T extends object>(
 		};
 	};
 
+	const fetchMaterialFromServer = async (): Promise<Materialized<T> | undefined> => {
+		if (!resolvedConfig) return undefined;
+
+		try {
+			const pageSize = options.pagination?.pageSize ?? 200;
+			if (pageSize > 0) {
+				const documents: T[] = [];
+				let cursor: string | undefined = undefined;
+
+				while (true) {
+					const result = (await resolvedConfig.convexClient.query(
+						resolvedConfig.api.material,
+						{
+							numItems: pageSize,
+							cursor,
+						} as any
+					)) as any;
+
+					if (!result) {
+						break;
+					}
+
+					if ('documents' in result && Array.isArray(result.documents)) {
+						documents.push(...(result.documents as T[]));
+						return { documents, count: documents.length };
+					}
+
+					if (!('page' in result) || !Array.isArray(result.page)) {
+						break;
+					}
+
+					documents.push(...(result.page as T[]));
+					if (result.isDone || !result.continueCursor) {
+						break;
+					}
+
+					cursor = result.continueCursor as string;
+				}
+
+				return { documents, count: documents.length };
+			}
+
+			const result = (await resolvedConfig.convexClient.query(
+				resolvedConfig.api.material,
+				{} as any
+			)) as any;
+
+			if (result && Array.isArray(result.documents)) {
+				return {
+					documents: result.documents as T[],
+					count: typeof result.count === 'number' ? result.count : result.documents.length,
+				};
+			}
+
+			if (result && Array.isArray(result.page)) {
+				return { documents: result.page as T[], count: result.page.length };
+			}
+		} catch (error) {
+			logger.warn('Material fetch failed; continuing without server snapshot', {
+				collection: collectionName ?? 'unknown',
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+
+		return undefined;
+	};
+
 	return {
 		async init(mat?: Materialized<T> | PaginatedMaterial<T>) {
 			if (!persistence) {
@@ -1286,15 +1385,25 @@ function createVersionedCollection<T extends object>(
 					user: userConfig.user,
 				} as LazyCollectionConfig<T>;
 
-				if (isPaginatedMaterial(mat)) {
-					material = convertPaginatedToMaterial(mat);
+				let resolvedMaterial = mat;
+				if (resolvedMaterial === undefined) {
+					resolvedMaterial = await fetchMaterialFromServer();
+				}
+				const fetchedMaterialFromServer =
+					mat === undefined && resolvedMaterial !== undefined && collectionName;
+				if (fetchedMaterialFromServer) {
+					await persistence.kv.set(`cursor:${collectionName}`, 0);
+				}
+
+				if (isPaginatedMaterial(resolvedMaterial)) {
+					material = convertPaginatedToMaterial(resolvedMaterial);
 					paginationState = {
-						status: mat.isDone ? 'done' : 'idle',
-						count: mat.pages.reduce((sum, p) => sum + p.page.length, 0),
-						cursor: mat.cursor,
+						status: resolvedMaterial.isDone ? 'done' : 'idle',
+						count: resolvedMaterial.pages.reduce((sum, p) => sum + p.page.length, 0),
+						cursor: resolvedMaterial.cursor,
 					};
 				} else {
-					material = mat;
+					material = resolvedMaterial as Materialized<T> | undefined;
 				}
 
 				// Run migrations if SQLite persistence is available

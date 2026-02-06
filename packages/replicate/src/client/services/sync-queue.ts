@@ -221,6 +221,8 @@ export function createSyncQueue(config: SyncQueueConfig = {}): SyncQueue {
 				documentId: task.documentId,
 				retryCount: task.retryCount,
 				error: task.error.message,
+				name: task.error.name,
+				stack: task.error.stack,
 			});
 
 			if (task.retryCount < maxRetries) {
