@@ -280,11 +280,21 @@ export class Replicate<T extends object> {
 					.withIndex('by_doc_id', (q) => q.eq('id', document))
 					.first();
 
+				let didInsert = false;
 				if (existing) {
 					await ctx.db.patch(existing._id, {
 						...(material as object),
 						timestamp: Date.now(),
 					});
+				} else if (material) {
+					// Upsert: if the live row is missing but we have material, create it.
+					// This handles update-before-insert races and offline replays.
+					await ctx.db.insert(collection, {
+						id: document,
+						...(material as object),
+						timestamp: Date.now(),
+					});
+					didInsert = true;
 				}
 
 				const result = await ctx.runMutation(component.mutations.updateDocument, {
@@ -296,7 +306,11 @@ export class Replicate<T extends object> {
 					retain,
 				});
 
-				if (opts?.onUpdate) {
+				if (didInsert) {
+					if (opts?.onInsert) {
+						await opts.onInsert(ctx, doc);
+					}
+				} else if (opts?.onUpdate) {
 					await opts.onUpdate(ctx, doc);
 				}
 
