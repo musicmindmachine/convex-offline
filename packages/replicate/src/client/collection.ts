@@ -146,6 +146,16 @@ export interface ConvexCollectionConfig<T extends object = object> extends Omit<
 	material?: Materialized<T>;
 	user?: () => UserIdentity | undefined;
 	/**
+	 * Optional byte limit for material payloads sent to the server.
+	 * If exceeded on updates, a reducer can be applied to send a smaller payload.
+	 */
+	materialLimitBytes?: number;
+	/**
+	 * Optional reducer for large material payloads (applied on updates).
+	 * Useful for dropping large fields while still updating metadata.
+	 */
+	materialReducer?: (doc: Record<string, unknown>) => Record<string, unknown>;
+	/**
 	 * Configuration for anonymous presence names and colors.
 	 * Allows customizing the adjectives, nouns, and colors used
 	 * when generating anonymous user identities for presence.
@@ -245,6 +255,8 @@ export function convexCollectionOptions<T extends object = object>(
 		api,
 		persistence,
 		user: userGetter,
+		materialLimitBytes,
+		materialReducer,
 		anonymousPresence,
 	} = config;
 
@@ -260,6 +272,58 @@ export function convexCollectionOptions<T extends object = object>(
 	type DataType = any;
 	// Create a Set for O(1) lookup of prose fields
 	const proseFieldSet = new Set<string>(proseFields);
+	const textEncoder = new TextEncoder();
+	const estimateBytes = (value: unknown): number => {
+		try {
+			const serialized = JSON.stringify(value);
+			return textEncoder.encode(serialized).length;
+		} catch {
+			return Number.POSITIVE_INFINITY;
+		}
+	};
+
+	const prepareMaterial = (
+		value: Record<string, unknown> | null | undefined,
+		type: 'insert' | 'update'
+	): Record<string, unknown> | undefined => {
+		if (!value) return value ?? undefined;
+		if (!materialLimitBytes || type === 'insert') {
+			return value;
+		}
+		const size = estimateBytes(value);
+		if (size <= materialLimitBytes) {
+			return value;
+		}
+		if (!materialReducer) {
+			logger.warn('Material payload exceeds limit without reducer; sending full payload', {
+				collection,
+				type,
+				size,
+				limit: materialLimitBytes,
+			});
+			return value;
+		}
+		const reduced = materialReducer(value);
+		const reducedSize = estimateBytes(reduced);
+		if (reducedSize > materialLimitBytes) {
+			logger.warn('Reduced material still exceeds limit; sending reduced payload', {
+				collection,
+				type,
+				size,
+				reducedSize,
+				limit: materialLimitBytes,
+			});
+			return reduced;
+		}
+		logger.warn('Material payload reduced to fit size limit', {
+			collection,
+			type,
+			size,
+			reducedSize,
+			limit: materialLimitBytes,
+		});
+		return reduced;
+	};
 
 	const utils: ConvexCollectionUtils<DataType> = {
 		async prose(
@@ -709,22 +773,23 @@ export function convexCollectionOptions<T extends object = object>(
 				await Promise.all([persistenceReadyPromise, optimisticReadyPromise]);
 
 				// Process mutations in parallel for better performance
-				await Promise.all(
-					transaction.mutations.map(async (mut, i) => {
-						const delta = deltas[i];
-						if (!delta || delta.length === 0) return;
+					await Promise.all(
+						transaction.mutations.map(async (mut, i) => {
+							const delta = deltas[i];
+							if (!delta || delta.length === 0) return;
 
-						const document = String(mut.key);
-						const materializedDoc = serializeDocument(docManager, document) ?? mut.modified;
+							const document = String(mut.key);
+							const materializedDoc = serializeDocument(docManager, document) ?? mut.modified;
+							const preparedMaterial = prepareMaterial(materializedDoc, 'insert');
 
-						await convexClient.mutation(api.replicate, {
-							document: document,
-							bytes: delta.buffer,
-							material: materializedDoc,
-							type: 'insert',
-						});
-					})
-				);
+							await convexClient.mutation(api.replicate, {
+								document: document,
+								bytes: delta.buffer,
+								material: preparedMaterial,
+								type: 'insert',
+							});
+						})
+					);
 			} catch (error) {
 				handleMutationError(error);
 			}
@@ -742,35 +807,37 @@ export function convexCollectionOptions<T extends object = object>(
 			try {
 				await Promise.all([persistenceReadyPromise, optimisticReadyPromise]);
 
-				if (isContentSync && metadata?.contentSync) {
-					const { bytes, material } = metadata.contentSync;
-					await convexClient.mutation(api.replicate, {
-						document: documentKey,
-						bytes,
-						material,
-						type: 'update',
-					});
-					return;
-				}
+					if (isContentSync && metadata?.contentSync) {
+						const { bytes, material } = metadata.contentSync;
+						const preparedMaterial = prepareMaterial(material as Record<string, unknown>, 'update');
+						await convexClient.mutation(api.replicate, {
+							document: documentKey,
+							bytes,
+							material: preparedMaterial,
+							type: 'update',
+						});
+						return;
+					}
 
 				if (deltas) {
 					// Process mutations in parallel for better performance
-					await Promise.all(
-						transaction.mutations.map(async (mut, i) => {
-							const delta = deltas[i];
-							if (!delta || delta.length === 0) return;
+						await Promise.all(
+							transaction.mutations.map(async (mut, i) => {
+								const delta = deltas[i];
+								if (!delta || delta.length === 0) return;
 
-							const docId = String(mut.key);
-							const fullDoc = serializeDocument(docManager, docId) ?? mut.modified;
+								const docId = String(mut.key);
+								const fullDoc = serializeDocument(docManager, docId) ?? mut.modified;
+								const preparedMaterial = prepareMaterial(fullDoc, 'update');
 
-							await convexClient.mutation(api.replicate, {
-								document: docId,
-								bytes: delta.buffer,
-								material: fullDoc,
-								type: 'update',
-							});
-						})
-					);
+								await convexClient.mutation(api.replicate, {
+									document: docId,
+									bytes: delta.buffer,
+									material: preparedMaterial,
+									type: 'update',
+								});
+							})
+						);
 				}
 			} catch (error) {
 				handleMutationError(error);
@@ -1257,6 +1324,8 @@ export interface CreateCollectionOptions<T extends object> {
 		api: ConvexCollectionApi;
 		getKey: (doc: T) => string;
 		user?: () => UserIdentity | undefined;
+		materialLimitBytes?: number;
+		materialReducer?: (doc: Record<string, unknown>) => Record<string, unknown>;
 	};
 	clientMigrations?: ClientMigrationMap;
 	onMigrationError?: MigrationErrorHandler;
@@ -1383,6 +1452,8 @@ function createVersionedCollection<T extends object>(
 					api: userConfig.api,
 					getKey: userConfig.getKey,
 					user: userConfig.user,
+					materialLimitBytes: userConfig.materialLimitBytes,
+					materialReducer: userConfig.materialReducer,
 				} as LazyCollectionConfig<T>;
 
 				let resolvedMaterial = mat;
