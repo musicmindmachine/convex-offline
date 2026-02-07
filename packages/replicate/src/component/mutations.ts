@@ -448,12 +448,18 @@ export const getCompactionSnapshot = query({
 		})
 	),
 	handler: async (ctx, args) => {
-		return ctx.db
+		const snapshot = await ctx.db
 			.query('snapshots')
 			.withIndex('by_document', (q) =>
 				q.eq('collection', args.collection).eq('document', args.document)
 			)
 			.first();
+		if (!snapshot) return null;
+		return {
+			bytes: snapshot.bytes,
+			vector: snapshot.vector,
+			seq: snapshot.seq,
+		};
 	},
 });
 

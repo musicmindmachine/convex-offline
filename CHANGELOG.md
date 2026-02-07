@@ -55,6 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Live material sync** - Optional `materialSync` to merge live material snapshots into the local cache when online
 
+### Fixed
+
+- **Compaction snapshot return shape** - Ensure `getCompactionSnapshot` returns only `bytes`, `vector`, and `seq`
+
 ## [1.1.2] - 2025-12-28
 
 ### Added
