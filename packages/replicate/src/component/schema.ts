@@ -44,6 +44,7 @@ export default defineSchema({
 	})
 		.index('by_collection', ['collection'])
 		.index('by_document', ['collection', 'document'])
+		.index('by_document_seq', ['collection', 'document', 'seq'])
 		.index('by_seq', ['collection', 'seq']),
 
 	// Tracks delta count per document for O(1) compaction threshold checks

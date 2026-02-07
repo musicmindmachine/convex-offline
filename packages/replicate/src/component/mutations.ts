@@ -472,65 +472,30 @@ export const getCompactionDeltasPage = query({
 	handler: async (ctx, args) => {
 		const numItems = Math.max(1, args.numItems ?? COMPACTION_PAGE_SIZE);
 		const cursorValue = args.cursor ?? null;
-		const cursorSeq = cursorValue !== null ? Number(cursorValue) : NaN;
+		const cursorSeqRaw = cursorValue !== null ? Number(cursorValue) : 0;
+		const cursorSeq =
+			Number.isFinite(cursorSeqRaw) && cursorValue !== null ? cursorSeqRaw : 0;
 
-		// Backward compatibility: if cursor is a numeric seq string, fall back to seq scanning.
-		if (cursorValue !== null && Number.isFinite(cursorSeq) && String(cursorSeq) === cursorValue) {
-			const maxScanPages = 10;
-			let scanCursorSeq = cursorSeq;
-			const page: { id: any; seq: number; bytes: ArrayBuffer }[] = [];
-			let isDone = false;
-
-			for (let scan = 0; scan < maxScanPages && page.length < numItems; scan += 1) {
-				const batch = await ctx.db
-					.query('deltas')
-					.withIndex('by_seq', (q) => q.eq('collection', args.collection).gt('seq', scanCursorSeq))
-					.order('asc')
-					.take(numItems);
-
-				if (batch.length === 0) {
-					isDone = true;
-					break;
-				}
-
-				for (const delta of batch) {
-					scanCursorSeq = delta.seq;
-					if (delta.document === args.document) {
-						page.push({ id: delta._id, seq: delta.seq, bytes: delta.bytes });
-						if (page.length >= numItems) {
-							break;
-						}
-					}
-				}
-
-				if (batch.length < numItems) {
-					isDone = true;
-					break;
-				}
-			}
-
-			return {
-				page,
-				isDone,
-				continueCursor: isDone ? null : String(scanCursorSeq),
-			};
-		}
-
-		const page = await ctx.db
+		const batch = await ctx.db
 			.query('deltas')
-			.withIndex('by_document', (q) =>
-				q.eq('collection', args.collection).eq('document', args.document)
+			.withIndex('by_document_seq', (q) =>
+				q.eq('collection', args.collection).eq('document', args.document).gt('seq', cursorSeq)
 			)
-			.paginate({ cursor: cursorValue, numItems });
+			.order('asc')
+			.take(numItems);
+
+		const page = batch.map((delta) => ({
+			id: delta._id,
+			seq: delta.seq,
+			bytes: delta.bytes,
+		}));
+		const lastSeq = page.length > 0 ? page[page.length - 1]!.seq : cursorSeq;
+		const isDone = batch.length < numItems;
 
 		return {
-			page: page.page.map((delta) => ({
-				id: delta._id,
-				seq: delta.seq,
-				bytes: delta.bytes,
-			})),
-			isDone: page.isDone,
-			continueCursor: page.continueCursor,
+			page,
+			isDone,
+			continueCursor: isDone ? null : String(lastSeq),
 		};
 	},
 });
@@ -1345,13 +1310,14 @@ export const recovery = query({
 		let deltasFound = false;
 
 		if (!snapshot) {
-			const emptyPage = await ctx.db
+			const emptyBatch = await ctx.db
 				.query('deltas')
-				.withIndex('by_document', (q) =>
-					q.eq('collection', args.collection).eq('document', args.document)
+				.withIndex('by_document_seq', (q) =>
+					q.eq('collection', args.collection).eq('document', args.document).gt('seq', 0)
 				)
-				.paginate({ cursor: null, numItems: 1 });
-			if (emptyPage.page.length === 0) {
+				.order('asc')
+				.take(1);
+			if (emptyBatch.length === 0) {
 				const emptyDoc = new Y.Doc();
 				const emptyVector = Y.encodeStateVector(emptyDoc);
 				emptyDoc.destroy();
@@ -1368,30 +1334,31 @@ export const recovery = query({
 			Y.applyUpdate(doc, new Uint8Array(snapshot.bytes));
 		}
 
-		let cursor: string | null = null;
-		do {
-			const page = await ctx.db
+		let cursorSeq = snapshotSeq;
+		while (true) {
+			const batch = await ctx.db
 				.query('deltas')
-				.withIndex('by_document', (q) =>
-					q.eq('collection', args.collection).eq('document', args.document)
+				.withIndex('by_document_seq', (q) =>
+					q.eq('collection', args.collection).eq('document', args.document).gt('seq', cursorSeq)
 				)
-				.paginate({ cursor, numItems: COMPACTION_PAGE_SIZE });
+				.order('asc')
+				.take(COMPACTION_PAGE_SIZE);
 
-			if (page.page.length > 0) {
-				deltasFound = true;
-			}
-
-			for (const delta of page.page) {
-				if (delta.seq <= snapshotSeq) continue;
-				Y.applyUpdate(doc, new Uint8Array(delta.bytes));
-			}
-
-			if (page.isDone) {
+			if (batch.length === 0) {
 				break;
 			}
 
-			cursor = page.continueCursor;
-		} while (cursor);
+			deltasFound = true;
+
+			for (const delta of batch) {
+				Y.applyUpdate(doc, new Uint8Array(delta.bytes));
+				cursorSeq = delta.seq;
+			}
+
+			if (batch.length < COMPACTION_PAGE_SIZE) {
+				break;
+			}
+		}
 
 		if (!snapshot && !deltasFound) {
 			const emptyDoc = new Y.Doc();
