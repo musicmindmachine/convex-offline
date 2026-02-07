@@ -36,6 +36,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Stream response types** - Aligned `replicate.ts` types with component
 - **Presence race conditions** - Rewrote awareness.ts with atomic state machine (`idle → joining → active → leaving → destroyed`) to handle visibility changes, destroy during throttle, and overlapping heartbeats
 
+## [1.2.0-preview.1] - 2026-02-07
+
+### Added
+
+- **Document seq index** - Added `by_document_seq` index for efficient per-document delta paging
+- **Material size controls** - Client options to cap material payload size (`materialLimitBytes`) and reduce oversized documents (`materialReducer`)
+
+### Changed
+
+- **Compaction paging** - Component compaction now pages deltas by document+seq without `paginate()` (components-only restriction)
+- **Recovery paging** - Recovery query streams deltas incrementally instead of collecting all deltas at once
+
 ## [1.1.2] - 2025-12-28
 
 ### Added
