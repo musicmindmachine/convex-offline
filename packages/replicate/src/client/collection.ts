@@ -156,6 +156,12 @@ export interface ConvexCollectionConfig<T extends object = object> extends Omit<
 	 */
 	materialReducer?: (doc: Record<string, unknown>) => Record<string, unknown>;
 	/**
+	 * When enabled, subscribe to the live material query and merge server rows
+	 * into the local collection. This makes the server table the source of truth
+	 * while online, with CRDT deltas still used for offline recovery.
+	 */
+	materialSync?: boolean;
+	/**
 	 * Configuration for anonymous presence names and colors.
 	 * Allows customizing the adjectives, nouns, and colors used
 	 * when generating anonymous user identities for presence.
@@ -257,6 +263,7 @@ export function convexCollectionOptions<T extends object = object>(
 		user: userGetter,
 		materialLimitBytes,
 		materialReducer,
+		materialSync,
 		anonymousPresence,
 	} = config;
 
@@ -935,6 +942,7 @@ export function convexCollectionOptions<T extends object = object>(
 				}
 
 				let subscription: (() => void) | null = null;
+				let materialSubscription: (() => void) | null = null;
 				const ssrDocuments = material?.documents;
 				type CrdtRecord = Record<string, { bytes: ArrayBuffer; seq: number }>;
 				const ssrCrdt = material?.crdt as CrdtRecord | undefined;
@@ -1220,6 +1228,64 @@ export function convexCollectionOptions<T extends object = object>(
 							}
 						);
 
+						const mergeMaterialSnapshot = (serverDocs: DataType[]) => {
+							const toUpsert: DataType[] = [];
+
+							for (const doc of serverDocs) {
+								const documentId = String(getKey(doc));
+								const hadLocally = docManager.has(documentId);
+
+								const delta = docManager.transactWithDelta(
+									documentId,
+									(fields) => {
+										for (const [key, value] of Object.entries(doc as Record<string, unknown>)) {
+											if (key === 'id') continue;
+											if (value === undefined) continue;
+											if (proseFieldSet.has(key)) continue;
+											const existingValue = fields.get(key);
+											if (existingValue instanceof Y.XmlFragment) continue;
+											fields.set(key, value);
+										}
+									},
+									YjsOrigin.Server
+								);
+
+								if (hadLocally && delta.length === 0) {
+									continue;
+								}
+
+								const materialDoc = serializeDocument(docManager, documentId);
+								if (materialDoc) {
+									toUpsert.push(materialDoc as DataType);
+								}
+							}
+
+							if (toUpsert.length > 0) {
+								ops.upsert(toUpsert);
+							}
+						};
+
+						const handleMaterialUpdate = (response: any) => {
+							if (!response) return;
+							if (Array.isArray(response.documents)) {
+								mergeMaterialSnapshot(response.documents as DataType[]);
+								return;
+							}
+							if (Array.isArray(response.page)) {
+								mergeMaterialSnapshot(response.page as DataType[]);
+							}
+						};
+
+						if (materialSync) {
+							materialSubscription = convexClient.onUpdate(
+								api.material,
+								{} as any,
+								(response: any) => {
+									handleMaterialUpdate(response);
+								}
+							);
+						}
+
 						// Reconnection handling: when browser comes back online, resync local state
 						if (typeof globalThis.window !== 'undefined') {
 							let wasOffline = false;
@@ -1273,6 +1339,7 @@ export function convexCollectionOptions<T extends object = object>(
 							(ctx as any).cleanupReconnection?.();
 						}
 						subscription?.();
+						materialSubscription?.();
 						syncQueue.destroy();
 						prose.cleanup(collection);
 						deleteContext(collection);
@@ -1326,6 +1393,7 @@ export interface CreateCollectionOptions<T extends object> {
 		user?: () => UserIdentity | undefined;
 		materialLimitBytes?: number;
 		materialReducer?: (doc: Record<string, unknown>) => Record<string, unknown>;
+		materialSync?: boolean;
 	};
 	clientMigrations?: ClientMigrationMap;
 	onMigrationError?: MigrationErrorHandler;
@@ -1454,6 +1522,7 @@ function createVersionedCollection<T extends object>(
 					user: userConfig.user,
 					materialLimitBytes: userConfig.materialLimitBytes,
 					materialReducer: userConfig.materialReducer,
+					materialSync: userConfig.materialSync,
 				} as LazyCollectionConfig<T>;
 
 				let resolvedMaterial = mat;

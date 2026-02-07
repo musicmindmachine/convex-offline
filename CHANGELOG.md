@@ -49,6 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Compaction paging** - Component compaction now pages deltas by document+seq without `paginate()` (components-only restriction)
 - **Recovery paging** - Recovery query streams deltas incrementally instead of collecting all deltas at once
 
+## [1.2.0-preview.2] - 2026-02-07
+
+### Added
+
+- **Live material sync** - Optional `materialSync` to merge live material snapshots into the local cache when online
+
 ## [1.1.2] - 2025-12-28
 
 ### Added
