@@ -7,6 +7,11 @@ export interface CollectionOptions<T extends object> {
 	schema?: VersionedSchemaBase;
 	compaction?: Partial<CompactionConfig>;
 	view?: ViewFunction;
+	/**
+	 * Optional access check for presence/session mutations.
+	 * Defaults to the collection view. Set to false to skip access checks for presence heartbeats.
+	 */
+	presenceView?: ViewFunction | false;
 	hooks?: {
 		evalWrite?: (ctx: GenericMutationCtx<GenericDataModel>, doc: T) => void | Promise<void>;
 		evalRemove?: (ctx: GenericMutationCtx<GenericDataModel>, docId: string) => void | Promise<void>;
@@ -54,6 +59,12 @@ function createCollectionInternal<T extends object>(
 
 	const hooks = options?.hooks;
 	const view = options?.view;
+	const presenceView =
+		options?.presenceView === undefined
+			? view
+			: options.presenceView === false
+				? undefined
+				: options.presenceView;
 	const privateFields = options?.schema?.__private;
 
 	// Compose transform: auto-strip private fields, then apply user transform
@@ -94,7 +105,7 @@ function createCollectionInternal<T extends object>(
 		}),
 
 		presence: storage.createSessionMutation({
-			view,
+			view: presenceView,
 			evalSession: hooks?.evalSession,
 		}),
 

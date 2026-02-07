@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Document seq index** - Added `by_document_seq` index for efficient per-document delta paging
 - **Material size controls** - Client options to cap material payload size (`materialLimitBytes`) and reduce oversized documents (`materialReducer`)
+- **Presence view override** - Optional `presenceView` to skip access checks for presence heartbeats
 
 ### Changed
 
