@@ -471,47 +471,66 @@ export const getCompactionDeltasPage = query({
 	}),
 	handler: async (ctx, args) => {
 		const numItems = Math.max(1, args.numItems ?? COMPACTION_PAGE_SIZE);
-		const maxScanPages = 10;
-		let cursorSeq = args.cursor ? Number(args.cursor) : 0;
-		if (!Number.isFinite(cursorSeq)) {
-			cursorSeq = 0;
-		}
+		const cursorValue = args.cursor ?? null;
+		const cursorSeq = cursorValue !== null ? Number(cursorValue) : NaN;
 
-		const page: { id: any; seq: number; bytes: ArrayBuffer }[] = [];
-		let isDone = false;
+		// Backward compatibility: if cursor is a numeric seq string, fall back to seq scanning.
+		if (cursorValue !== null && Number.isFinite(cursorSeq) && String(cursorSeq) === cursorValue) {
+			const maxScanPages = 10;
+			let scanCursorSeq = cursorSeq;
+			const page: { id: any; seq: number; bytes: ArrayBuffer }[] = [];
+			let isDone = false;
 
-		for (let scan = 0; scan < maxScanPages && page.length < numItems; scan += 1) {
-			const batch = await ctx.db
-				.query('deltas')
-				.withIndex('by_seq', (q) => q.eq('collection', args.collection).gt('seq', cursorSeq))
-				.order('asc')
-				.take(numItems);
+			for (let scan = 0; scan < maxScanPages && page.length < numItems; scan += 1) {
+				const batch = await ctx.db
+					.query('deltas')
+					.withIndex('by_seq', (q) => q.eq('collection', args.collection).gt('seq', scanCursorSeq))
+					.order('asc')
+					.take(numItems);
 
-			if (batch.length === 0) {
-				isDone = true;
-				break;
-			}
+				if (batch.length === 0) {
+					isDone = true;
+					break;
+				}
 
-			for (const delta of batch) {
-				cursorSeq = delta.seq;
-				if (delta.document === args.document) {
-					page.push({ id: delta._id, seq: delta.seq, bytes: delta.bytes });
-					if (page.length >= numItems) {
-						break;
+				for (const delta of batch) {
+					scanCursorSeq = delta.seq;
+					if (delta.document === args.document) {
+						page.push({ id: delta._id, seq: delta.seq, bytes: delta.bytes });
+						if (page.length >= numItems) {
+							break;
+						}
 					}
+				}
+
+				if (batch.length < numItems) {
+					isDone = true;
+					break;
 				}
 			}
 
-			if (batch.length < numItems) {
-				isDone = true;
-				break;
-			}
+			return {
+				page,
+				isDone,
+				continueCursor: isDone ? null : String(scanCursorSeq),
+			};
 		}
 
+		const page = await ctx.db
+			.query('deltas')
+			.withIndex('by_document', (q) =>
+				q.eq('collection', args.collection).eq('document', args.document)
+			)
+			.paginate({ cursor: cursorValue, numItems });
+
 		return {
-			page,
-			isDone,
-			continueCursor: isDone ? null : String(cursorSeq),
+			page: page.page.map((delta) => ({
+				id: delta._id,
+				seq: delta.seq,
+				bytes: delta.bytes,
+			})),
+			isDone: page.isDone,
+			continueCursor: page.continueCursor,
 		};
 	},
 });
@@ -1322,14 +1341,59 @@ export const recovery = query({
 			)
 			.first();
 
-		const deltas = await ctx.db
-			.query('deltas')
-			.withIndex('by_document', (q) =>
-				q.eq('collection', args.collection).eq('document', args.document)
-			)
-			.collect();
+		const snapshotSeq = snapshot?.seq ?? 0;
+		let deltasFound = false;
 
-		if (!snapshot && deltas.length === 0) {
+		if (!snapshot) {
+			const emptyPage = await ctx.db
+				.query('deltas')
+				.withIndex('by_document', (q) =>
+					q.eq('collection', args.collection).eq('document', args.document)
+				)
+				.paginate({ cursor: null, numItems: 1 });
+			if (emptyPage.page.length === 0) {
+				const emptyDoc = new Y.Doc();
+				const emptyVector = Y.encodeStateVector(emptyDoc);
+				emptyDoc.destroy();
+				return {
+					vector: emptyVector.buffer as ArrayBuffer,
+				};
+			}
+			deltasFound = true;
+		}
+
+		const doc = new Y.Doc();
+
+		if (snapshot) {
+			Y.applyUpdate(doc, new Uint8Array(snapshot.bytes));
+		}
+
+		let cursor: string | null = null;
+		do {
+			const page = await ctx.db
+				.query('deltas')
+				.withIndex('by_document', (q) =>
+					q.eq('collection', args.collection).eq('document', args.document)
+				)
+				.paginate({ cursor, numItems: COMPACTION_PAGE_SIZE });
+
+			if (page.page.length > 0) {
+				deltasFound = true;
+			}
+
+			for (const delta of page.page) {
+				if (delta.seq <= snapshotSeq) continue;
+				Y.applyUpdate(doc, new Uint8Array(delta.bytes));
+			}
+
+			if (page.isDone) {
+				break;
+			}
+
+			cursor = page.continueCursor;
+		} while (cursor);
+
+		if (!snapshot && !deltasFound) {
 			const emptyDoc = new Y.Doc();
 			const emptyVector = Y.encodeStateVector(emptyDoc);
 			emptyDoc.destroy();
@@ -1337,21 +1401,11 @@ export const recovery = query({
 				vector: emptyVector.buffer as ArrayBuffer,
 			};
 		}
-
-		const updates: Uint8Array[] = [];
-
-		if (snapshot) {
-			updates.push(new Uint8Array(snapshot.bytes));
-		}
-
-		for (const delta of deltas) {
-			updates.push(new Uint8Array(delta.bytes));
-		}
-
-		const merged = Y.mergeUpdatesV2(updates);
 		const clientVector = new Uint8Array(args.vector);
+		const merged = Y.encodeStateAsUpdateV2(doc);
 		const diff = Y.diffUpdateV2(merged, clientVector);
-		const serverVector = Y.encodeStateVectorFromUpdateV2(merged);
+		const serverVector = Y.encodeStateVector(doc);
+		doc.destroy();
 
 		return {
 			diff: diff.byteLength > 0 ? (diff.buffer as ArrayBuffer) : undefined,
