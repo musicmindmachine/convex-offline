@@ -105,6 +105,20 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         { removed: number; retained: number; size: number; success: boolean },
         Name
       >;
+      deleteCompactionDeltasBatch: FunctionReference<
+        "mutation",
+        "internal",
+        { collection: string; document: string; ids: Array<string> },
+        number,
+        Name
+      >;
+      deleteCompactionSessionsBatch: FunctionReference<
+        "mutation",
+        "internal",
+        { ids: Array<string> },
+        number,
+        Name
+      >;
       deleteDocument: FunctionReference<
         "mutation",
         "internal",
@@ -124,6 +138,56 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "internal",
         { client: string; collection: string; document: string },
         null,
+        Name
+      >;
+      getCompactionBoundarySeq: FunctionReference<
+        "query",
+        "internal",
+        { collection: string },
+        number,
+        Name
+      >;
+      getCompactionDeltasPage: FunctionReference<
+        "query",
+        "internal",
+        {
+          collection: string;
+          cursor?: string;
+          document: string;
+          numItems?: number;
+        },
+        {
+          continueCursor: string | null;
+          isDone: boolean;
+          page: Array<{ bytes: ArrayBuffer; id: string; seq: number }>;
+        },
+        Name
+      >;
+      getCompactionJob: FunctionReference<
+        "query",
+        "internal",
+        { id: string },
+        any,
+        Name
+      >;
+      getCompactionSessions: FunctionReference<
+        "query",
+        "internal",
+        { collection: string; document: string },
+        Array<{
+          client: string;
+          connected: boolean;
+          id: string;
+          seen: number;
+          vector?: ArrayBuffer;
+        }>,
+        Name
+      >;
+      getCompactionSnapshot: FunctionReference<
+        "query",
+        "internal",
+        { collection: string; document: string },
+        null | { bytes: ArrayBuffer; seq: number; vector: ArrayBuffer },
         Name
       >;
       getDocumentState: FunctionReference<
@@ -205,6 +269,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         null | { removed: number; retained: number },
         Name
       >;
+      runCompactionAction: FunctionReference<
+        "action",
+        "internal",
+        { id: string; retain?: number; timeout?: number },
+        any,
+        Name
+      >;
       scheduleCompaction: FunctionReference<
         "mutation",
         "internal",
@@ -270,6 +341,26 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         },
         Name
       >;
+      updateCompactionJob: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          id: string;
+          patch: {
+            boundarySeq?: number;
+            completed?: number;
+            cursor?: string;
+            error?: string;
+            phase?: "merge" | "finalize";
+            processed?: number;
+            retries?: number;
+            scratch?: ArrayBuffer;
+            status?: "pending" | "running" | "done" | "failed";
+          };
+        },
+        null,
+        Name
+      >;
       updateDocument: FunctionReference<
         "mutation",
         "internal",
@@ -282,6 +373,20 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           timeout?: number;
         },
         { seq: number; success: boolean },
+        Name
+      >;
+      upsertCompactionSnapshot: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          bytes: ArrayBuffer;
+          collection: string;
+          created: number;
+          document: string;
+          seq: number;
+          vector: ArrayBuffer;
+        },
+        null,
         Name
       >;
     };
