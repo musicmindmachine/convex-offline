@@ -1061,12 +1061,11 @@ export function convexCollectionOptions<T extends object = object>(
 
 						if (!exists && hadLocally) {
 							const itemBefore = serializeDocument(docManager, document);
-							// Persist the tombstone locally before removing from memory
+							// Persist the tombstone locally; keep the Y.Doc so deletes survive reloads.
 							if (bytes) {
 								const update = new Uint8Array(bytes);
 								docManager.applyUpdate(document, update, YjsOrigin.Server);
 							}
-							docManager.delete(document);
 							if (itemBefore) {
 								return { item: itemBefore as DataType, isNew: false, isDelete: true };
 							}
@@ -1108,12 +1107,11 @@ export function convexCollectionOptions<T extends object = object>(
 
 						if (!exists && hadLocally) {
 							const itemBefore = serializeDocument(docManager, document);
-							// Persist the tombstone locally before removing from memory
+							// Persist the tombstone locally; keep the Y.Doc so deletes survive reloads.
 							if (bytes) {
 								const update = new Uint8Array(bytes);
 								docManager.applyUpdate(document, update, YjsOrigin.Server);
 							}
-							docManager.delete(document);
 							if (itemBefore) {
 								return { item: itemBefore as DataType, isNew: false, isDelete: true };
 							}

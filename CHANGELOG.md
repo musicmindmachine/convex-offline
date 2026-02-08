@@ -9,11 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Persist tombstones on server delete** - Apply delete deltas before removing docs from memory so local persistence stores the `_meta._deleted` marker and deleted documents do not rehydrate as "ghosts" after refresh.
+- **Persist tombstones on server delete** - Apply delete deltas and keep tombstoned docs in memory so local persistence stores the `_meta._deleted` marker and deleted documents do not rehydrate as "ghosts" after refresh.
 
 ### Notes (Collections)
 
-- When a server delete arrives via `delta` or `snapshot` with `exists=false`, the client now applies the delete update to the Y.Doc (persisting the tombstone) before removing the document from the in-memory collection. This keeps local persistence and collection state aligned across reloads.
+- When a server delete arrives via `delta` or `snapshot` with `exists=false`, the client applies the delete update to the Y.Doc (persisting the tombstone) and keeps the doc in memory while removing it from the TanStack collection. This keeps local persistence and collection state aligned across reloads.
 
 ## [1.2.0-preview.0] - 2025-12-31
 
