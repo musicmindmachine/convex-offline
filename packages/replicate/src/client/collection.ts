@@ -1052,6 +1052,18 @@ export function convexCollectionOptions<T extends object = object>(
 							isDelete: boolean;
 						} | null;
 
+						const applyServerDelete = (document: string, bytes?: ArrayBuffer) => {
+							const ydoc = docManager.getOrCreate(document);
+							if (bytes) {
+								const update = new Uint8Array(bytes);
+								docManager.applyUpdate(document, update, YjsOrigin.Server);
+							}
+							const meta = ydoc.getMap('_meta');
+							if (meta.get('_deleted') !== true) {
+								applyDeleteMarkerToDoc(ydoc);
+							}
+						};
+
 						const handleSnapshotChange = (
 							bytes: ArrayBuffer,
 							document: string,
@@ -1059,20 +1071,17 @@ export function convexCollectionOptions<T extends object = object>(
 						): ChangeResult => {
 							const hadLocally = docManager.has(document);
 
-						if (!exists && hadLocally) {
-							const itemBefore = serializeDocument(docManager, document);
-							// Persist the tombstone locally; keep the Y.Doc so deletes survive reloads.
-							if (bytes) {
-								const update = new Uint8Array(bytes);
-								docManager.applyUpdate(document, update, YjsOrigin.Server);
+							if (!exists && hadLocally) {
+								const itemBefore = serializeDocument(docManager, document);
+								applyServerDelete(document, bytes);
+								if (itemBefore) {
+									return { item: itemBefore as DataType, isNew: false, isDelete: true };
+								}
+								return null;
 							}
-							if (itemBefore) {
-								return { item: itemBefore as DataType, isNew: false, isDelete: true };
-							}
-							return null;
-						}
 
 							if (!exists && !hadLocally) {
+								applyServerDelete(document, bytes);
 								return null;
 							}
 
@@ -1105,20 +1114,17 @@ export function convexCollectionOptions<T extends object = object>(
 
 							const hadLocally = docManager.has(document);
 
-						if (!exists && hadLocally) {
-							const itemBefore = serializeDocument(docManager, document);
-							// Persist the tombstone locally; keep the Y.Doc so deletes survive reloads.
-							if (bytes) {
-								const update = new Uint8Array(bytes);
-								docManager.applyUpdate(document, update, YjsOrigin.Server);
+							if (!exists && hadLocally) {
+								const itemBefore = serializeDocument(docManager, document);
+								applyServerDelete(document, bytes);
+								if (itemBefore) {
+									return { item: itemBefore as DataType, isNew: false, isDelete: true };
+								}
+								return null;
 							}
-							if (itemBefore) {
-								return { item: itemBefore as DataType, isNew: false, isDelete: true };
-							}
-							return null;
-						}
 
 							if (!exists && !hadLocally) {
+								applyServerDelete(document, bytes);
 								return null;
 							}
 
