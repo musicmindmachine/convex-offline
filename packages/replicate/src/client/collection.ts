@@ -1059,14 +1059,19 @@ export function convexCollectionOptions<T extends object = object>(
 						): ChangeResult => {
 							const hadLocally = docManager.has(document);
 
-							if (!exists && hadLocally) {
-								const itemBefore = serializeDocument(docManager, document);
-								docManager.delete(document);
-								if (itemBefore) {
-									return { item: itemBefore as DataType, isNew: false, isDelete: true };
-								}
-								return null;
+						if (!exists && hadLocally) {
+							const itemBefore = serializeDocument(docManager, document);
+							// Persist the tombstone locally before removing from memory
+							if (bytes) {
+								const update = new Uint8Array(bytes);
+								docManager.applyUpdate(document, update, YjsOrigin.Server);
 							}
+							docManager.delete(document);
+							if (itemBefore) {
+								return { item: itemBefore as DataType, isNew: false, isDelete: true };
+							}
+							return null;
+						}
 
 							if (!exists && !hadLocally) {
 								return null;
@@ -1101,14 +1106,19 @@ export function convexCollectionOptions<T extends object = object>(
 
 							const hadLocally = docManager.has(document);
 
-							if (!exists && hadLocally) {
-								const itemBefore = serializeDocument(docManager, document);
-								docManager.delete(document);
-								if (itemBefore) {
-									return { item: itemBefore as DataType, isNew: false, isDelete: true };
-								}
-								return null;
+						if (!exists && hadLocally) {
+							const itemBefore = serializeDocument(docManager, document);
+							// Persist the tombstone locally before removing from memory
+							if (bytes) {
+								const update = new Uint8Array(bytes);
+								docManager.applyUpdate(document, update, YjsOrigin.Server);
 							}
+							docManager.delete(document);
+							if (itemBefore) {
+								return { item: itemBefore as DataType, isNew: false, isDelete: true };
+							}
+							return null;
+						}
 
 							if (!exists && !hadLocally) {
 								return null;

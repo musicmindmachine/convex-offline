@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0-preview.2+blink.1] - 2026-02-08
+
+### Fixed
+
+- **Persist tombstones on server delete** - Apply delete deltas before removing docs from memory so local persistence stores the `_meta._deleted` marker and deleted documents do not rehydrate as "ghosts" after refresh.
+
+### Notes (Collections)
+
+- When a server delete arrives via `delta` or `snapshot` with `exists=false`, the client now applies the delete update to the Y.Doc (persisting the tombstone) before removing the document from the in-memory collection. This keeps local persistence and collection state aligned across reloads.
+
 ## [1.2.0-preview.0] - 2025-12-31
 
 ### Added
