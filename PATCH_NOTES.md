@@ -12,3 +12,10 @@
 Notes:
 - Existing `runCompaction` mutation is still present for compatibility, but scheduled compactions now run through the action.
 - The action builds a snapshot incrementally (scratch bytes) and only deletes deltas after a full merge within the boundary seq.
+
+## 2026-02-09
+- Defaulted delta stream limit to 50 to reduce payload size on large documents (configurable via `deltaLimit`).
+- Added delta stream fallback to material snapshots when delta/view checks exceed Convex byte limits.
+- Stored an optional `exists` flag alongside deltas to avoid live-table existence reads in delta queries.
+- Added paginated compaction cleanup and a fast “retain latest N deltas” query to keep finalize runs bounded.
+- Added a `sweepCompactions` action with paged `deltaCounts` scanning to schedule compactions across large collections.

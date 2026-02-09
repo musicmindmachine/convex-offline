@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-preview.1] - 2026-02-09
+
+### Added
+
+- **Delta stream fallback** - When delta/view checks exceed Convex byte limits, clients switch to a material snapshot and live material subscription for the affected collection.
+- **Compaction sweeper** - New `sweepCompactions` action + paged `deltaCounts` scan to schedule compactions across large collections.
+- **Compaction pagination tuning** - Optional `pageSize`, `maxPages`, and `maxDeltas` per compaction job to keep large merges bounded.
+
+### Changed
+
+- **Delta stream default limit** - Stream updates now default to 50 deltas (`deltaLimit`) to cap payload size on large documents.
+- **Delta existence metadata** - Deltas can store an optional `exists` flag to avoid live-table existence reads in delta queries.
+- **Finalize deletion paging** - Compaction finalize phase now paginates deletions and uses a fast “retain latest N deltas” query.
+
+### Fixed
+
+- **Large document sync stability** - Avoids “Too many bytes read” failures by skipping expensive existence checks and falling back to material snapshots when necessary.
+
 ## [1.2.0-preview.2+blink.1] - 2026-02-08
 
 ### Fixed
