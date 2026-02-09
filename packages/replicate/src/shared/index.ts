@@ -119,6 +119,7 @@ export const streamChangeValidator = v.object({
 	bytes: v.bytes(),
 	seq: v.number(),
 	type: streamChangeTypeValidator,
+	exists: v.optional(v.boolean()),
 });
 
 /**
@@ -383,6 +384,21 @@ export interface CompactionConfig {
 	threshold?: number;
 	timeout?: Duration;
 	retain?: number;
+	/**
+	 * Maximum number of deltas to merge per compaction page.
+	 * Smaller values reduce per-run memory/byte usage for large documents.
+	 */
+	pageSize?: number;
+	/**
+	 * Maximum number of pages to process per compaction run.
+	 * Higher values compact faster but read more data per run.
+	 */
+	maxPages?: number;
+	/**
+	 * Maximum number of deltas to process per compaction run.
+	 * Higher values compact faster but read more data per run.
+	 */
+	maxDeltas?: number;
 }
 
 const DURATION_MULTIPLIERS: Record<DurationUnit, number> = {

@@ -126,6 +126,10 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           bytes: ArrayBuffer;
           collection: string;
           document: string;
+          exists?: boolean;
+          maxDeltas?: number;
+          maxPages?: number;
+          pageSize?: number;
           retain?: number;
           threshold?: number;
           timeout?: number;
@@ -170,6 +174,18 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         any,
         Name
       >;
+      getCompactionLatestDeltas: FunctionReference<
+        "query",
+        "internal",
+        {
+          boundarySeq?: number;
+          collection: string;
+          document: string;
+          numItems?: number;
+        },
+        Array<{ id: string; seq: number }>,
+        Name
+      >;
       getCompactionSessions: FunctionReference<
         "query",
         "internal",
@@ -190,6 +206,17 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         null | { bytes: ArrayBuffer; seq: number; vector: ArrayBuffer },
         Name
       >;
+      getDeltaCountsPage: FunctionReference<
+        "query",
+        "internal",
+        { collection: string; cursor?: string; numItems?: number },
+        {
+          continueCursor: string | null;
+          isDone: boolean;
+          page: Array<{ count: number; document: string }>;
+        },
+        Name
+      >;
       getDocumentState: FunctionReference<
         "query",
         "internal",
@@ -204,6 +231,10 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           bytes: ArrayBuffer;
           collection: string;
           document: string;
+          exists?: boolean;
+          maxDeltas?: number;
+          maxPages?: number;
+          pageSize?: number;
           retain?: number;
           threshold?: number;
           timeout?: number;
@@ -282,6 +313,9 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         {
           collection: string;
           document: string;
+          maxDeltas?: number;
+          maxPages?: number;
+          pageSize?: number;
           retain?: number;
           timeout?: number;
         },
@@ -332,6 +366,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           changes: Array<{
             bytes: ArrayBuffer;
             document: string;
+            exists?: boolean;
             seq: number;
             type: "delta" | "snapshot";
           }>;
@@ -339,6 +374,24 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           more: boolean;
           seq: number;
         },
+        Name
+      >;
+      sweepCompactions: FunctionReference<
+        "action",
+        "internal",
+        {
+          collection: string;
+          compactionMaxDeltas?: number;
+          compactionMaxPages?: number;
+          compactionPageSize?: number;
+          cursor?: string;
+          intervalMs?: number;
+          pageSize?: number;
+          retain?: number;
+          threshold?: number;
+          timeout?: number;
+        },
+        { nextCursor: string | null; processed: number; scheduled: number },
         Name
       >;
       updateCompactionJob: FunctionReference<
@@ -368,6 +421,10 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           bytes: ArrayBuffer;
           collection: string;
           document: string;
+          exists?: boolean;
+          maxDeltas?: number;
+          maxPages?: number;
+          pageSize?: number;
           retain?: number;
           threshold?: number;
           timeout?: number;

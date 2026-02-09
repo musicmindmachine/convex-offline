@@ -19,7 +19,12 @@ import { createSeqService, type Seq } from '$/client/services/seq';
 import { getClientId } from '$/client/services/session';
 import { createReplicateOps, type BoundReplicateOps } from '$/client/ops';
 import { isDoc, fragmentFromJSON } from '$/client/merge';
-import { createDocumentManager, serializeDocument, extractAllDocuments } from '$/client/documents';
+import {
+	createDocumentManager,
+	serializeDocument,
+	extractAllDocuments,
+	isDocumentDeleted,
+} from '$/client/documents';
 import { createDeleteDelta, applyDeleteMarkerToDoc } from '$/client/deltas';
 import * as prose from '$/client/prose';
 import { getLogger } from '$/shared/logger';
@@ -162,6 +167,11 @@ export interface ConvexCollectionConfig<T extends object = object> extends Omit<
 	 */
 	materialSync?: boolean;
 	/**
+	 * Maximum number of deltas to request per stream update.
+	 * Lower values reduce per-update memory/byte usage for large documents.
+	 */
+	deltaLimit?: number;
+	/**
 	 * Configuration for anonymous presence names and colors.
 	 * Allows customizing the adjectives, nouns, and colors used
 	 * when generating anonymous user identities for presence.
@@ -264,6 +274,7 @@ export function convexCollectionOptions<T extends object = object>(
 		materialLimitBytes,
 		materialReducer,
 		materialSync,
+		deltaLimit,
 		anonymousPresence,
 	} = config;
 
@@ -288,6 +299,7 @@ export function convexCollectionOptions<T extends object = object>(
 			return Number.POSITIVE_INFINITY;
 		}
 	};
+	const streamLimit = Math.max(1, deltaLimit ?? 50);
 
 	const prepareMaterial = (
 		value: Record<string, unknown> | null | undefined,
@@ -330,6 +342,63 @@ export function convexCollectionOptions<T extends object = object>(
 			limit: materialLimitBytes,
 		});
 		return reduced;
+	};
+
+	const fetchMaterialSnapshot = async (): Promise<Materialized<DataType> | undefined> => {
+		try {
+			const pageSize = streamLimit;
+			if (pageSize > 0) {
+				const documents: DataType[] = [];
+				let cursor: string | undefined = undefined;
+
+				while (true) {
+					const result = (await convexClient.query(api.material, {
+						numItems: pageSize,
+						cursor,
+					} as any)) as any;
+
+					if (!result) {
+						break;
+					}
+
+					if ('documents' in result && Array.isArray(result.documents)) {
+						documents.push(...(result.documents as DataType[]));
+						return { documents, count: documents.length };
+					}
+
+					if (!('page' in result) || !Array.isArray(result.page)) {
+						break;
+					}
+
+					documents.push(...(result.page as DataType[]));
+					if (result.isDone || !result.continueCursor) {
+						break;
+					}
+
+					cursor = result.continueCursor as string;
+				}
+
+				return { documents, count: documents.length };
+			}
+
+			const result = (await convexClient.query(api.material, {} as any)) as any;
+			if (result && Array.isArray(result.documents)) {
+				return {
+					documents: result.documents as DataType[],
+					count: typeof result.count === 'number' ? result.count : result.documents.length,
+				};
+			}
+			if (result && Array.isArray(result.page)) {
+				return { documents: result.page as DataType[], count: result.page.length };
+			}
+		} catch (error) {
+			logger.warn('Material fetch failed; continuing without fallback snapshot', {
+				collection,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+
+		return undefined;
 	};
 
 	const utils: ConvexCollectionUtils<DataType> = {
@@ -943,6 +1012,8 @@ export function convexCollectionOptions<T extends object = object>(
 
 				let subscription: (() => void) | null = null;
 				let materialSubscription: (() => void) | null = null;
+				let materialFallbackActive = false;
+				let materialFallbackInFlight = false;
 				const ssrDocuments = material?.documents;
 				type CrdtRecord = Record<string, { bytes: ArrayBuffer; seq: number }>;
 				const ssrCrdt = material?.crdt as CrdtRecord | undefined;
@@ -1072,10 +1143,10 @@ export function convexCollectionOptions<T extends object = object>(
 							const hadLocally = docManager.has(document);
 
 							if (!exists && hadLocally) {
-								const itemBefore = serializeDocument(docManager, document);
 								applyServerDelete(document, bytes);
-								if (itemBefore) {
-									return { item: itemBefore as DataType, isNew: false, isDelete: true };
+								const itemAfter = serializeDocument(docManager, document);
+								if (itemAfter) {
+									return { item: itemAfter as DataType, isNew: false, isDelete: true };
 								}
 								return null;
 							}
@@ -1088,6 +1159,15 @@ export function convexCollectionOptions<T extends object = object>(
 							// Apply update - use hadLocally for existence check (avoid double serialization)
 							const update = new Uint8Array(bytes);
 							docManager.applyUpdate(document, update, YjsOrigin.Server);
+							if (isDocumentDeleted(docManager, document)) {
+								if (hadLocally) {
+									const itemAfter = serializeDocument(docManager, document);
+									if (itemAfter) {
+										return { item: itemAfter as DataType, isNew: false, isDelete: true };
+									}
+								}
+								return null;
+							}
 							const itemAfter = serializeDocument(docManager, document);
 
 							if (itemAfter) {
@@ -1115,10 +1195,10 @@ export function convexCollectionOptions<T extends object = object>(
 							const hadLocally = docManager.has(document);
 
 							if (!exists && hadLocally) {
-								const itemBefore = serializeDocument(docManager, document);
 								applyServerDelete(document, bytes);
-								if (itemBefore) {
-									return { item: itemBefore as DataType, isNew: false, isDelete: true };
+								const itemAfter = serializeDocument(docManager, document);
+								if (itemAfter) {
+									return { item: itemAfter as DataType, isNew: false, isDelete: true };
 								}
 								return null;
 							}
@@ -1131,6 +1211,15 @@ export function convexCollectionOptions<T extends object = object>(
 							// Apply update - use hadLocally for existence check (avoid double serialization)
 							const update = new Uint8Array(bytes);
 							docManager.applyUpdate(document, update, YjsOrigin.Server);
+							if (isDocumentDeleted(docManager, document)) {
+								if (hadLocally) {
+									const itemAfter = serializeDocument(docManager, document);
+									if (itemAfter) {
+										return { item: itemAfter as DataType, isNew: false, isDelete: true };
+									}
+								}
+								return null;
+							}
 							const itemAfter = serializeDocument(docManager, document);
 
 							if (itemAfter) {
@@ -1149,11 +1238,42 @@ export function convexCollectionOptions<T extends object = object>(
 						let lastProcessedSeq = cursor;
 
 						const handleSubscriptionUpdate = async (response: any) => {
-							if (!response || !Array.isArray(response.changes)) {
+							if (!response) {
+								return;
+							}
+
+							if (response.mode === 'material') {
+								await triggerMaterialFallback(
+									response.reason ?? 'stream_error',
+									response.error
+								);
+								return;
+							}
+
+							const fallbackInfo =
+								response.fallback && response.fallback.mode === 'material'
+									? response.fallback
+									: null;
+
+							if (!Array.isArray(response.changes)) {
+								if (fallbackInfo) {
+									await triggerMaterialFallback(
+										fallbackInfo.reason ?? 'view_check_failed',
+										fallbackInfo.error
+									);
+								}
 								return;
 							}
 
 							const { changes, seq: newSeq } = response;
+
+							if (materialFallbackActive) {
+								if (newSeq !== undefined && newSeq > lastProcessedSeq) {
+									lastProcessedSeq = newSeq;
+									persistence.kv.set(`cursor:${collection}`, newSeq);
+								}
+								return;
+							}
 
 							// Skip if we've already processed up to this seq — prevents
 							// re-enqueuing presence marks on subscription re-fires (e.g. reconnect)
@@ -1223,10 +1343,17 @@ export function convexCollectionOptions<T extends object = object>(
 								subscription?.();
 								subscription = convexClient.onUpdate(
 									api.delta,
-									{ seq: newSeq, limit: 1000 },
+									{ seq: newSeq, limit: streamLimit },
 									(response: any) => {
 										handleSubscriptionUpdate(response);
 									}
+								);
+							}
+
+							if (fallbackInfo) {
+								await triggerMaterialFallback(
+									fallbackInfo.reason ?? 'view_check_failed',
+									fallbackInfo.error
 								);
 							}
 						};
@@ -1236,7 +1363,7 @@ export function convexCollectionOptions<T extends object = object>(
 						// and the callback fires with the updated result automatically.
 						subscription = convexClient.onUpdate(
 							api.delta,
-							{ seq: cursor, limit: 1000 },
+							{ seq: cursor, limit: streamLimit },
 							(response: any) => {
 								handleSubscriptionUpdate(response);
 							}
@@ -1248,6 +1375,7 @@ export function convexCollectionOptions<T extends object = object>(
 							for (const doc of serverDocs) {
 								const documentId = String(getKey(doc));
 								const hadLocally = docManager.has(documentId);
+								const wasDeleted = isDocumentDeleted(docManager, documentId);
 
 								const delta = docManager.transactWithDelta(
 									documentId,
@@ -1264,7 +1392,18 @@ export function convexCollectionOptions<T extends object = object>(
 									YjsOrigin.Server
 								);
 
-								if (hadLocally && delta.length === 0) {
+								if (wasDeleted) {
+									const ydoc = docManager.get(documentId);
+									if (ydoc) {
+										const meta = ydoc.getMap('_meta');
+										if (meta.get('_deleted') === true) {
+											meta.delete('_deleted');
+											meta.delete('_deletedAt');
+										}
+									}
+								}
+
+								if (hadLocally && delta.length === 0 && !wasDeleted) {
 									continue;
 								}
 
@@ -1287,6 +1426,82 @@ export function convexCollectionOptions<T extends object = object>(
 							}
 							if (Array.isArray(response.page)) {
 								mergeMaterialSnapshot(response.page as DataType[]);
+							}
+						};
+
+						const replaceMaterialSnapshot = (serverDocs: DataType[]) => {
+							const nextIds = new Set<string>();
+							for (const doc of serverDocs) {
+								nextIds.add(String(getKey(doc)));
+							}
+
+							for (const existingId of docManager.documents()) {
+								if (!nextIds.has(existingId)) {
+									docManager.delete(existingId);
+								}
+							}
+
+							for (const doc of serverDocs) {
+								const documentId = String(getKey(doc));
+								docManager.transactWithDelta(
+									documentId,
+									(fields) => {
+										fields.clear();
+										Object.entries(doc as Record<string, unknown>).forEach(([k, v]) => {
+											if (k === 'id') return;
+											if (v === undefined) return;
+											if (proseFieldSet.has(k) && isDoc(v)) {
+												const fragment = new Y.XmlFragment();
+												fields.set(k, fragment);
+												fragmentFromJSON(fragment, v);
+											} else {
+												fields.set(k, v);
+											}
+										});
+									},
+									YjsOrigin.Server
+								);
+
+								const ydoc = docManager.get(documentId);
+								if (ydoc) {
+									const meta = ydoc.getMap('_meta');
+									if (meta.get('_deleted') === true) {
+										meta.delete('_deleted');
+										meta.delete('_deletedAt');
+									}
+								}
+							}
+
+							ops.replace(serverDocs);
+						};
+
+						const triggerMaterialFallback = async (reason: string, error?: string) => {
+							if (materialFallbackActive || materialFallbackInFlight) {
+								return;
+							}
+							materialFallbackInFlight = true;
+							try {
+								logger.warn('Delta stream fallback to material snapshot', {
+									collection,
+									reason,
+									error,
+								});
+								const snapshot = await fetchMaterialSnapshot();
+								if (snapshot && Array.isArray(snapshot.documents)) {
+									replaceMaterialSnapshot(snapshot.documents as DataType[]);
+								}
+								if (!materialSubscription) {
+									materialSubscription = convexClient.onUpdate(
+										api.material,
+										{} as any,
+										(response: any) => {
+											handleMaterialUpdate(response);
+										}
+									);
+								}
+								materialFallbackActive = true;
+							} finally {
+								materialFallbackInFlight = false;
 							}
 						};
 
@@ -1537,6 +1752,7 @@ function createVersionedCollection<T extends object>(
 					materialLimitBytes: userConfig.materialLimitBytes,
 					materialReducer: userConfig.materialReducer,
 					materialSync: userConfig.materialSync,
+					deltaLimit: userConfig.deltaLimit,
 				} as LazyCollectionConfig<T>;
 
 				let resolvedMaterial = mat;

@@ -41,6 +41,7 @@ export default defineSchema({
 		document: v.string(),
 		bytes: v.bytes(),
 		seq: v.number(),
+		exists: v.optional(v.boolean()),
 	})
 		.index('by_collection', ['collection'])
 		.index('by_document', ['collection', 'document'])
@@ -107,6 +108,9 @@ export default defineSchema({
 		completed: v.optional(v.number()),
 		retries: v.number(),
 		timeout: v.optional(v.number()),
+		pageSize: v.optional(v.number()),
+		maxPages: v.optional(v.number()),
+		maxDeltas: v.optional(v.number()),
 		error: v.optional(v.string()),
 	})
 		.index('by_document', ['collection', 'document', 'status'])

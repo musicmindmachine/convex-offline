@@ -25,6 +25,7 @@ import {
 	replicateTypeValidator,
 	sessionActionValidator,
 } from '$/shared';
+import { getLogger } from '$/shared/logger';
 
 // ============================================================================
 // Re-exports
@@ -91,42 +92,88 @@ interface StreamChange {
 	bytes: ArrayBuffer;
 	seq: number;
 	type: string;
+	exists?: boolean;
 }
+
+const logger = getLogger(['replicate', 'delta']);
+
+const isBytesLimitError = (error: unknown): boolean => {
+	if (!error) return false;
+	const message = error instanceof Error ? error.message : String(error);
+	return (
+		message.includes('Too many bytes read') ||
+		message.includes('bytes read in a single function execution') ||
+		message.includes('response size') ||
+		message.includes('payload size')
+	);
+};
+
+type EnrichResult = {
+	changes: (StreamChange & { exists: boolean })[];
+	fallback?: {
+		reason: string;
+		error: string;
+	};
+};
 
 async function enrichChangesWithExistence(
 	ctx: GenericQueryCtx<GenericDataModel>,
 	collection: string,
 	changes: StreamChange[],
 	view?: ViewFunction
-): Promise<(StreamChange & { exists: boolean })[]> {
-	const docIdSet = new Set<string>();
-	for (const change of changes) {
-		docIdSet.add(change.document);
+): Promise<EnrichResult> {
+	const baseChanges = changes.map((change) => ({
+		...change,
+		exists: typeof change.exists === 'boolean' ? change.exists : true,
+	}));
+
+	if (!view) {
+		return { changes: baseChanges };
 	}
 
-	const existingDocs = new Set<string>();
-
-	for (const docId of docIdSet) {
-		const doc = await ctx.db
-			.query(collection)
-			.withIndex('by_doc_id', (q: any) => q.eq('id', docId))
-			.first();
-
-		if (!doc) continue;
-
-		if (view) {
-			const viewQuery = await view(ctx, ctx.db.query(collection));
-			const visible = await viewQuery.filter((q: any) => q.eq(q.field('id'), docId)).first();
-			if (visible) existingDocs.add(docId);
-		} else {
-			existingDocs.add(docId);
+	const docIdSet = new Set<string>();
+	for (const change of baseChanges) {
+		if (change.exists) {
+			docIdSet.add(change.document);
 		}
 	}
 
-	return changes.map((c) => ({
-		...c,
-		exists: existingDocs.has(c.document),
-	}));
+	if (docIdSet.size === 0) {
+		return { changes: baseChanges };
+	}
+
+	try {
+		const visibleDocs = new Set<string>();
+		const baseQuery = await view(ctx, ctx.db.query(collection));
+		for (const docId of docIdSet) {
+			const visible = await baseQuery
+				.filter((q: any) => q.eq(q.field('id'), docId))
+				.first();
+			if (visible) {
+				visibleDocs.add(docId);
+			}
+		}
+
+		const withView = baseChanges.map((change) => ({
+			...change,
+			exists: change.exists && visibleDocs.has(change.document),
+		}));
+
+		return { changes: withView };
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		logger.warn('Existence/view check failed; falling back to delta metadata', {
+			collection,
+			error: message,
+		});
+		return {
+			changes: baseChanges,
+			fallback: {
+				reason: isBytesLimitError(error) ? 'bytes_limit' : 'view_check_failed',
+				error: message,
+			},
+		};
+	}
 }
 
 const DEFAULT_THRESHOLD = 500;
@@ -136,6 +183,9 @@ export class Replicate<T extends object> {
 	private threshold: number;
 	private timeout: number;
 	private retain: number;
+	private pageSize?: number;
+	private maxPages?: number;
+	private maxDeltas?: number;
 
 	constructor(
 		public component: any,
@@ -145,6 +195,9 @@ export class Replicate<T extends object> {
 		this.threshold = compaction?.threshold ?? DEFAULT_THRESHOLD;
 		this.timeout = compaction?.timeout ? parseDuration(compaction.timeout) : DEFAULT_TIMEOUT_MS;
 		this.retain = compaction?.retain ?? 0;
+		this.pageSize = compaction?.pageSize;
+		this.maxPages = compaction?.maxPages;
+		this.maxDeltas = compaction?.maxDeltas;
 	}
 
 	createMaterialQuery(opts?: {
@@ -204,7 +257,7 @@ export class Replicate<T extends object> {
 	}) {
 		const component = this.component;
 		const collection = this.collectionName;
-		const { threshold, timeout, retain } = this;
+		const { threshold, timeout, retain, pageSize, maxPages, maxDeltas } = this;
 
 		return mutationGeneric({
 			args: {
@@ -235,9 +288,13 @@ export class Replicate<T extends object> {
 						collection,
 						document,
 						bytes,
+						exists: false,
 						threshold,
 						timeout,
 						retain,
+						pageSize,
+						maxPages,
+						maxDeltas,
 					});
 
 					if (opts?.onRemove) {
@@ -263,9 +320,13 @@ export class Replicate<T extends object> {
 						collection,
 						document,
 						bytes,
+						exists: true,
 						threshold,
 						timeout,
 						retain,
+						pageSize,
+						maxPages,
+						maxDeltas,
 					});
 
 					if (opts?.onInsert) {
@@ -301,9 +362,13 @@ export class Replicate<T extends object> {
 					collection,
 					document,
 					bytes,
+					exists: true,
 					threshold,
 					timeout,
 					retain,
+					pageSize,
+					maxPages,
+					maxDeltas,
 				});
 
 				if (didInsert) {
@@ -444,20 +509,56 @@ export class Replicate<T extends object> {
 					return { mode: 'recovery' as const, ...recoveryResult };
 				}
 
-				const result = await ctx.runQuery(component.mutations.stream, {
-					collection,
-					seq: args.seq ?? 0,
-					limit: args.limit,
-					threshold: args.threshold,
-				});
+				const fallbackResponse = (reason: string, error: unknown) => {
+					const message = error instanceof Error ? error.message : String(error);
+					logger.warn('Delta stream fallback to material', {
+						collection,
+						reason,
+						error: message,
+					});
+					return {
+						mode: 'material' as const,
+						reason,
+						error: message,
+						seq: args.seq ?? 0,
+						changes: [],
+						more: false,
+					};
+				};
 
-				const enrichedChanges = await enrichChangesWithExistence(
+				let result: any;
+				try {
+					result = await ctx.runQuery(component.mutations.stream, {
+						collection,
+						seq: args.seq ?? 0,
+						limit: args.limit,
+						threshold: args.threshold,
+					});
+				} catch (error) {
+					if (isBytesLimitError(error)) {
+						return fallbackResponse('stream_bytes_limit', error);
+					}
+					throw error;
+				}
+
+				const enriched = await enrichChangesWithExistence(
 					ctx,
 					collection,
 					result.changes,
 					opts?.view
 				);
-				const enrichedResult = { mode: 'stream' as const, ...result, changes: enrichedChanges };
+				const enrichedResult: any = {
+					mode: 'stream' as const,
+					...result,
+					changes: enriched.changes,
+				};
+
+				if (enriched.fallback) {
+					enrichedResult.fallback = {
+						mode: 'material' as const,
+						...enriched.fallback,
+					};
+				}
 
 				if (opts?.onDelta) {
 					await opts.onDelta(ctx, enrichedResult);

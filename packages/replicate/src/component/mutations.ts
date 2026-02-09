@@ -111,7 +111,10 @@ async function scheduleCompactionIfNeeded(
 	currentCount: number,
 	threshold: number = DEFAULT_THRESHOLD,
 	timeout: number = DEFAULT_TIMEOUT,
-	retain: number = 0
+	retain: number = 0,
+	pageSize?: number,
+	maxPages?: number,
+	maxDeltas?: number
 ): Promise<void> {
 	if (currentCount >= threshold) {
 		await ctx.runMutation(api.mutations.scheduleCompaction, {
@@ -119,6 +122,9 @@ async function scheduleCompactionIfNeeded(
 			document,
 			timeout,
 			retain,
+			pageSize,
+			maxPages,
+			maxDeltas,
 		});
 	}
 }
@@ -127,9 +133,13 @@ const documentWriteArgs = {
 	collection: v.string(),
 	document: v.string(),
 	bytes: v.bytes(),
+	exists: v.optional(v.boolean()),
 	threshold: v.optional(v.number()),
 	timeout: v.optional(v.number()),
 	retain: v.optional(v.number()),
+	pageSize: v.optional(v.number()),
+	maxPages: v.optional(v.number()),
+	maxDeltas: v.optional(v.number()),
 };
 
 async function handleDocumentWrite(
@@ -138,9 +148,13 @@ async function handleDocumentWrite(
 		collection: string;
 		document: string;
 		bytes: ArrayBuffer;
+		exists?: boolean;
 		threshold?: number;
 		timeout?: number;
 		retain?: number;
+		pageSize?: number;
+		maxPages?: number;
+		maxDeltas?: number;
 	}
 ) {
 	const seq = await getNextSeq(ctx, args.collection);
@@ -150,6 +164,7 @@ async function handleDocumentWrite(
 		document: args.document,
 		bytes: args.bytes,
 		seq,
+		exists: args.exists,
 	});
 
 	const count = await incrementDeltaCount(ctx, args.collection, args.document);
@@ -160,7 +175,10 @@ async function handleDocumentWrite(
 		count,
 		args.threshold ?? DEFAULT_THRESHOLD,
 		args.timeout ?? DEFAULT_TIMEOUT,
-		args.retain ?? 0
+		args.retain ?? 0,
+		args.pageSize,
+		args.maxPages,
+		args.maxDeltas
 	);
 
 	return { success: true as const, seq };
@@ -169,19 +187,19 @@ async function handleDocumentWrite(
 export const insertDocument = mutation({
 	args: documentWriteArgs,
 	returns: successSeqValidator,
-	handler: handleDocumentWrite,
+	handler: (ctx, args) => handleDocumentWrite(ctx, { ...args, exists: args.exists ?? true }),
 });
 
 export const updateDocument = mutation({
 	args: documentWriteArgs,
 	returns: successSeqValidator,
-	handler: handleDocumentWrite,
+	handler: (ctx, args) => handleDocumentWrite(ctx, { ...args, exists: args.exists ?? true }),
 });
 
 export const deleteDocument = mutation({
 	args: documentWriteArgs,
 	returns: successSeqValidator,
-	handler: handleDocumentWrite,
+	handler: (ctx, args) => handleDocumentWrite(ctx, { ...args, exists: args.exists ?? false }),
 });
 
 const DEFAULT_HEARTBEAT_INTERVAL = 10000;
@@ -506,6 +524,69 @@ export const getCompactionDeltasPage = query({
 	},
 });
 
+export const getDeltaCountsPage = query({
+	args: {
+		collection: v.string(),
+		cursor: v.optional(v.string()),
+		numItems: v.optional(v.number()),
+	},
+	returns: v.object({
+		page: v.array(v.object({ document: v.string(), count: v.number() })),
+		isDone: v.boolean(),
+		continueCursor: v.union(v.string(), v.null()),
+	}),
+	handler: async (ctx, args) => {
+		const numItems = Math.max(1, args.numItems ?? 100);
+		const cursorValue = args.cursor ?? null;
+		const cursorDoc = cursorValue ?? '';
+
+		const batch = await ctx.db
+			.query('deltaCounts')
+			.withIndex('by_document', (q) =>
+				q.eq('collection', args.collection).gt('document', cursorDoc)
+			)
+			.order('asc')
+			.take(numItems);
+
+		const page = batch.map((doc) => ({
+			document: doc.document,
+			count: doc.count,
+		}));
+		const lastDoc = page.length > 0 ? page[page.length - 1]!.document : cursorDoc;
+		const isDone = batch.length < numItems;
+
+		return {
+			page,
+			isDone,
+			continueCursor: isDone ? null : lastDoc,
+		};
+	},
+});
+
+export const getCompactionLatestDeltas = query({
+	args: {
+		collection: v.string(),
+		document: v.string(),
+		boundarySeq: v.optional(v.number()),
+		numItems: v.optional(v.number()),
+	},
+	returns: v.array(v.object({ id: v.id('deltas'), seq: v.number() })),
+	handler: async (ctx, args) => {
+		const numItems = Math.max(1, args.numItems ?? COMPACTION_PAGE_SIZE);
+
+		const batch = await ctx.db
+			.query('deltas')
+			.withIndex('by_document_seq', (q) => {
+				const base = q.eq('collection', args.collection).eq('document', args.document);
+				return args.boundarySeq !== undefined ? base.lte('seq', args.boundarySeq) : base;
+			})
+			.order('desc')
+			.take(numItems);
+
+		return batch.map((delta) => ({ id: delta._id, seq: delta.seq }));
+	},
+});
+
 export const getCompactionSessions = query({
 	args: { collection: v.string(), document: v.string() },
 	returns: v.array(
@@ -656,6 +737,9 @@ export const scheduleCompaction = mutation({
 		document: v.string(),
 		timeout: v.optional(v.number()),
 		retain: v.optional(v.number()),
+		pageSize: v.optional(v.number()),
+		maxPages: v.optional(v.number()),
+		maxDeltas: v.optional(v.number()),
 	},
 	returns: v.object({
 		id: v.optional(v.id('compaction')),
@@ -695,6 +779,9 @@ export const scheduleCompaction = mutation({
 			started: Date.now(),
 			retries: 0,
 			timeout: args.timeout,
+			pageSize: args.pageSize,
+			maxPages: args.maxPages,
+			maxDeltas: args.maxDeltas,
 		});
 
 		await ctx.scheduler.runAfter(0, api.mutations.runCompactionAction, {
@@ -704,6 +791,73 @@ export const scheduleCompaction = mutation({
 		});
 
 		return { id, status: 'scheduled' as const };
+	},
+});
+
+export const sweepCompactions = action({
+	args: {
+		collection: v.string(),
+		threshold: v.optional(v.number()),
+		cursor: v.optional(v.string()),
+		pageSize: v.optional(v.number()),
+		intervalMs: v.optional(v.number()),
+		timeout: v.optional(v.number()),
+		retain: v.optional(v.number()),
+		compactionPageSize: v.optional(v.number()),
+		compactionMaxPages: v.optional(v.number()),
+		compactionMaxDeltas: v.optional(v.number()),
+	},
+	returns: v.object({
+		processed: v.number(),
+		scheduled: v.number(),
+		nextCursor: v.union(v.string(), v.null()),
+	}),
+	handler: async (ctx: ActionCtx, args) => {
+		const threshold = args.threshold ?? DEFAULT_THRESHOLD;
+		const pageSize = Math.max(1, args.pageSize ?? 100);
+
+		const page = await ctx.runQuery(api.mutations.getDeltaCountsPage, {
+			collection: args.collection,
+			cursor: args.cursor,
+			numItems: pageSize,
+		});
+
+		let scheduled = 0;
+		for (const entry of page.page) {
+			if (entry.count < threshold) {
+				continue;
+			}
+			await ctx.runMutation(api.mutations.scheduleCompaction, {
+				collection: args.collection,
+				document: entry.document,
+				timeout: args.timeout,
+				retain: args.retain,
+				pageSize: args.compactionPageSize,
+				maxPages: args.compactionMaxPages,
+				maxDeltas: args.compactionMaxDeltas,
+			});
+			scheduled += 1;
+		}
+
+		const nextCursor = page.isDone ? null : page.continueCursor;
+
+		if (nextCursor) {
+			await ctx.scheduler.runAfter(0, api.mutations.sweepCompactions, {
+				...args,
+				cursor: nextCursor,
+			});
+		} else if (args.intervalMs !== undefined) {
+			await ctx.scheduler.runAfter(args.intervalMs, api.mutations.sweepCompactions, {
+				...args,
+				cursor: undefined,
+			});
+		}
+
+		return {
+			processed: page.page.length,
+			scheduled,
+			nextCursor,
+		};
 	},
 });
 
@@ -915,6 +1069,9 @@ export const runCompactionAction = action({
 		const now = Date.now();
 		const timeout = args.timeout ?? job.timeout ?? DEFAULT_TIMEOUT;
 		const retain = args.retain ?? 0;
+		const pageSize = Math.max(1, job.pageSize ?? COMPACTION_PAGE_SIZE);
+		const maxPages = Math.max(1, job.maxPages ?? COMPACTION_MAX_PAGES);
+		const maxDeltas = Math.max(1, job.maxDeltas ?? COMPACTION_MAX_DELTAS);
 
 		try {
 			if (job.status !== 'running') {
@@ -954,12 +1111,12 @@ export const runCompactionAction = action({
 				let pages = 0;
 				let mergeDone = false;
 
-				while (pages < COMPACTION_MAX_PAGES && deltasProcessed < COMPACTION_MAX_DELTAS) {
+				while (pages < maxPages && deltasProcessed < maxDeltas) {
 					const page = await ctx.runQuery(api.mutations.getCompactionDeltasPage, {
 						collection: job.collection,
 						document: job.document,
 						cursor,
-						numItems: COMPACTION_PAGE_SIZE,
+						numItems: pageSize,
 					});
 
 					let reachedBoundary = false;
@@ -971,7 +1128,7 @@ export const runCompactionAction = action({
 						applyBytesToDoc(doc, delta.bytes);
 						processed += 1;
 						deltasProcessed += 1;
-						if (deltasProcessed >= COMPACTION_MAX_DELTAS) {
+						if (deltasProcessed >= maxDeltas) {
 							break;
 						}
 					}
@@ -995,6 +1152,9 @@ export const runCompactionAction = action({
 				};
 				if (!mergeDone && cursor) {
 					patch.cursor = cursor;
+				} else if (mergeDone) {
+					// Reset cursor for finalize phase pagination
+					patch.cursor = '0';
 				}
 				await ctx.runMutation(api.mutations.updateCompactionJob, {
 					id: args.id,
@@ -1071,82 +1231,68 @@ export const runCompactionAction = action({
 
 			if (canDeleteAll) {
 				const retainCount = Math.max(0, retain);
-				const retainList: { id: string; seq: number }[] = [];
-
+				const retainIds = new Set<string>();
 				if (retainCount > 0) {
-					let cursor: string | undefined;
-					let done = false;
-
-					while (!done) {
-						const page = await ctx.runQuery(api.mutations.getCompactionDeltasPage, {
-							collection: job.collection,
-							document: job.document,
-							cursor,
-							numItems: COMPACTION_PAGE_SIZE,
-						});
-
-						for (const delta of page.page) {
-							if (delta.seq > boundarySeq) {
-								done = true;
-								break;
-							}
-							if (retainList.length < retainCount) {
-								retainList.push({ id: delta.id, seq: delta.seq });
-								retainList.sort((a, b) => b.seq - a.seq);
-								continue;
-							}
-							if (retainCount > 0 && delta.seq > retainList[retainList.length - 1].seq) {
-								retainList[retainList.length - 1] = { id: delta.id, seq: delta.seq };
-								retainList.sort((a, b) => b.seq - a.seq);
-							}
-						}
-
-						if (done || page.isDone) {
-							break;
-						}
-
-						cursor = page.continueCursor ?? undefined;
+					const retainPage = await ctx.runQuery(api.mutations.getCompactionLatestDeltas, {
+						collection: job.collection,
+						document: job.document,
+						boundarySeq,
+						numItems: retainCount,
+					});
+					for (const entry of retainPage) {
+						retainIds.add(entry.id);
 					}
 				}
 
-				const retainIds = new Set(retainList.map((entry) => entry.id));
-				let cursor: string | undefined;
+				let cursor: string | undefined = job.cursor ?? undefined;
 				let done = false;
 				let batch: string[] = [];
+				let pages = 0;
+				let deltasProcessed = 0;
+				let lastPageDone = false;
 
-				while (!done) {
+				while (pages < maxPages && deltasProcessed < maxDeltas) {
 					const page = await ctx.runQuery(api.mutations.getCompactionDeltasPage, {
 						collection: job.collection,
 						document: job.document,
 						cursor,
-						numItems: COMPACTION_PAGE_SIZE,
+						numItems: pageSize,
 					});
+
+					lastPageDone = page.isDone;
 
 					for (const delta of page.page) {
 						if (delta.seq > boundarySeq) {
 							done = true;
 							break;
 						}
+
+						deltasProcessed += 1;
 						if (retainIds.has(delta.id)) {
 							retained += 1;
-							continue;
+						} else {
+							batch.push(delta.id);
+							if (batch.length >= 50) {
+								removed += await ctx.runMutation(api.mutations.deleteCompactionDeltasBatch, {
+									collection: job.collection,
+									document: job.document,
+									ids: batch as any,
+								});
+								batch = [];
+							}
 						}
-						batch.push(delta.id);
-						if (batch.length >= 50) {
-							removed += await ctx.runMutation(api.mutations.deleteCompactionDeltasBatch, {
-								collection: job.collection,
-								document: job.document,
-								ids: batch as any,
-							});
-							batch = [];
-						}
-					}
 
-					if (done || page.isDone) {
-						break;
+						if (deltasProcessed >= maxDeltas) {
+							break;
+						}
 					}
 
 					cursor = page.continueCursor ?? undefined;
+					pages += 1;
+
+					if (done || page.isDone || deltasProcessed >= maxDeltas) {
+						break;
+					}
 				}
 
 				if (batch.length > 0) {
@@ -1155,6 +1301,21 @@ export const runCompactionAction = action({
 						document: job.document,
 						ids: batch as any,
 					});
+				}
+
+				const finalizeDone = done || lastPageDone;
+				if (!finalizeDone) {
+					await ctx.runMutation(api.mutations.updateCompactionJob, {
+						id: args.id,
+						patch: { phase: 'finalize', cursor: cursor ?? '0' },
+					});
+					await ctx.scheduler.runAfter(0, api.mutations.runCompactionAction, {
+						id: args.id,
+						timeout,
+						retain,
+					});
+					doc.destroy();
+					return { phase: 'finalize' };
 				}
 			} else {
 				retained = job.processed ?? 0;
@@ -1220,7 +1381,7 @@ export const stream = query({
 	},
 	returns: streamResultValidator,
 	handler: async (ctx, args) => {
-		const limit = args.limit ?? 100;
+		const limit = Math.max(1, args.limit ?? 50);
 		// threshold arg kept for API compatibility but no longer used
 		// (compaction check moved to write mutations for O(1) performance)
 
@@ -1236,6 +1397,7 @@ export const stream = query({
 				bytes: doc.bytes,
 				seq: doc.seq,
 				type: OperationType.Delta,
+				exists: doc.exists,
 			}));
 
 			const newSeq = documents[documents.length - 1]?.seq ?? args.seq;
@@ -1276,6 +1438,7 @@ export const stream = query({
 				bytes: s.bytes,
 				seq: s.seq,
 				type: OperationType.Snapshot,
+				exists: true,
 			}));
 
 			const latestSeq = Math.max(...snapshots.map((s) => s.seq));
