@@ -1,6 +1,6 @@
 {
 	"name": "@trestleinc/replicate",
-	"version": "2.0.0-preview.0",
+	"version": "2.0.0-preview.1",
 	"private": false,
 	"description": "Offline-first data replication with Yjs CRDTs and Convex",
 	"keywords": [
