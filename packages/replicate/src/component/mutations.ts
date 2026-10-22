@@ -323,7 +323,7 @@ export const compact = mutation({
 			const sessionVector = new Uint8Array(session.vector);
 			const missing = Y.diffUpdateV2(merged, sessionVector);
 
-			if (!isEmptyUpdateV2(missing)) {
+			if (hasMissingStructsV2(missing)) {
 				canDeleteAll = false;
 				logger.debug('Session still needs data', {
 					client: session.client,
@@ -399,7 +399,7 @@ export const compact = mutation({
 			const sessionVector = new Uint8Array(session.vector);
 			const missing = Y.diffUpdateV2(merged, sessionVector);
 
-			if (isEmptyUpdateV2(missing)) {
+			if (!hasMissingStructsV2(missing)) {
 				await ctx.db.delete(session._id);
 				cleaned++;
 			}
@@ -421,11 +421,10 @@ export const compact = mutation({
 	},
 });
 
-// V2 empty updates include encoding headers; byte length is not an emptiness test.
-const isEmptyUpdateV2 = (bytes: Uint8Array) => {
- const decoded = Y.decodeUpdateV2(bytes);
- return decoded.structs.length === 0 && decoded.ds.clients.size === 0;
-};
+// V2 headers and delete sets are repeated even when a state vector is current.
+// Delete sets are not acknowledged by vectors. They remain in the durable
+// snapshot and stream recovery delivers that snapshot across compacted gaps.
+const hasMissingStructsV2 = (bytes: Uint8Array) => Y.decodeUpdateV2(bytes).structs.length > 0;
 
 const applyBytesToDoc = (doc: Y.Doc, bytes?: ArrayBuffer | null) => {
 	if (!bytes) return;
@@ -951,7 +950,7 @@ export const runCompaction = mutation({
 				const sessionVector = new Uint8Array(session.vector);
 				const missing = Y.diffUpdateV2(merged, sessionVector);
 
-				if (!isEmptyUpdateV2(missing)) {
+				if (hasMissingStructsV2(missing)) {
 					canDeleteAll = false;
 					logger.debug('Active session still needs data', {
 						client: session.client,
@@ -1222,7 +1221,7 @@ export const runCompactionAction = action({
 				}
 				const sessionVector = new Uint8Array(session.vector);
 				const missing = Y.encodeStateAsUpdateV2(doc, sessionVector);
-				if (!isEmptyUpdateV2(missing)) {
+				if (hasMissingStructsV2(missing)) {
 					canDeleteAll = false;
 					logger.debug('Active session still needs data', {
 						client: session.client,

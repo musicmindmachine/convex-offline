@@ -254,3 +254,20 @@ test('action compaction preserves every delta across partial pages', async () =>
     recovered.destroy(); doc.destroy();
   } finally { vi.useRealTimers(); }
 });
+
+test('acknowledged field replacements compact despite repeated deletion sets', async () => {
+  const t = convexTest(schema, modules);
+  const doc = new Y.Doc();
+  doc.getMap('fields').set('title', 'Old');
+  await t.mutation(api.mutations.insertDocument, { collection: 'test', document: 'deletes', bytes: toArrayBuffer(Y.encodeStateAsUpdateV2(doc)) });
+  const vector = Y.encodeStateVector(doc);
+  doc.getMap('fields').set('title', 'New');
+  await t.mutation(api.mutations.updateDocument, { collection: 'test', document: 'deletes', bytes: toArrayBuffer(Y.encodeStateAsUpdateV2(doc, vector)) });
+  await t.mutation(api.mutations.presence, { collection: 'test', document: 'deletes', client: 'peer', action: 'join', vector: toArrayBuffer(Y.encodeStateVector(doc)) });
+  const compact = await t.mutation(api.mutations.compact, { collection: 'test', document: 'deletes' });
+  expect(compact.removed).toBe(2);
+  const state = await t.query(api.mutations.recovery, { collection: 'test', document: 'deletes', vector: new Uint8Array([0]).buffer });
+  const recovered = new Y.Doc(); Y.applyUpdateV2(recovered, new Uint8Array(state.diff!));
+  expect(recovered.getMap('fields').get('title')).toBe('New');
+  doc.destroy(); recovered.destroy();
+});
