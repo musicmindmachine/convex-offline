@@ -66,8 +66,7 @@ test('insertDocument_triggersCompactionAtThreshold', async () => {
 
 	expect(job).not.toBeNull();
 
-	vi.runAllTimers();
-	await t.finishInProgressScheduledFunctions();
+	await t.finishAllScheduledFunctions(() => vi.runAllTimers());
 
 	const result = await t.run(async (ctx) => {
 		return await ctx.db

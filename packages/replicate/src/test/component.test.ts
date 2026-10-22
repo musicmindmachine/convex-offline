@@ -70,7 +70,7 @@ describe('Replicate Component Mutations', () => {
 			await t.mutation(api.mutations.insertDocument, {
 				collection: 'test-collection',
 				document: 'test-doc',
-				bytes: new Uint8Array([1, 2, 3]).buffer as ArrayBuffer,
+				bytes: Y.encodeStateAsUpdateV2(new Y.Doc()).slice().buffer,
 			});
 
 			const result = await t.mutation(api.mutations.scheduleCompaction, {
@@ -94,7 +94,7 @@ describe('Replicate Component Mutations', () => {
 			await t.mutation(api.mutations.insertDocument, {
 				collection: 'test-collection',
 				document: 'test-doc',
-				bytes: new Uint8Array([1, 2, 3]).buffer as ArrayBuffer,
+				bytes: Y.encodeStateAsUpdateV2(new Y.Doc()).slice().buffer,
 			});
 
 			// Schedule first compaction
@@ -177,7 +177,7 @@ describe('Replicate Component Mutations', () => {
 			await t.mutation(api.mutations.insertDocument, {
 				collection: 'test-collection',
 				document: 'doc1',
-				bytes: new Uint8Array([1, 2, 3]).buffer as ArrayBuffer,
+				bytes: Y.encodeStateAsUpdateV2(new Y.Doc()).slice().buffer,
 			});
 
 			await t.mutation(api.mutations.insertDocument, {

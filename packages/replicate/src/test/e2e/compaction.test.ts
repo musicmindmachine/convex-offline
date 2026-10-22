@@ -193,3 +193,64 @@ test('runCompaction_retainsDeltasWhenActivePeerNeedsData', async () => {
 	await t.finishInProgressScheduledFunctions();
 	vi.useRealTimers();
 });
+
+test('offline recovery survives compaction and interleaved paginated deltas', async () => {
+  const t = convexTest(schema, modules);
+  const first = new Y.Doc();
+  first.getMap('fields').set('title', 'Compacted');
+  await t.mutation(api.mutations.insertDocument, { collection: 'test', document: 'a', bytes: toArrayBuffer(Y.encodeStateAsUpdateV2(first)) });
+  const peer = new Y.Doc();
+  Y.applyUpdateV2(peer, Y.encodeStateAsUpdateV2(first));
+  await t.mutation(api.mutations.presence, { collection: 'test', document: 'a', client: 'peer', action: 'join', vector: toArrayBuffer(Y.encodeStateVector(peer)) });
+  const compact = await t.mutation(api.mutations.compact, { collection: 'test', document: 'a' });
+  expect(compact.removed).toBe(1); // V2 empty update is longer than two bytes.
+  for (const id of ['b', 'c']) {
+    const doc = new Y.Doc(); doc.getMap('fields').set('title', id);
+    await t.mutation(api.mutations.insertDocument, { collection: 'test', document: id, bytes: toArrayBuffer(Y.encodeStateAsUpdateV2(doc)) });
+    doc.destroy();
+  }
+  const page = await t.query(api.mutations.stream, { collection: 'test', seq: 0, limit: 1 });
+  expect(page.changes.map(c => c.document)).toEqual(['a', 'b']);
+  expect(page.seq).toBe(2);
+  const next = await t.query(api.mutations.stream, { collection: 'test', seq: page.seq, limit: 1 });
+  expect(next.changes.map(c => c.document)).toEqual(['c']);
+  const recovery = await t.query(api.mutations.recovery, { collection: 'test', document: 'a', vector: new Uint8Array([0]).buffer });
+  const recovered = new Y.Doc(); Y.applyUpdateV2(recovered, new Uint8Array(recovery.diff!));
+  expect(recovered.getMap('fields').get('title')).toBe('Compacted');
+  peer.getMap('fields').set('artist', 'Offline edit');
+  await t.mutation(api.mutations.updateDocument, { collection: 'test', document: 'a', bytes: toArrayBuffer(Y.encodeStateAsUpdateV2(peer, new Uint8Array(recovery.vector))) });
+  const merged = await t.query(api.mutations.recovery, { collection: 'test', document: 'a', vector: new Uint8Array([0]).buffer });
+  Y.applyUpdateV2(recovered, new Uint8Array(merged.diff!));
+  expect(recovered.getMap('fields').toJSON()).toEqual({ title: 'Compacted', artist: 'Offline edit' });
+  first.destroy(); peer.destroy(); recovered.destroy();
+});
+
+test('stream returns snapshots when all deltas have been compacted', async () => {
+  const t = convexTest(schema, modules);
+  const doc = new Y.Doc(); doc.getMap('fields').set('title', 'Only snapshot');
+  await t.mutation(api.mutations.insertDocument, { collection: 'test', document: 'a', bytes: toArrayBuffer(Y.encodeStateAsUpdateV2(doc)) });
+  await t.mutation(api.mutations.compact, { collection: 'test', document: 'a' });
+  const page = await t.query(api.mutations.stream, { collection: 'test', seq: 0 });
+  expect(page.changes).toHaveLength(1);
+  expect(page.seq).toBe(1);
+  doc.destroy();
+});
+
+test('action compaction preserves every delta across partial pages', async () => {
+  vi.useFakeTimers();
+  try {
+    const t = convexTest(schema, modules);
+    const doc = new Y.Doc();
+    for (let i = 0; i < 7; i++) {
+      const vector = Y.encodeStateVector(doc);
+      doc.getMap('fields').set(`field${i}`, i);
+      await t.mutation(api.mutations.insertDocument, { collection: 'test', document: 'paged', bytes: toArrayBuffer(Y.encodeStateAsUpdateV2(doc, vector)) });
+    }
+    await t.mutation(api.mutations.scheduleCompaction, { collection: 'test', document: 'paged', pageSize: 3, maxDeltas: 2 });
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+    const result = await t.query(api.mutations.recovery, { collection: 'test', document: 'paged', vector: new Uint8Array([0]).buffer });
+    const recovered = new Y.Doc(); Y.applyUpdateV2(recovered, new Uint8Array(result.diff!));
+    expect(recovered.getMap('fields').toJSON()).toEqual(doc.getMap('fields').toJSON());
+    recovered.destroy(); doc.destroy();
+  } finally { vi.useRealTimers(); }
+});

@@ -323,7 +323,7 @@ export const compact = mutation({
 			const sessionVector = new Uint8Array(session.vector);
 			const missing = Y.diffUpdateV2(merged, sessionVector);
 
-			if (missing.byteLength > 2) {
+			if (!isEmptyUpdateV2(missing)) {
 				canDeleteAll = false;
 				logger.debug('Session still needs data', {
 					client: session.client,
@@ -399,7 +399,7 @@ export const compact = mutation({
 			const sessionVector = new Uint8Array(session.vector);
 			const missing = Y.diffUpdateV2(merged, sessionVector);
 
-			if (missing.byteLength <= 2) {
+			if (isEmptyUpdateV2(missing)) {
 				await ctx.db.delete(session._id);
 				cleaned++;
 			}
@@ -421,9 +421,15 @@ export const compact = mutation({
 	},
 });
 
+// V2 empty updates include encoding headers; byte length is not an emptiness test.
+const isEmptyUpdateV2 = (bytes: Uint8Array) => {
+ const decoded = Y.decodeUpdateV2(bytes);
+ return decoded.structs.length === 0 && decoded.ds.clients.size === 0;
+};
+
 const applyBytesToDoc = (doc: Y.Doc, bytes?: ArrayBuffer | null) => {
 	if (!bytes) return;
-	Y.applyUpdate(doc, new Uint8Array(bytes));
+	Y.applyUpdateV2(doc, new Uint8Array(bytes));
 };
 
 const encodeDocState = (doc: Y.Doc) => {
@@ -945,7 +951,7 @@ export const runCompaction = mutation({
 				const sessionVector = new Uint8Array(session.vector);
 				const missing = Y.diffUpdateV2(merged, sessionVector);
 
-				if (missing.byteLength > 2) {
+				if (!isEmptyUpdateV2(missing)) {
 					canDeleteAll = false;
 					logger.debug('Active session still needs data', {
 						client: session.client,
@@ -1116,7 +1122,7 @@ export const runCompactionAction = action({
 						collection: job.collection,
 						document: job.document,
 						cursor,
-						numItems: pageSize,
+						numItems: Math.min(pageSize, maxDeltas - deltasProcessed),
 					});
 
 					let reachedBoundary = false;
@@ -1216,7 +1222,7 @@ export const runCompactionAction = action({
 				}
 				const sessionVector = new Uint8Array(session.vector);
 				const missing = Y.encodeStateAsUpdateV2(doc, sessionVector);
-				if (missing.byteLength > 2) {
+				if (!isEmptyUpdateV2(missing)) {
 					canDeleteAll = false;
 					logger.debug('Active session still needs data', {
 						client: session.client,
@@ -1256,7 +1262,7 @@ export const runCompactionAction = action({
 						collection: job.collection,
 						document: job.document,
 						cursor,
-						numItems: pageSize,
+						numItems: Math.min(pageSize, maxDeltas - deltasProcessed),
 					});
 
 					lastPageDone = page.isDone;
@@ -1391,72 +1397,25 @@ export const stream = query({
 			.order('asc')
 			.take(limit);
 
-		if (documents.length > 0) {
-			const changes = documents.map((doc) => ({
-				document: doc.document,
-				bytes: doc.bytes,
-				seq: doc.seq,
-				type: OperationType.Delta,
-				exists: doc.exists,
-			}));
-
-			const newSeq = documents[documents.length - 1]?.seq ?? args.seq;
-
-			// Compaction eligibility is now checked only during write mutations
-			// (insertDocument, updateDocument, deleteDocument) via scheduleCompactionIfNeeded.
-			// This removes the O(n) full collection scan that was running on every subscription update.
-
-			return {
-				changes,
-				seq: newSeq,
-				more: documents.length === limit,
-				compact: undefined,
-			};
-		}
-
-		const oldest = await ctx.db
-			.query('deltas')
-			.withIndex('by_seq', (q) => q.eq('collection', args.collection))
-			.order('asc')
-			.first();
-
-		if (oldest && args.seq < oldest.seq) {
-			const snapshots = await ctx.db
-				.query('snapshots')
-				.withIndex('by_document', (q) => q.eq('collection', args.collection))
-				.collect();
-
-			if (snapshots.length === 0) {
-				throw new ConvexError(
-					`Disparity detected but no snapshots available for collection: ${args.collection}. ` +
-						`Client seq: ${args.seq}, Oldest delta seq: ${oldest.seq}`
-				);
-			}
-
-			const changes = snapshots.map((s) => ({
-				document: s.document,
-				bytes: s.bytes,
-				seq: s.seq,
-				type: OperationType.Snapshot,
-				exists: true,
-			}));
-
-			const latestSeq = Math.max(...snapshots.map((s) => s.seq));
-
-			return {
-				changes,
-				seq: latestSeq,
-				more: false,
-				compact: undefined,
-			};
-		}
-
-		return {
-			changes: [],
-			seq: args.seq,
-			more: false,
-			compact: undefined,
-		};
+        // Compacted history can leave gaps even while newer deltas exist.
+        // Deliver snapshots alongside deltas before advancing past those gaps.
+        const snapshots = await ctx.db.query('snapshots')
+            .withIndex('by_document', q => q.eq('collection', args.collection))
+            .filter(q => q.gt(q.field('seq'), args.seq)).collect();
+        const more = documents.length === limit;
+        const deltaSeq = documents.at(-1)?.seq ?? args.seq;
+        return {
+            changes: [
+                ...snapshots.map(s => ({ document: s.document, bytes: s.bytes,
+                    seq: s.seq, type: OperationType.Snapshot, exists: true })),
+                ...documents.map(d => ({ document: d.document, bytes: d.bytes,
+                    seq: d.seq, type: OperationType.Delta, exists: d.exists })),
+            ],
+            // A snapshot may be ahead of this delta page. Do not skip unread deltas.
+            seq: more ? deltaSeq : Math.max(deltaSeq, ...snapshots.map(s => s.seq)),
+            more,
+            compact: undefined,
+        };
 	},
 });
 
@@ -1500,7 +1459,7 @@ export const recovery = query({
 		const doc = new Y.Doc();
 
 		if (snapshot) {
-			Y.applyUpdate(doc, new Uint8Array(snapshot.bytes));
+			Y.applyUpdateV2(doc, new Uint8Array(snapshot.bytes));
 		}
 
 		let cursorSeq = snapshotSeq;
@@ -1520,7 +1479,7 @@ export const recovery = query({
 			deltasFound = true;
 
 			for (const delta of batch) {
-				Y.applyUpdate(doc, new Uint8Array(delta.bytes));
+				Y.applyUpdateV2(doc, new Uint8Array(delta.bytes));
 				cursorSeq = delta.seq;
 			}
 
