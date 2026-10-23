@@ -166,6 +166,8 @@ export interface ConvexCollectionConfig<T extends object = object> extends Omit<
 	 * while online, with CRDT deltas still used for offline recovery.
 	 */
 	materialSync?: boolean;
+	/** Disable when a durable transport already queues every local mutation. */
+	replayLocalOnReconnect?: boolean;
 	/**
 	 * Maximum number of deltas to request per stream update.
 	 * Lower values reduce per-update memory/byte usage for large documents.
@@ -274,6 +276,7 @@ export function convexCollectionOptions<T extends object = object>(
 		materialLimitBytes,
 		materialReducer,
 		materialSync,
+		replayLocalOnReconnect = true,
 		deltaLimit,
 		anonymousPresence,
 	} = config;
@@ -1535,7 +1538,7 @@ export function convexCollectionOptions<T extends object = object>(
 								if (wasOffline) {
 									logger.info('Network online restored, running recovery sync', { collection });
 									wasOffline = false;
-									recover(true).catch((error: Error) => {
+									recover(replayLocalOnReconnect).catch((error: Error) => {
 										logger.warn('Recovery sync failed after reconnection', {
 											collection,
 											error: error.message,
@@ -1634,6 +1637,8 @@ export interface CreateCollectionOptions<T extends object> {
 		materialLimitBytes?: number;
 		materialReducer?: (doc: Record<string, unknown>) => Record<string, unknown>;
 		materialSync?: boolean;
+	/** Disable when a durable transport already queues every local mutation. */
+	replayLocalOnReconnect?: boolean;
 	};
 	clientMigrations?: ClientMigrationMap;
 	onMigrationError?: MigrationErrorHandler;
@@ -1763,6 +1768,7 @@ function createVersionedCollection<T extends object>(
 					materialLimitBytes: userConfig.materialLimitBytes,
 					materialReducer: userConfig.materialReducer,
 					materialSync: userConfig.materialSync,
+					replayLocalOnReconnect: userConfig.replayLocalOnReconnect,
 					deltaLimit: userConfig.deltaLimit,
 				} as LazyCollectionConfig<T>;
 
