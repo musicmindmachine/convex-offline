@@ -1010,6 +1010,7 @@ export function convexCollectionOptions<T extends object = object>(
 					ctx.cleanup = undefined;
 				}
 
+				let cancelled = false;
 				let subscription: (() => void) | null = null;
 				let materialSubscription: (() => void) | null = null;
 				let materialFallbackActive = false;
@@ -1023,6 +1024,7 @@ export function convexCollectionOptions<T extends object = object>(
 				(async () => {
 					try {
 						const existingDocIds = await persistence.listDocuments(collection);
+						if (cancelled) return;
 						for (const docId of existingDocIds) {
 							docManager.getOrCreate(docId);
 						}
@@ -1031,10 +1033,12 @@ export function convexCollectionOptions<T extends object = object>(
 							return persistence.createDocPersistence(`${collection}:${document}`, ydoc);
 						});
 						await Promise.all(docPromises);
+						if (cancelled) return;
 
 						resolvePersistenceReady?.();
 
 						const clientId = await getClientId(persistence.kv);
+						if (cancelled) return;
 						updateContext(collection, { clientId });
 
 						ops = createReplicateOps<DataType>(params);
@@ -1089,8 +1093,6 @@ export function convexCollectionOptions<T extends object = object>(
 							}
 						}
 
-						await recover();
-
 						const docIds = docManager.documents();
 						if (docIds.length > 0) {
 							const items = extractAllDocuments(docManager) as DataType[];
@@ -1102,7 +1104,11 @@ export function convexCollectionOptions<T extends object = object>(
 						markReady();
 						getContext(collection).resolve?.();
 
+						// Network recovery must never block locally persisted documents.
+						void recover();
+
 						const persistedCursor = await seqService.load(collection);
+						if (cancelled) return;
 						let cursor = ssrCursor ?? persistedCursor;
 
 						if (hydratedFromMaterial && ssrCursor === undefined) {
@@ -1375,6 +1381,8 @@ export function convexCollectionOptions<T extends object = object>(
 							for (const doc of serverDocs) {
 								const documentId = String(getKey(doc));
 								const hadLocally = docManager.has(documentId);
+								// Without material sync, fallback may seed missing records only.
+								if (!materialSync && hadLocally) continue;
 								const wasDeleted = isDocumentDeleted(docManager, documentId);
 
 								const delta = docManager.transactWithDelta(
@@ -1488,7 +1496,8 @@ export function convexCollectionOptions<T extends object = object>(
 								});
 								const snapshot = await fetchMaterialSnapshot();
 								if (snapshot && Array.isArray(snapshot.documents)) {
-									replaceMaterialSnapshot(snapshot.documents as DataType[]);
+									if (materialSync) replaceMaterialSnapshot(snapshot.documents as DataType[]);
+									else mergeMaterialSnapshot(snapshot.documents as DataType[]);
 								}
 								if (!materialSubscription) {
 									materialSubscription = convexClient.onUpdate(
@@ -1517,7 +1526,7 @@ export function convexCollectionOptions<T extends object = object>(
 
 						// Reconnection handling: when browser comes back online, resync local state
 						if (typeof globalThis.window !== 'undefined') {
-							let wasOffline = false;
+							let wasOffline = typeof navigator !== 'undefined' && !navigator.onLine;
 							const handleOffline = () => {
 								wasOffline = true;
 								logger.debug('Network offline detected', { collection });
@@ -1549,6 +1558,7 @@ export function convexCollectionOptions<T extends object = object>(
 						// Note: markReady() was already called above (local-first)
 						// Subscription is background replication, not blocking
 					} catch (error) {
+						if (cancelled) return;
 						// Log error before marking ready to aid debugging sync failures
 						logger.error('Sync initialization failed', {
 							collection,
@@ -1562,6 +1572,7 @@ export function convexCollectionOptions<T extends object = object>(
 				return {
 					material: docs,
 					cleanup: () => {
+						cancelled = true;
 						// Clean up reconnection listeners if stored in context
 						if (hasContext(collection)) {
 							const ctx = getContext(collection);
